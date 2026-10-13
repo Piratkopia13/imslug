@@ -1,0 +1,44 @@
+# imslug CI - keeps the repo green on both supported toolchains.
+#
+# Entry points are the scripts/ in the repository (never ad-hoc cmake commands):
+# build -> test -> check_docs on Windows (MSVC) and Linux (GCC/Clang).
+# Later milestones add jobs: shader check (M2), golden images (M2/M3),
+# ImGui-master smoke (M3+), format check once stable.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build
+        run: scripts/build.bat
+      - name: Test
+        run: scripts/test.bat
+      - name: Check docs policy
+        run: scripts/check_docs.bat
+
+  linux:
+    name: Linux (GCC/Clang)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build
+        run: ./scripts/build.sh
+      - name: Test
+        run: ./scripts/test.sh
+      - name: Check docs policy
+        run: ./scripts/check_docs.sh

@@ -1,0 +1,24 @@
+# Transient agent working documents (plan drafts, session notes, scratch).
+# Never committed. The current plan lives in .agent-docs/PLAN.md; see its §12.5.
+.agent-docs/
+
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# CMake / tooling state
+CMakeUserPresets.json
+compile_commands.json
+
+# IDE / editors
+.vs/
+.vscode/
+.idea/
+
+# Generated shader binaries and intermediates.
+# NOTE: shaders/imslug_shaders_vulkan.h is generated but committed on purpose (PLAN §5.8).
+*.spv
+
+# Local example-app state (Dear ImGui writes these next to the binary)
+imgui.ini

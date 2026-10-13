@@ -1,0 +1,28 @@
+{
+  // imslug project configuration for OpenCode V2.
+  // Keep this small: process rules live in AGENTS.md, workflows in
+  // .opencode/commands/, and specialized knowledge in .opencode/skills/.
+  "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    // Deterministic project entry points are always allowed (AGENTS.md
+    // "Commands"). Anything else shell-related keeps the default policy.
+    { "action": "shell", "resource": "scripts/*", "effect": "allow" },
+    { "action": "shell", "resource": "./scripts/*", "effect": "allow" },
+    { "action": "shell", "resource": "scripts\\*", "effect": "allow" },
+    { "action": "shell", "resource": ".\\scripts\\*", "effect": "allow" },
+    // Never publish implicitly: pushing, tagging and package uploads ask first.
+    { "action": "shell", "resource": "git push*", "effect": "ask" },
+    { "action": "shell", "resource": "git tag*", "effect": "ask" },
+    { "action": "shell", "resource": "cargo publish*", "effect": "ask" },
+    { "action": "shell", "resource": "npm publish*", "effect": "ask" },
+    { "action": "shell", "resource": "gh release*", "effect": "ask" }
+  ],
+  // Format our own C/C++ files on write/edit. Third-party code is excluded by
+  // never editing it (AGENTS.md invariant 2).
+  "formatter": {
+    "clang-format": {
+      "command": ["clang-format", "-i", "$FILE"],
+      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl"]
+    }
+  }
+}

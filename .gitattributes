@@ -1,0 +1,13 @@
+# Line-ending policy.
+#
+# The repository stores LF for text files; Windows-only entry points are
+# checked out with CRLF so cmd.exe and PowerShell are never surprised.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets (fonts / test images / compiled shaders arrive in later milestones)
+*.ttf binary
+*.otf binary
+*.png binary
+*.spv binary
