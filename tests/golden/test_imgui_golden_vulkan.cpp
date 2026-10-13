@@ -568,6 +568,13 @@ namespace
     bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name)
     {
         ImGui::CreateContext();
+        // ImSlug::Init requires a live context (imslug.h); the module lives per
+        // variant because each variant owns its contexts/atlas.
+        if (!ImSlug::Init())
+        {
+            std::printf("  [imslug-golden] ImSlug::Init failed (%s)\n", name);
+            return false;
+        }
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.DisplaySize = ImVec2((float)kWidth, (float)kHeight);
@@ -718,6 +725,7 @@ namespace
         ImSlug_ImplVulkan_Shutdown();
         ImGui_ImplVulkan_Shutdown();
         ImGui::DestroyContext();
+        ImSlug::Shutdown();  // after the atlas that owns the Slug fonts
         return ok;
     }
 
@@ -812,13 +820,8 @@ int main(int argc, char** argv)
         return kExitSkip;
     }
 
-    // The imslug core lives across both variants (each variant owns its own
-    // ImGui context; the Vulkan module is re-initialized per variant).
-    if (!ImSlug::Init())
-    {
-        std::printf("imslug_tests_imgui_golden: SKIP (ImSlug::Init failed)\n");
-        return kExitSkip;
-    }
+    // Each variant owns its ImGui context; the imslug core (Init/Shutdown) is
+    // per variant as well (see RenderVariant).
 
     unsigned char* slugPixels = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
     unsigned char* stockPixels = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
@@ -915,7 +918,6 @@ int main(int argc, char** argv)
 
     std::free(slugPixels);
     std::free(stockPixels);
-    ImSlug::Shutdown();
     vkDeviceWaitIdle(g_State.Device);
     if (g_State.RenderTarget.ReadbackMapped != nullptr)
         vkUnmapMemory(g_State.Device, g_State.RenderTarget.ReadbackMemory);

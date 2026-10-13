@@ -104,6 +104,13 @@ namespace ImSlug
                 return false;
 
             SlugFontSource* source = (SlugFontSource*)IM_ALLOC(sizeof(SlugFontSource));
+            if (source == nullptr)
+            {
+                // The atlas rolls this source back (FontSrcInit contract); release
+                // our font copy first or it leaks with the failed source.
+                ImSlugDestroyFont(font);
+                return false;
+            }
             memset(source, 0, sizeof(*source));
             source->Font = font;
             source->Magic = kSourceMagic;
@@ -172,8 +179,13 @@ namespace ImSlug
             if (bakedSrc == nullptr)
                 return;
             // Frees the glyph slabs (including the synthetic ellipsis) whose
-            // record only lives as long as this bake.
-            ImSlugFreeGlyphSlabsForBake(baked);
+            // record only lives as long as this bake. Keyed on baked->BakedId,
+            // never on the ImFontBaked address: ImGui documents those pointers
+            // as per-frame only and its BakedPool GC (imgui_draw.cpp ~2823)
+            // memcpys surviving bakes to new addresses, so an address key
+            // would leak this bake's slabs and, worse, free another live
+            // bake's slabs that now sits at the old address.
+            ImSlugFreeGlyphSlabsForBake(baked->BakedId);
             memset(bakedSrc, 0, sizeof(*bakedSrc));
         }
 
@@ -334,7 +346,7 @@ namespace ImSlug
 
             uint32_t slot = 0;
             if (ImSlugAllocGlyphSlab(record, metrics.X0, metrics.Y0, metrics.X1, metrics.Y1, baked->Ascent, pixelsPerEm,
-                                     baked, &slot) == nullptr)
+                                     baked->BakedId, &slot) == nullptr)
             {
                 // Slab cap reached: fall back to ImGui's fallback glyph. Give back
                 // the partially filled glyph state so ImGui does not publish it.

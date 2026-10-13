@@ -345,26 +345,48 @@ namespace ImSlug
         struct RewriteState
         {
             ImDrawList* List;
-            int OutCount;  // written commands in CmdScratch
+            int OutCount;    // written commands in CmdScratch
+            bool OutFailed;  // CmdScratch growth failed: abort without touching the list
             bool RunOpen;
             ImSlugBatch* Batch;                // live run being built
             float ClipL, ClipT, ClipR, ClipB;  // pinned fine-clip edges (+-1e30 = unknown)
 
-            void FlushGeometry(const ImDrawCmd& src, int firstTriangle, int triangleCount)
+            // Grows CmdScratch before every write. A single source command can
+            // produce an unbounded number of output commands (N alternating
+            // text/geometry runs -> ~3*N commands), so no fixed multiple of the
+            // input command count is a bound; EnsureCapacity's doubling makes
+            // the per-write growth amortized O(1). On failure the rewrite is
+            // abandoned before anything is copied back (the draw list stays
+            // untouched, matching the existing out-of-memory behavior).
+            bool ReserveOut(int count)
+            {
+                if (OutFailed)
+                    return false;
+                if (!EnsureCapacity((void**)&g_Core.CmdScratch, &g_Core.CmdScratchCapacity, OutCount + count,
+                                    sizeof(ImDrawCmd)))
+                    OutFailed = true;
+                return !OutFailed;
+            }
+
+            bool FlushGeometry(const ImDrawCmd& src, int firstTriangle, int triangleCount)
             {
                 if (triangleCount <= 0)
-                    return;
-                IMSLUG_ASSERT(OutCount < g_Core.CmdScratchCapacity);
+                    return true;
+                if (!ReserveOut(1))
+                    return false;
                 ImDrawCmd cmd = src;
                 cmd.IdxOffset = src.IdxOffset + (unsigned int)firstTriangle * 3u;
                 cmd.ElemCount = (unsigned int)triangleCount * 3u;
                 g_Core.CmdScratch[OutCount++] = cmd;
+                return true;
             }
 
-            void CloseRun(const ImDrawCmd& src)
+            bool CloseRun(const ImDrawCmd& src)
             {
                 if (!RunOpen)
-                    return;
+                    return true;
+                if (!ReserveOut(2))
+                    return false;
                 // The run's scissor is the union of the cropped quads (exactly
                 // what ImGui's CPU fine clip produced), never wider than the
                 // command's own clip rect (window clipping stays GPU-side).
@@ -375,7 +397,6 @@ namespace ImSlug
                 // Callback command: 0 elements, the batch as user data, clip and
                 // texture kept as ImGui had them (informational; the backend
                 // dispatches the callback before touching either).
-                IMSLUG_ASSERT(OutCount + 2 <= g_Core.CmdScratchCapacity);
                 ImDrawCmd callbackCmd = src;
                 callbackCmd.ElemCount = 0;
                 callbackCmd.UserCallback = &ImSlug::DrawCallback;
@@ -399,6 +420,7 @@ namespace ImSlug
                 Batch = nullptr;
                 ClipL = ClipT = -1.0e30f;
                 ClipR = ClipB = 1.0e30f;
+                return true;
             }
         };
 
@@ -550,14 +572,10 @@ namespace ImSlug
             if (cmdCount == 0)
                 return;
 
-            // Worst case: every command splits into geometry + callback + reset.
-            if (!EnsureCapacity((void**)&g_Core.CmdScratch, &g_Core.CmdScratchCapacity, cmdCount * 3 + 4,
-                                sizeof(ImDrawCmd)))
-                return;
-
             RewriteState state;
             state.List = list;
             state.OutCount = 0;
+            state.OutFailed = false;
             state.RunOpen = false;
             state.Batch = nullptr;
             state.ClipL = state.ClipT = -1.0e30f;
@@ -575,8 +593,8 @@ namespace ImSlug
                     // Third-party callbacks (including already-injected reset and
                     // sampler callbacks) pass through untouched, and they break any
                     // open text run.
-                    state.CloseRun(src);
-                    IMSLUG_ASSERT(state.OutCount < g_Core.CmdScratchCapacity);
+                    if (!state.CloseRun(src) || !state.ReserveOut(1))
+                        return;  // scratch growth failed: leave the list untouched
                     g_Core.CmdScratch[state.OutCount++] = src;
                     continue;
                 }
@@ -584,8 +602,8 @@ namespace ImSlug
                 const int triCount = (int)(src.ElemCount / 3u);
                 if (triCount == 0)
                 {
-                    state.CloseRun(src);
-                    IMSLUG_ASSERT(state.OutCount < g_Core.CmdScratchCapacity);
+                    if (!state.CloseRun(src) || !state.ReserveOut(1))
+                        return;
                     g_Core.CmdScratch[state.OutCount++] = src;
                     continue;
                 }
@@ -648,17 +666,20 @@ namespace ImSlug
                     const uint8_t action = g_Core.TriActions[tri];
                     if (action == TriAction_Geometry)
                     {
-                        state.CloseRun(src);
+                        if (!state.CloseRun(src))
+                            return;
                         int end = tri;
                         while (end < triCount && g_Core.TriActions[end] == TriAction_Geometry)
                             end++;
-                        state.FlushGeometry(src, tri, end - tri);
+                        if (!state.FlushGeometry(src, tri, end - tri))
+                            return;
                         tri = end;
                         continue;
                     }
                     if (action == TriAction_Drop)
                     {
-                        state.CloseRun(src);
+                        if (!state.CloseRun(src))
+                            return;
                         tri++;
                         continue;
                     }
@@ -668,14 +689,19 @@ namespace ImSlug
                     const bool emitted = EmitGlyph(state, verts, src.VtxOffset, indices + src.IdxOffset, tri, &restart);
                     if (!emitted && restart)
                     {
-                        state.CloseRun(src);
+                        if (!state.CloseRun(src))
+                            return;
                         bool restartAgain = false;
                         EmitGlyph(state, verts, src.VtxOffset, indices + src.IdxOffset, tri, &restartAgain);
                     }
                     tri += 2;
                 }
-                state.CloseRun(src);
+                if (!state.CloseRun(src))
+                    return;
             }
+
+            if (state.OutFailed)
+                return;  // should be unreachable: every write reserved first
 
             if (state.OutCount > 0)
             {
@@ -776,6 +802,11 @@ namespace ImSlug
 
     bool Init(const Config& config)
     {
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            IMSLUG_ASSERT(false && "imslug: call ImSlug::Init() with a live ImGui context (see imslug.h)");
+            return false;
+        }
         if (g_Core.Initialized)
             Shutdown();
 
@@ -783,7 +814,9 @@ namespace ImSlug
         g_Core.Cfg = config;
         ImSlugInitPools(&g_Core.Pools);
 
-        const uint32_t slabCap = config.MaxGlyphSlabs != 0 ? config.MaxGlyphSlabs : (uint32_t)kMaxGlyphSlabs;
+        uint32_t slabCap = config.MaxGlyphSlabs != 0 ? config.MaxGlyphSlabs : (uint32_t)kMaxGlyphSlabs;
+        if (slabCap > (uint32_t)kMaxGlyphSlabs)
+            slabCap = (uint32_t)kMaxGlyphSlabs;  // slots beyond the cap cannot be decoded (see imslug.h)
         g_Core.SlabCapacity = slabCap;
         g_Core.Slabs = (ImSlugGlyphSlab*)calloc(slabCap, sizeof(ImSlugGlyphSlab));
         if (g_Core.Slabs == nullptr)
@@ -880,7 +913,7 @@ namespace ImSlug
     }
 
     ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
-                                          float ascent, float pixelsPerEm, const void* bake, uint32_t* outSlot)
+                                          float ascent, float pixelsPerEm, uint64_t bakeId, uint32_t* outSlot)
     {
         IMSLUG_ASSERT(record != nullptr && outSlot != nullptr);
         if (!g_Core.Initialized || record == nullptr)
@@ -903,7 +936,7 @@ namespace ImSlug
         ImSlugGlyphSlab* slab = &g_Core.Slabs[slot];
         memset(slab, 0, sizeof(*slab));
         slab->Record = record;
-        slab->Bake = bake;
+        slab->BakeId = bakeId;
         slab->X0 = x0;
         slab->Y0 = y0;
         slab->X1 = x1;
@@ -925,18 +958,18 @@ namespace ImSlug
             return;
         slab->Alive = false;
         slab->Record = nullptr;
-        slab->Bake = nullptr;
+        slab->BakeId = 0;
         if (!EnsureCapacity((void**)&g_Core.FreeSlots, &g_Core.FreeCapacity, g_Core.FreeCount + 1, sizeof(uint32_t)))
             return;  // leak one slot rather than corrupting the registry
         g_Core.FreeSlots[g_Core.FreeCount++] = slot;
     }
 
-    void ImSlugFreeGlyphSlabsForBake(const void* bake)
+    void ImSlugFreeGlyphSlabsForBake(uint64_t bakeId)
     {
-        if (!g_Core.Initialized || bake == nullptr)
+        if (!g_Core.Initialized)
             return;
         for (uint32_t slot = 0; slot < g_Core.SlabHighWater; ++slot)
-            if (g_Core.Slabs[slot].Alive && g_Core.Slabs[slot].Bake == bake)
+            if (g_Core.Slabs[slot].Alive && g_Core.Slabs[slot].BakeId == bakeId)
                 ImSlugFreeGlyphSlab(slot);
     }
 

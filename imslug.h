@@ -10,7 +10,9 @@
 // widgets, the demo window, third-party libraries — keeps working unchanged:
 // registered fonts render through Slug, everything else through the atlas.
 //
+//   ImGui::CreateContext();                   // live context first
 //   ImGui_ImplVulkan_Init(&init_info);        // stock backend, unchanged
+//   ImSlug::Init();                           // core: pools + glyph registry
 //   ImSlug_ImplVulkan_Init(&init_info);       // imslug backend module
 //   ImFont* font = ImSlug::AddFontFromFileTTF("Inter.ttf", 18.0f);
 //   // ... per frame ...
@@ -76,16 +78,20 @@ namespace ImSlug
         // overflows drops the overflowing runs (Statistics::DroppedRuns).
         uint32_t MaxInstancesPerFrame = 0;
 
-        // Upper bound of live glyph slabs (one per baked glyph size); 0 selects
-        // the default (65536). Glyphs beyond the cap fall back to ImGui's
-        // fallback glyph (M3 scope: the cap is far above typical UI usage).
+        // Upper bound of live glyph slabs (one per baked visible glyph; a
+        // bake of the same glyph at another size owns its own slab); 0 selects
+        // the default (65536). Values above 65536 are clamped to the decoder's
+        // slot cap (slot ids >= 65536 would decode as non-Slug geometry).
+        // Glyphs beyond the cap fall back to ImGui's fallback glyph (M3 scope:
+        // the cap is far above typical UI usage).
         uint32_t MaxGlyphSlabs = 0;
     };
 
     // Creates the pools, the glyph registry and the per-frame arena. Requires a
-    // live ImGui context with fonts added; the stock renderer backend must be
-    // initialized first (it sets ImGuiBackendFlags_RendererHasTextures, which
-    // imslug requires). Returns false when it cannot work on this context.
+    // live ImGui context (create it before this call); fonts are registered
+    // afterwards with AddFontFrom* above, and the stock renderer backend must
+    // already be initialized (it sets ImGuiBackendFlags_RendererHasTextures,
+    // which imslug requires). Returns false when it cannot work on this context.
     IMSLUG_API bool Init(const Config& config = Config());
 
     // Idempotent. Invalidates ImSlug fonts: their ImFont objects stay owned by
@@ -143,7 +149,7 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     struct Statistics
     {
-        uint32_t GlyphSlabs;        // live slabs (baked glyph sizes)
+        uint32_t GlyphSlabs;        // live slabs (baked visible glyphs)
         uint32_t LiveBatches;       // batches produced in the last pre-pass
         uint32_t Instances;         // glyph instances produced in the last pre-pass
         uint32_t DroppedRuns;       // text runs dropped (no instance capacity)

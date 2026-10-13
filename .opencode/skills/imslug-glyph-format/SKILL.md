@@ -222,7 +222,7 @@ the slot indexes `ImSlugGlyphSlab` (core registry, `imslug.cpp`):
 ```c
 struct ImSlugGlyphSlab {
     const ImSlugGlyphRecord* Record;  // outlines/bands, size-independent
-    const void* Bake;                 // ImFontBaked* lifetime key (frees the slab)
+    uint64_t BakeId;                  // ImFontBaked::BakedId (stable lifetime key)
     float X0, Y0, X1, Y1;             // baked pixel box == ImFontGlyph box (Y down,
                                       // line-top relative: Y0..Y1 include the ascent)
     float Ascent;                     // ImFontBaked::Ascent (line top -> baseline)
@@ -230,6 +230,17 @@ struct ImSlugGlyphSlab {
     uint32_t Slot; bool Alive;
 };
 ```
+
+The lifetime key is the **BakedId**, never the `ImFontBaked*` address: ImGui
+documents baked pointers as per-frame only, and its `BakedPool` GC
+(`imgui_draw.cpp` `ImFontAtlasUpdateNewFrame`) memcpys surviving bakes to new
+addresses when any bake is discarded. An address key leaks the moved bake's
+slabs (live handles keep decoding from leaked slots) or, worse, frees a live
+bake's slabs that now occupies the old address (its handles then decode as
+non-Slug geometry and sample garbage atlas UVs). `FontBakedDestroy` runs before
+the GC memcpy and sees the BakedId, so it can release exactly its own slabs
+(`tests/test_imslug_imgui.cpp` "glyph slab lifetime across BakedPool GC" forces
+a discard + GC and pins both directions).
 
 The ImGui adapter (`imslug_imgui_adapter.cpp`) bakes the `ImFontGlyph` UVs as
 
@@ -242,13 +253,22 @@ V = 2.5 + 2*slot + 0.25 + 0.5*fracY      fracY = (cornerY - Y0) / (Y1 - Y0)
   frac 0 is the box's left/top corner, frac 1 the right/bottom one;
 * the magic values are clear of atlas UVs (which live in `[0,1]`) and the
   0.25..0.75 inner band leaves room for float rounding of fine-clipped values;
+  the decoder additionally accepts an overhang of `kUvFracTolerance` (0.1 frac
+  units) past both ends. 0.1 is comfortably above the worst genuine error
+  (float rounding of fine-clip interpolation is <= ~0.02 frac units even at
+  slot 65535, where one float ulp is 1/64 of a frac unit) and much narrower
+  than the previous 0.5, which accepted half the slot cell and widened the
+  false-positive window for arbitrary geometry UVs in the magic band
+  (`tests/test_imslug_imgui.cpp` pins both the reject and the accept side);
 * the encoding is **affine**, so ImGui's fine-clip interpolation of a clipped
   corner stays inside the slot cell and decodes to the exact fraction of the
   cut edge - no per-frame glyph map, and atlas repacking/growth cannot
   invalidate a handle (the decode never touches the atlas);
 * slot ids are stable for the process lifetime and released when their
-  `ImFontBaked` is discarded (`ImSlugFreeGlyphSlabsForBake`), capped by
-  `Config::MaxGlyphSlabs` (default 65536).
+  `ImFontBaked` is discarded (`ImSlugFreeGlyphSlabsForBake(baked->BakedId)`;
+  never key on the ImFontBaked address - see the struct note above), capped by
+  `Config::MaxGlyphSlabs` (default 65536, values above the decoder's
+  `kMaxGlyphSlabs` are clamped at `ImSlug::Init`).
 
 The adapter decodes a vertex with `ImSlugAdapterDecodeVertex(u, v, &decoded)`
 (slot + both fractions, or "not Slug geometry"). The pre-pass rebuilds the

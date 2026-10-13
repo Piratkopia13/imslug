@@ -236,21 +236,32 @@ namespace ImSlug
     // ranges) is not Slug geometry.
     static const float kUvMagicU = 1.5f;  // clear of atlas UVs ([0,1]) and of V
     static const float kUvMagicV = 2.5f;
-    static const float kUvCellSpan = 2.0f;       // slot pitch; one slot owns [0,1] frac
-    static const float kUvFracBase = 0.25f;      // frac offset inside the cell
-    static const float kUvFracScale = 0.5f;      // frac -> cell scale (0.25 .. 0.75)
-    static const float kUvFracTolerance = 0.5f;  // accepted cell overhang, in frac units
-    static const int kMaxGlyphSlabs = 65536;     // 2*slot + frac stays float-exact
+    static const float kUvCellSpan = 2.0f;   // slot pitch; one slot owns [0,1] frac
+    static const float kUvFracBase = 0.25f;  // frac offset inside the cell
+    static const float kUvFracScale = 0.5f;  // frac -> cell scale (0.25 .. 0.75)
+    // Accepted decode overhang, in frac units, on top of the encoded 0..1
+    // range. Narrow (not the full cell): genuine fine-clip values stay well
+    // inside the encoded band even at the largest slot id, where a float ulp
+    // is 1/64 of a frac unit (slot 65535: |error| <= ~0.02); 0.5 would accept
+    // half the whole slot cell, i.e. a much wider false-positive window for
+    // arbitrary geometry UVs that happen to land in the magic ranges.
+    static const float kUvFracTolerance = 0.1f;
+    static const int kMaxGlyphSlabs = 65536;  // 2*slot + frac stays float-exact
 
     struct ImSlugGlyphSlab
     {
         const ImSlugGlyphRecord* Record;  // may be null while unused/being freed
-        const void* Bake;                 // ImFontBaked* the slab belongs to (lifetime key)
-        float X0, Y0, X1, Y1;             // baked pixel box (== ImFontGlyph box)
-        float Ascent;                     // baked ascent (ImFontBaked::Ascent): Y0..Y1 are
-                                          // line-top relative, em is baseline relative
-        float PixelsPerEm;                // baked pixels per em (uniform x/y)
-        uint32_t Slot;                    // UV slot id (this slab's index)
+        // ImFontBaked::BakedId (uint32 in ImGui; widened here) — the stable
+        // lifetime key. Never key on the ImFontBaked address: ImGui documents
+        // baked pointers as per-frame only and its BakedPool GC memcpys
+        // surviving bakes to new addresses, so address keys leak slabs or
+        // free a live bake's slabs (see the imslug-glyph-format skill).
+        uint64_t BakeId;
+        float X0, Y0, X1, Y1;  // baked pixel box (== ImFontGlyph box)
+        float Ascent;          // baked ascent (ImFontBaked::Ascent): Y0..Y1 are
+                               // line-top relative, em is baseline relative
+        float PixelsPerEm;     // baked pixels per em (uniform x/y)
+        uint32_t Slot;         // UV slot id (this slab's index)
         bool Alive;
     };
 
@@ -295,13 +306,15 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Glyph slab registry (core-owned; the ImGui-facing adapter allocates)
     // ---------------------------------------------------------------------
-    // Null when ImSlug::Init was not called or the cap is exhausted. `bake` is
-    // the ImFontBaked the slab belongs to: ImSlugFreeGlyphSlabsForBake releases
-    // every slab of one bake (the glyph records of a discarded bake die with it).
+    // Null when ImSlug::Init was not called or the cap is exhausted. `bakeId`
+    // is the owning ImFontBaked's BakedId (stable for the bake's lifetime;
+    // ImGui may move the ImFontBaked struct itself when its BakedPool is
+    // compacted): ImSlugFreeGlyphSlabsForBake releases every slab of one bake
+    // (the glyph records of a discarded bake die with it).
     ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
-                                          float ascent, float pixelsPerEm, const void* bake, uint32_t* outSlot);
+                                          float ascent, float pixelsPerEm, uint64_t bakeId, uint32_t* outSlot);
     void ImSlugFreeGlyphSlab(uint32_t slot);
-    void ImSlugFreeGlyphSlabsForBake(const void* bake);
+    void ImSlugFreeGlyphSlabsForBake(uint64_t bakeId);
     const ImSlugGlyphSlab* ImSlugGetGlyphSlab(uint32_t slot);
 
     // The process-wide pools glyph records are built into (owned by Init).

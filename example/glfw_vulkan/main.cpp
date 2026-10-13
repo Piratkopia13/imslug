@@ -789,13 +789,25 @@ namespace
         }
     }
 
-    // Re-adds the Slug fonts at the current base size. The ImGui atlas keeps
-    // the previous ImFont objects; glyph slabs are freed through the bake
-    // discard path and our registry, while the outlines and bands in the pools
-    // stay valid and are reused across sizes (no atlas growth).
+    // Re-adds the Slug fonts at the current base size. The previous fonts are
+    // removed first: without that every size step would append another ImFont +
+    // bake set to the atlas (glyph slabs pile up until the cap) and the atlas
+    // grows. Removal discards the bakes, which releases the slabs through
+    // FontBakedDestroy; the outlines and bands in the pools stay valid and are
+    // reused across sizes (no atlas growth for Slug glyphs).
     void RebuildFonts()
     {
         ImGuiIO& io = ImGui::GetIO();
+        if (g_App.SlugFont != nullptr)
+        {
+            io.Fonts->RemoveFont(g_App.SlugFont);
+            g_App.SlugFont = nullptr;
+        }
+        if (g_App.StockFont != nullptr)
+        {
+            io.Fonts->RemoveFont(g_App.StockFont);
+            g_App.StockFont = nullptr;
+        }
         const char* fontPath = g_App.FontPath != nullptr ? g_App.FontPath : IMSLUG_EXAMPLE_FONT_PATH;
         g_App.SlugFont = ImSlug::AddFontFromFileTTF(fontPath, (float)g_App.BaseSize);
         if (g_App.SlugFont == nullptr)
@@ -1169,16 +1181,10 @@ namespace
         if (ok)
             ok = CreateSwapchain();
 
-        // imslug + ImGui: stock backends first (they publish the platform_io
-        // hooks imslug needs), then the imslug core and its Vulkan module.
-        if (ok)
-        {
-            if (!ImSlug::Init())
-            {
-                fprintf(stderr, "[imslug] ImSlug::Init failed\n");
-                ok = false;
-            }
-        }
+        // imslug + ImGui: the documented order (imslug.h) is ImGui context ->
+        // stock backend (publishes the platform_io hooks imslug needs, sets
+        // RendererHasTextures) -> ImSlug::Init -> imslug backend module ->
+        // AddFont*. The Init call therefore lives after ImGui_ImplVulkan_Init.
         if (ok)
         {
             VkDescriptorPoolSize poolSizes[1] = { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64 } };
@@ -1228,6 +1234,14 @@ namespace
             }
             if (ok)
                 g_App.ImGuiInitialized = true;
+
+            // ImSlug core after the stock backend (RendererHasTextures) and
+            // before its own Vulkan module / any AddFont* call.
+            if (ok && !ImSlug::Init())
+            {
+                fprintf(stderr, "[imslug] ImSlug::Init failed\n");
+                ok = false;
+            }
 
             if (ok && !ImSlug_ImplVulkan_Init(&initInfo))
             {

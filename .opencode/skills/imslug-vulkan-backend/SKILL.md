@@ -278,7 +278,17 @@ void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline m
    needs `PipelineInfoMain.PipelineRenderingCreateInfo` with the color format
    array alive for the whole module lifetime (the adapter copies the struct but
    not the array - a block-scoped format array is a real crash, see the M3
-   notes).
+   notes). **Multi-viewport beyond compatible passes stays a documented
+   deferral** (verified against pinned v1.92.9b): a secondary viewport created
+   by the `ImGui_ImplVulkanH_*` helpers owns a *distinct* render pass
+   (`ImGui_ImplVulkanH_Window::RenderPass`, created in
+   `ImGui_ImplVulkanH_CreateOrResizeWindow`), while callback-time
+   `ImGui_ImplVulkan_RenderState` exposes only `CommandBuffer/Pipeline/
+   PipelineLayout` - no render pass/subpass. The adapter therefore cannot
+   discover the active viewport's pass from the published state, and drawing
+   Slug text into a foreign pass would use an incompatible pipeline. A correct
+   path needs app cooperation (an explicit per-viewport pass API); deferred
+   beyond M3.
 8. The pre-pass rewrites only `CmdBuffer` (scratch vector): geometry triangles
    keep exact order/offsets, each maximal text run becomes a callback command
    with `ElemCount = 0` and `ClipRect`/`TexRef` copied from the original; the

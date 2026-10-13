@@ -37,6 +37,7 @@ namespace
     const uint32_t kFakeCapacity = 8192;
     const uint32_t kMaxReferenceInstances = 512;
     ImSlugGlyphInstance g_FakeInstances[kFakeCapacity];
+    uint32_t g_FakeCapacity = kFakeCapacity;  // lowerable to exercise ring exhaustion
     uint32_t g_FakeUsed = 0;
     uint32_t g_FakeFrameIndex = 0;
     int g_FakeDrawCalls = 0;
@@ -49,7 +50,7 @@ namespace
 
     ImSlugGlyphInstance* FakeReserve(uint32_t count, uint32_t* outFirst)
     {
-        if (g_FakeUsed + count > kFakeCapacity)
+        if (count > g_FakeCapacity - g_FakeUsed)
             return nullptr;
         *outFirst = g_FakeUsed;
         g_FakeUsed += count;
@@ -519,6 +520,16 @@ static void TestHandleRoundTrip()
     TEST_CHECKF(!ImSlugAdapterDecodeVertex(glyph->U0, glyph->V1 * 3.0f, &decoded), "mixed slot must not decode");
     TEST_CHECKF(!ImSlugAdapterDecodeVertex(1e30f, 1e30f, &decoded), "huge values must not decode");
     TEST_CHECKF(!ImSlugAdapterDecodeVertex(-1.0f, -1.0f, &decoded), "negative UVs must not decode");
+
+    // Just past the tolerated overhang on each side of the encoded 0..1 range:
+    // pins kUvFracTolerance (a value 0.5 cell away would previously decode).
+    const float over = (kUvFracTolerance + 0.05f) * kUvFracScale;
+    TEST_CHECKF(!ImSlugAdapterDecodeVertex(glyph->U0 - over, glyph->V0, &decoded), "frac below -tol must not decode");
+    TEST_CHECKF(!ImSlugAdapterDecodeVertex(glyph->U1 + over, glyph->V1, &decoded), "frac above 1+tol must not decode");
+    // ...but a small overhang (float rounding of a clipped corner) still does.
+    TEST_CHECKF(ImSlugAdapterDecodeVertex(glyph->U0 - 1e-4f, glyph->V0 + 1e-4f, &decoded),
+                "rounding overhang must still decode");
+    TEST_CHECKF(decoded.Slab == tl.Slab, "rounding overhang decoded the wrong slab");
 }
 
 // ---------------------------------------------------------------------------
@@ -974,6 +985,273 @@ static void TestRuntimeDpiAndAtlasGrowth()
                     "instance %u moved after an atlas repack", i);
 }
 
+// ---------------------------------------------------------------------------
+// 7. CmdScratch growth: thousands of alternating text/geometry runs inside one
+//    source command -> > 4096 output commands (review M1).
+// ---------------------------------------------------------------------------
+static void TestCommandScratchGrowth()
+{
+    std::printf("[test] cmd scratch growth (large single command)\n");
+    ImFont* slugFont = ImGui::GetIO().Fonts->Fonts[0];
+    const int alternations = 2300;  // ~3 outputs per cycle, all in one command
+
+    ImGui::NewFrame();
+    OpenTestWindow("scratch");
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    for (int i = 0; i < alternations; ++i)
+    {
+        const float y = 10.0f + (float)(i % 200);
+        drawList->AddText(slugFont, g_TestFontSize, ImVec2(10.0f + (float)(i % 7), y), IM_COL32(255, 255, 255, 255),
+                          "x");
+        drawList->AddLine(ImVec2(10.0f, y), ImVec2(300.0f, y), IM_COL32(120, 120, 120, 255), 1.0f);
+    }
+    ImGui::End();
+    ImDrawData* drawData = RunFrame(60);
+    TEST_CHECK(drawData != nullptr && drawData->CmdListsCount > 0);
+    if (drawData == nullptr || drawData->CmdListsCount == 0)
+        return;
+
+    const ImDrawList* list = drawData->CmdLists[0];
+    TEST_CHECKF(list->CmdBuffer.Size > 4096, "only %d output commands (test setup invalid)", list->CmdBuffer.Size);
+
+    const ImDrawCallback resetCallback = ImGui::GetPlatformIO().DrawCallback_ResetRenderState;
+    int callbacks = 0;
+    int resets = 0;
+    for (int i = 0; i < list->CmdBuffer.Size; ++i)
+    {
+        const ImDrawCmd& cmd = list->CmdBuffer[i];
+        if (cmd.UserCallback == ImSlug::DrawCallback)
+        {
+            callbacks++;
+            TEST_CHECKF(i + 1 < list->CmdBuffer.Size && list->CmdBuffer[i + 1].UserCallback == resetCallback,
+                        "Slug callback %d not followed by a reset", i);
+        }
+        else if (cmd.UserCallback == resetCallback)
+            resets++;
+    }
+    TEST_CHECKF(callbacks == alternations, "%d Slug callbacks (expected %d)", callbacks, alternations);
+    TEST_CHECKF(resets == callbacks, "%d reset commands for %d callbacks", resets, callbacks);
+    TEST_CHECKF(CountSlugVerticesInGeometry(list) == 0, "Slug vertices left in geometry commands");
+
+    Statistics stats;
+    ImSlug::GetStatistics(&stats);
+    TEST_CHECKF(stats.LiveBatches == (uint32_t)alternations, "batches %u (expected %d)", stats.LiveBatches,
+                alternations);
+    TEST_CHECKF(stats.Instances == (uint32_t)alternations, "instances %u (expected %d)", stats.Instances, alternations);
+    TEST_CHECKF(stats.DroppedRuns == 0, "dropped %u runs", stats.DroppedRuns);
+    TEST_CHECKF(g_FakeUsed == (uint32_t)alternations, "fake ring used %u (expected %d)", g_FakeUsed, alternations);
+    TEST_CHECKF(g_FakeDrawCalls == alternations, "%d batch draws (expected %d)", g_FakeDrawCalls, alternations);
+}
+
+// ---------------------------------------------------------------------------
+// 8. Slab lifetime across ImGui's BakedPool GC (review B1): a bake moved by
+//    the GC must release exactly its own slabs, and discarding one bake must
+//    never free a live bake's slabs.
+// ---------------------------------------------------------------------------
+static uint32_t LiveSlabs()
+{
+    Statistics stats;
+    ImSlug::GetStatistics(&stats);
+    return stats.GlyphSlabs;
+}
+
+static int BakeVisibleRange(ImFontBaked* baked, unsigned int firstCodepoint, unsigned int lastCodepoint)
+{
+    int visible = 0;
+    for (unsigned int codepoint = firstCodepoint; codepoint < lastCodepoint; ++codepoint)
+    {
+        const ImFontGlyph* glyph = baked->FindGlyph((ImWchar)codepoint);
+        if (glyph != nullptr && glyph->Visible)
+            visible++;
+    }
+    return visible;
+}
+
+static void CheckGlyphDecodesAsSlug(ImFont* font, float size, ImWchar codepoint, const char* what)
+{
+    ImFontBaked* baked = font->GetFontBaked(size);
+    TEST_CHECKF(baked != nullptr, "%s: no bake", what);
+    if (baked == nullptr)
+        return;
+    const ImFontGlyph* glyph = baked->FindGlyph(codepoint);
+    TEST_CHECKF(glyph != nullptr && glyph->Visible, "%s: glyph not visible", what);
+    if (glyph == nullptr || !glyph->Visible)
+        return;
+    ImSlugDecodedVertex decoded;
+    TEST_CHECKF(ImSlugAdapterDecodeVertex(glyph->U0, glyph->V0, &decoded), "%s: does not decode as Slug", what);
+    TEST_CHECKF(decoded.Slab != nullptr, "%s: decoded without a slab", what);
+}
+
+static void TestBakeLifetime()
+{
+    std::printf("[test] glyph slab lifetime across BakedPool GC\n");
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    const uint32_t baseline = LiveSlabs();
+
+    // BakedPool order: stock probe -> Slug A -> Slug B. Discarding the probe
+    // makes the next frame's GC (imgui_draw.cpp ~2823) memcpy A and B down one
+    // entry, exactly the situation an ImFontBaked* lifetime key gets wrong.
+    ImFontConfig stockConfig;
+    stockConfig.OversampleH = 1;
+    stockConfig.OversampleV = 1;
+    ImFont* probe = atlas->AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Inter-Regular.ttf"), 20.0f, &stockConfig);
+    TEST_CHECK(probe != nullptr);
+    if (probe != nullptr)
+    {
+        ImFontBaked* probeBaked = probe->GetFontBaked(20.0f);
+        for (unsigned int codepoint = 0x20; codepoint < 0x80; ++codepoint)
+            probeBaked->FindGlyph((ImWchar)codepoint);
+    }
+    ImFont* slugA = ImSlug::AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf"), 48.0f);
+    ImFont* slugB = ImSlug::AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf"), 64.0f);
+    TEST_CHECK(slugA != nullptr && slugB != nullptr);
+    if (slugA == nullptr || slugB == nullptr)
+        return;
+
+    ImFontBaked* bakedABefore = slugA->GetFontBaked(48.0f);
+    ImFontBaked* bakedBBefore = slugB->GetFontBaked(64.0f);
+    const int visibleA = BakeVisibleRange(bakedABefore, 0x20, 0x80);
+    const int visibleB = BakeVisibleRange(bakedBBefore, 0x20, 0x80);
+    TEST_CHECK(visibleA > 0 && visibleB > 0);
+    const uint32_t slabsAB = LiveSlabs();
+    TEST_CHECKF(slabsAB == baseline + (uint32_t)(visibleA + visibleB), "slabs %u (expected %u + %d + %d)", slabsAB,
+                baseline, visibleA, visibleB);
+
+    // Discard the probe, then run a frame: the GC moves A and B down one pool
+    // entry, so B now occupies A's old address.
+    ImFontAtlasFontDiscardBakes(atlas, probe, 0);
+    ImGui::NewFrame();
+    OpenTestWindow("bake-lifetime");
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddText(slugA, 48.0f, ImVec2(20.0f, 20.0f), IM_COL32(255, 255, 255, 255), "Hello A");
+    drawList->AddText(slugB, 64.0f, ImVec2(20.0f, 100.0f), IM_COL32(255, 255, 255, 255), "Hello B");
+    ImGui::End();
+    RunFrame(61);
+    const ImFontBaked* bakedAAfter = slugA->GetFontBaked(48.0f);
+    const ImFontBaked* bakedBAfter = slugB->GetFontBaked(64.0f);
+    TEST_CHECKF(bakedAAfter != bakedABefore || bakedBAfter != bakedBBefore,
+                "BakedPool GC did not move the bakes (test setup invalid)");
+    TEST_CHECKF(LiveSlabs() == slabsAB, "slabs changed by the GC: %u vs %u", LiveSlabs(), slabsAB);
+    CheckGlyphDecodesAsSlug(slugB, 64.0f, (ImWchar)'H', "B after the GC");
+
+    // Mirror direction (freeing live slabs): discard B, whose GC address is
+    // A's old pool address. An address key frees A's live slabs here; a
+    // BakedId key frees B's and leaves A's handles decoding.
+    ImFontAtlasFontDiscardBakes(atlas, slugB, 0);
+    TEST_CHECKF(LiveSlabs() == slabsAB - (uint32_t)visibleB, "after discarding B: %u slabs (expected %u)", LiveSlabs(),
+                slabsAB - (uint32_t)visibleB);
+    CheckGlyphDecodesAsSlug(slugA, 48.0f, (ImWchar)'H', "A after B's discard");
+
+    // Leak direction: discard A's moved bake. Keyed on BakedId, exactly A's
+    // slabs are released and the live count returns to the pre-bake value.
+    ImFontAtlasFontDiscardBakes(atlas, slugA, 0);
+    TEST_CHECKF(LiveSlabs() == baseline, "after discarding A: %u slabs (expected %u)", LiveSlabs(), baseline);
+
+    // A fresh bake after the GC: lookups and handles stay correct.
+    CheckGlyphDecodesAsSlug(slugA, 48.0f, (ImWchar)'H', "A re-baked after the GC");
+
+    // Cleanup: remove the test fonts; all their slabs must be gone.
+    if (probe != nullptr)
+        atlas->RemoveFont(probe);
+    atlas->RemoveFont(slugA);
+    atlas->RemoveFont(slugB);
+    TEST_CHECKF(LiveSlabs() == baseline, "slabs leaked after removing the test fonts: %u vs %u", LiveSlabs(), baseline);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Documented fallbacks: instance-ring exhaustion (DroppedRuns) and the
+//    glyph-slab cap (ImGui's fallback glyph).
+// ---------------------------------------------------------------------------
+static void TestGracefulFallbacks()
+{
+    std::printf("[test] documented fallbacks (instance ring, slab cap)\n");
+
+    // --- MaxInstancesPerFrame exhaustion -> DroppedRuns, no corruption ------
+    // Release-only: the drop path deliberately asserts in debug (see the M3
+    // completion notes); the release behavior is the documented fallback.
+#if defined(NDEBUG)
+    {
+        ImFont* slugFont = ImGui::GetIO().Fonts->Fonts[0];
+        ImGui::NewFrame();
+        OpenTestWindow("drops");
+        ImGui::GetWindowDrawList()->AddText(slugFont, g_TestFontSize, ImVec2(20.0f, 20.0f),
+                                            IM_COL32(255, 255, 255, 255), "Dropped run");
+        ImGui::End();
+
+        ResetFake();
+        g_FakeCapacity = 0;  // every reservation fails
+        ImDrawData* drawData = RunFrame(62);
+        g_FakeCapacity = kFakeCapacity;
+        TEST_CHECK(drawData != nullptr && drawData->CmdListsCount > 0);
+        if (drawData != nullptr && drawData->CmdListsCount > 0)
+        {
+            const ImDrawList* list = drawData->CmdLists[0];
+            Statistics stats;
+            ImSlug::GetStatistics(&stats);
+            TEST_CHECK(stats.LiveBatches > 0);
+            TEST_CHECKF(stats.DroppedRuns == stats.LiveBatches, "dropped %u of %u runs", stats.DroppedRuns,
+                        stats.LiveBatches);
+            TEST_CHECK(stats.Instances > 0);
+            TEST_CHECKF(g_FakeUsed == 0, "%u instances reserved with a zero-capacity ring", g_FakeUsed);
+            TEST_CHECKF(g_FakeDrawCalls == 0, "%d draws with a zero-capacity ring", g_FakeDrawCalls);
+
+            // The command structure stays valid: every callback is followed by
+            // a reset and no Slug vertex leaks into the geometry path.
+            const ImDrawCallback resetCallback = ImGui::GetPlatformIO().DrawCallback_ResetRenderState;
+            int callbacks = 0;
+            for (int i = 0; i < list->CmdBuffer.Size; ++i)
+                if (list->CmdBuffer[i].UserCallback == ImSlug::DrawCallback)
+                {
+                    callbacks++;
+                    TEST_CHECKF(i + 1 < list->CmdBuffer.Size && list->CmdBuffer[i + 1].UserCallback == resetCallback,
+                                "dropped callback %d not followed by a reset", i);
+                }
+            TEST_CHECKF(callbacks == (int)stats.LiveBatches, "%d callbacks vs %u batches", callbacks,
+                        stats.LiveBatches);
+            TEST_CHECKF(CountSlugVerticesInGeometry(list) == 0, "Slug vertices left in geometry");
+        }
+    }
+#else
+    std::printf("  (instance-ring exhaustion asserts in debug; release-only check)\n");
+#endif
+
+    // --- MaxGlyphSlabs exhaustion -> ImGui's fallback glyph -----------------
+    // A separate small-cap core: three slabs, then further visible glyphs fall
+    // back instead of decoding as (or sampling) a Slug handle.
+    ImSlug::Shutdown();
+    Config tiny;
+    tiny.MaxGlyphSlabs = 3;
+    TEST_CHECKF(ImSlug::Init(tiny), "Init with MaxGlyphSlabs = 3 failed");
+    ImSlugSetRenderIO(&g_FakeIO);
+
+    ImFont* tinyFont = ImSlug::AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf"), 32.0f);
+    TEST_CHECK(tinyFont != nullptr);
+    if (tinyFont != nullptr)
+    {
+        ImFontBaked* baked = tinyFont->GetFontBaked(32.0f);
+        TEST_CHECK(baked != nullptr);
+        const ImFontGlyph* allowed[3] = { baked->FindGlyph((ImWchar)'A'), baked->FindGlyph((ImWchar)'B'),
+                                          baked->FindGlyph((ImWchar)'C') };
+        const ImFontGlyph* overflow = baked->FindGlyph((ImWchar)'D');
+        TEST_CHECK(allowed[0] != nullptr && allowed[1] != nullptr && allowed[2] != nullptr && overflow != nullptr);
+        TEST_CHECKF(LiveSlabs() == 3, "%u slabs (expected the cap 3)", LiveSlabs());
+        for (const ImFontGlyph* glyph : allowed)
+        {
+            TEST_CHECK(glyph->Visible);
+            ImSlugDecodedVertex decoded;
+            TEST_CHECK(ImSlugAdapterDecodeVertex(glyph->U0, glyph->V0, &decoded));
+            TEST_CHECK(decoded.Slab != nullptr);
+        }
+        // Overflowing codepoints share the fallback glyph and carry no handle
+        // (ImGui never publishes a partial Slug glyph for them).
+        TEST_CHECKF(overflow == baked->FindGlyph((ImWchar)'E'), "'D' and 'E' do not share the fallback glyph");
+        TEST_CHECK(overflow != allowed[0] && overflow != allowed[1] && overflow != allowed[2]);
+        ImSlugDecodedVertex decoded;
+        TEST_CHECKF(!ImSlugAdapterDecodeVertex(overflow->U0, overflow->V0, &decoded),
+                    "the fallback glyph carries Slug UVs");
+    }
+}
+
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1005,6 +1283,9 @@ int main()
     TestPlacement();
     TestEdgeCases();
     TestRuntimeDpiAndAtlasGrowth();
+    TestCommandScratchGrowth();
+    TestBakeLifetime();
+    TestGracefulFallbacks();
 
     if (g_TestFont != nullptr)
         ImSlugDestroyFont(g_TestFont);
