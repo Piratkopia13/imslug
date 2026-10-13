@@ -31,6 +31,16 @@
 
 #include <vulkan/vulkan.h>
 
+// Forward declarations only: the M2 core stays ImGui-free, so this header does
+// not include imgui.h / imgui_impl_vulkan.h. Include those before this header
+// to use the ImSlug_ImplVulkan_* adapter (M3).
+struct ImDrawData;
+struct ImGui_ImplVulkan_InitInfo;
+
+#ifndef IMSLUG_API
+#define IMSLUG_API  // imslug.h defines the real one; this header stays standalone
+#endif
+
 namespace ImSlug
 {
     // ---------------------------------------------------------------------
@@ -135,6 +145,41 @@ namespace ImSlug
     // The caller owns the viewport dynamic state: bind a viewport matching
     // ViewportWidth/Height before drawing (the example sets it once per frame).
     void ImSlugVulkanDraw(VkCommandBuffer cmd, const ImSlugVulkanDrawInfo* drawInfo);
+
+    // ---------------------------------------------------------------------
+    // M3 ImGui adapter (implements the bridge to the stock ImGui Vulkan
+    // backend). Usage, in this order:
+    //   ImGui_ImplVulkan_Init(&init_info);      // stock backend, unchanged
+    //   ImSlug::Init();                         // core
+    //   ImSlug_ImplVulkan_Init(&init_info);     // this module
+    //   ImSlug::AddFontFromFileTTF(...);        // Slug fonts
+    // Per frame:
+    //   ImSlug_ImplVulkan_UploadPools(cmd);     // before the render pass
+    //   ImGui_ImplVulkan_RenderDrawData / ImSlug_ImplVulkan_RenderDrawData
+    // ---------------------------------------------------------------------
+    // Mirrors ImGui_ImplVulkan_InitInfo.PipelineInfoMain (render pass, subpass,
+    // MSAA, dynamic rendering) onto ImSlugVulkanInitInfo, initializes the M2
+    // core and registers the callback render interface. Requires ImSlug::Init()
+    // and a renderer with ImGuiBackendFlags_RendererHasTextures.
+    IMSLUG_API bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo* initInfo);
+
+    // Unregisters the render interface and shuts the M2 core down (waits for
+    // the device). ImSlug::Shutdown() is separate and owned by the app.
+    IMSLUG_API void ImSlug_ImplVulkan_Shutdown();
+
+    // Records this frame's glyph-pool uploads (dirty rows only) into `cmd`.
+    // Call once per frame, outside a render pass and before the first
+    // ImSlug_ImplVulkan_RenderDrawData call: the pool textures are static
+    // afterwards, so draws need no transfer commands inside the render pass.
+    // Advances the internal frames-in-flight slot.
+    IMSLUG_API void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd);
+
+    // Rewrites Slug text runs into callback draws (ImSlug::PreprocessDrawData)
+    // and then renders the draw data through the stock backend. `cmd` must be
+    // inside the render pass the InitInfo described (or inside a compatible
+    // one); `mainPipeline` mirrors ImGui_ImplVulkan_RenderDrawData's argument.
+    IMSLUG_API void ImSlug_ImplVulkan_RenderDrawData(ImDrawData* drawData, VkCommandBuffer cmd,
+                                                     VkPipeline mainPipeline = VK_NULL_HANDLE);
 
     // ---------------------------------------------------------------------
     // Helpers shared by the example and the golden harness

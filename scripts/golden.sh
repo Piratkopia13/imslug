@@ -24,7 +24,7 @@ BUILD_DIR="${IMSLUG_BUILD_DIR:-build}"
 BUILD_TYPE="${IMSLUG_BUILD_TYPE:-Release}"
 
 echo "[golden] build step"
-"$(dirname "$0")/build.sh" --target imslug_tests_golden || exit 1
+"$(dirname "$0")/build.sh" --target imslug_tests_golden imslug_tests_imgui_golden || exit 1
 
 CTEST_EXE="${IMSLUG_CTEST:-ctest}"
 

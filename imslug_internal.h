@@ -64,6 +64,9 @@
 
 namespace ImSlug
 {
+    // Public API types used by pointer in this header (definitions in imslug.h).
+    struct Config;
+
 // ---------------------------------------------------------------------
 // Assertions
 // ---------------------------------------------------------------------
@@ -304,6 +307,9 @@ namespace ImSlug
     // The process-wide pools glyph records are built into (owned by Init).
     // Null before Init / after Shutdown.
     ImSlugPools* ImSlugGetPools();
+
+    // The active Config (Zeroed before Init/false when not initialized).
+    const Config* ImSlugGetConfig();
 
     // ---------------------------------------------------------------------
     // Build status (capacity guards feed the graceful fallback of PLAN R11)

@@ -67,7 +67,24 @@ if(IMSLUG_HAVE_VULKAN)
     add_test(NAME imslug_golden_dynamic
         COMMAND imslug_tests_golden --dynamic-rendering
         WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
-    set_tests_properties(imslug_golden imslug_golden_dynamic PROPERTIES SKIP_RETURN_CODE 77)
+
+    # M3: the same ImGui scene rendered with the Slug font and with the atlas
+    # font, compared end to end (layout exact within 1 px, AA perceptual).
+    add_executable(imslug_tests_imgui_golden golden/test_imgui_golden_vulkan.cpp test_util.h)
+    target_link_libraries(imslug_tests_imgui_golden PRIVATE imslug imslug_vulkan)
+    set_target_properties(imslug_tests_imgui_golden PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_tests_imgui_golden)
+    target_compile_definitions(imslug_tests_imgui_golden PRIVATE
+        IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+    add_test(NAME imslug_imgui_golden
+        COMMAND imslug_tests_imgui_golden
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    add_test(NAME imslug_imgui_golden_dynamic
+        COMMAND imslug_tests_imgui_golden --dynamic-rendering
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    set_tests_properties(imslug_golden imslug_golden_dynamic imslug_imgui_golden imslug_imgui_golden_dynamic
+        PROPERTIES SKIP_RETURN_CODE 77)
 else()
     message(STATUS "imslug tests: golden-image tests skipped (Vulkan not found)")
 endif()

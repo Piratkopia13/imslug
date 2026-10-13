@@ -1,27 +1,34 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// example/glfw_vulkan/main.cpp — standalone GLFW + Vulkan example (M2).
+// example/glfw_vulkan/main.cpp — GLFW + Vulkan example (M3).
 //
-// Demonstrates the whole M2 pipeline without ImGui: loads a TTF through the M1
-// core, uploads the curve/band pools, renders text through
-// backends/imslug_impl_vulkan.* and lets you change the bake size and the
-// fractional zoom (0.5x .. 8x) to inspect sharpness. Vulkan validation layers
-// are enabled by default (set IMSLUG_VALIDATION=0 to disable); every message is
-// printed and the error count is reported on exit.
+// An ordinary Dear ImGui application: the stock GLFW+Vulkan backends render
+// everything, imslug renders the text of the registered fonts through Slug.
+// The scene switcher exercises the M3 acceptance scenes (demo, widgets/plots/
+// tables, clipping torture, mixed fonts, runtime FontScaleDpi). Vulkan
+// validation layers are enabled by default (set IMSLUG_VALIDATION=0 to
+// disable); every message is printed and the error count is reported on exit.
 //
 // Usage:
-//   imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--zoom <scale>]
-//                              [--screenshot <file.ppm> <px_size> <scale>]
+//   imslug_example_glfw_vulkan [--font <path>] [--size <px>]
+//                              [--screenshot <file.ppm> [scene] [dpi_scale]]
 // Keys:
-//   + / -    bake size +-4 px (12 .. 96)        , / .   zoom -+ 0.25x (0.5 .. 8)
-//   0        reset size/zoom to the defaults    Esc     quit
+//   1 .. 5   select scene (demo / widgets / clipping / mixed fonts / dpi)
+//   + / -    base font size +-1 px (12 .. 48)
+//   0        reset fonts/DPI to the defaults    Esc     quit
 //
-// Third-party: GLFW (zlib license) is fetched by CMake; the example itself is
-// imslug code. Fonts come from tests/fonts/ (Roboto, Apache-2.0).
+// Third-party: Dear ImGui (MIT, pinned v1.92.9b) and GLFW (zlib license) are
+// fetched by CMake; the example itself is imslug code. Fonts come from
+// tests/fonts/ (Roboto, Apache-2.0).
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+
+#include "imslug.h"
 #include "imslug_impl_vulkan.h"
 #include "imslug_internal.h"
 
@@ -36,11 +43,10 @@ namespace
     const uint32_t kMaxFramesInFlight = 3;
     const int kDefaultWindowWidth = 1280;
     const int kDefaultWindowHeight = 800;
-    const int kDefaultSize = 32;
-    const float kDefaultZoom = 1.0f;
-    const float kMinZoom = 0.5f;
-    const float kMaxZoom = 8.0f;
-    const int kMargin = 24;
+    const int kDefaultSize = 17;
+    const int kMinSize = 12;
+    const int kMaxSize = 48;
+    const int kSceneCount = 5;
 
     struct App
     {
@@ -75,11 +81,20 @@ namespace
         uint32_t FramesInFlight;  // backend ring size: min(swapchain images, 3)
         bool SwapchainDirty;
 
-        ImSlugFont* Font;
-        ImSlugPools Pools;
+        // ImGui + imslug
+        VkDescriptorPool ImGuiDescriptorPool;
+        ImFont* SlugFont;   // rendered by Slug
+        ImFont* StockFont;  // rendered through the atlas (mixed-font scene)
+        bool ImGuiInitialized;
+        bool ImSlugBackendInitialized;
+        bool FontsDirty;  // re-add fonts at the current size next frame
+        int BaseSize;
+        int Scene;
+        float DpiScale;
+        bool ShowDemoStats;
+        int SlugGlyphCount;
+        int SlugRunCount;
 
-        int BakeSize;
-        float Zoom;
         const char* FontPath;
 
         // Screenshot mode.
@@ -568,98 +583,232 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // Text
+    // Scenes (the M3 acceptance scenes)
     // ---------------------------------------------------------------------
-    struct TextBatch
+    void SceneDemo()
     {
-        uint32_t FirstInstance;
-        uint32_t InstanceCount;
-    };
+        if (g_App.ShowDemoStats)
+            ImGui::ShowMetricsWindow(&g_App.ShowDemoStats);
+        ImGui::ShowDemoWindow(nullptr);
+    }
 
-    // Lays out an ASCII string left to right and appends one instance per
-    // non-empty glyph. Returns the instance count written.
-    uint32_t BuildText(const char* text, float penX, float baselineY, float pixelsPerEm, float r, float g, float b,
-                       float a, ImSlugGlyphInstance* out, uint32_t capacity)
+    void SceneWidgets()
     {
-        uint32_t count = 0;
-        for (const char* p = text; *p != '\0' && count < capacity; ++p)
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 520.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("widgets, plots and tables");
+        ImGui::Text("A normal ImGui window: labels, buttons, sliders, plots.");
+        static float value = 0.5f;
+        static bool flag = true;
+        ImGui::SliderFloat("slider", &value, 0.0f, 1.0f);
+        ImGui::Checkbox("checkbox", &flag);
+        if (ImGui::Button("a button"))
+            value = 0.25f;
+        ImGui::SameLine();
+        ImGui::Text("inline text after a button");
+        static float history[120] = {};
+        history[g_App.FramesRendered % 120] = value;
+        ImGui::PlotLines("plot", history, 120, g_App.FramesRendered % 120, "value", 0.0f, 1.0f, ImVec2(0.0f, 80.0f));
+        if (ImGui::BeginTable("table", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable))
         {
-            const ImSlugGlyphRecord* record = nullptr;
-            if (ImSlugGetGlyphRecord(g_App.Font, &g_App.Pools, (unsigned char)*p, &record) != ImSlugBuildStatus_Ok)
-                continue;
-            if (record->CurveCount > 0)
-                ImSlugBuildGlyphInstance(record, penX, baselineY, pixelsPerEm, r, g, b, a, &out[count++]);
-            penX += record->Advance * pixelsPerEm;
+            for (int row = 0; row < 12; ++row)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("row %d", row);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("Hamburgefonstiv %d", row * 7);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("U+%04X", 0x40 + row);
+            }
+            ImGui::EndTable();
         }
-        return count;
+        ImGui::End();
     }
 
-    float AscentFor(float bakeSize, float scale)
+    // Long text in differently sized children, tooltips and scrolling: every
+    // CPU fine-clip path (four sides), window-edge clipping and ellipsized
+    // labels in one scene.
+    void SceneClipping()
     {
-        // Ascent/descent in pixels at `bakeSize`, scaled to the render scale.
-        ImSlugFontMetrics metrics;
-        ImSlugGetFontMetrics(g_App.Font, bakeSize, &metrics);
-        return metrics.Ascent * scale;
-    }
+        ImGui::Begin("clipping torture");
 
-    // ---------------------------------------------------------------------
-    // Frame building
-    // ---------------------------------------------------------------------
-    struct FrameBatches
-    {
-        uint32_t InstanceCount;
-        TextBatch Main;
-        TextBatch Ladder[3];
-        uint32_t LadderCount;
-        TextBatch Hud;
-    };
-
-    void BuildFrame(ImSlugGlyphInstance* instances, uint32_t capacity, FrameBatches* batches)
-    {
-        memset(batches, 0, sizeof(*batches));
-        const float height = (float)g_App.SwapchainExtent.height;
-        const float mainPpem = (float)g_App.BakeSize * g_App.Zoom;
-
-        // Main line: the string the keyboard controls act on.
-        const char* mainText = "Slug on Vulkan - sharp at any size";
-        const float mainAscent = AscentFor((float)g_App.BakeSize, g_App.Zoom);
-        float baseline = (float)kMargin + mainAscent;
-        batches->Main.FirstInstance = batches->InstanceCount;
-        batches->Main.InstanceCount = BuildText(mainText, (float)kMargin, baseline, mainPpem, 0.95f, 0.96f, 1.0f, 1.0f,
-                                                instances + batches->InstanceCount, capacity - batches->InstanceCount);
-        batches->InstanceCount += batches->Main.InstanceCount;
-
-        // Ladder: the same text at fixed fractional scales (sharpness evidence).
-        const float ladderScales[3] = { 0.5f, 1.0f, 2.0f };
-        baseline += mainAscent + (float)kMargin * 0.5f;
-        for (int i = 0; i < 3; ++i)
+        ImGui::Text("1) labels clipped by narrow cells (CPU fine clip on the right):");
+        if (ImGui::BeginTable("cliptable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit))
         {
-            const float ppem = (float)g_App.BakeSize * ladderScales[i];
-            baseline += AscentFor((float)g_App.BakeSize, ladderScales[i]);
-            if (baseline > height - 40.0f)
-                break;
-            batches->Ladder[batches->LadderCount].FirstInstance = batches->InstanceCount;
-            batches->Ladder[batches->LadderCount].InstanceCount =
-                BuildText("Hamburgefonstiv 0123", (float)kMargin, baseline, ppem, 0.75f, 0.82f, 0.95f, 1.0f,
-                          instances + batches->InstanceCount, capacity - batches->InstanceCount);
-            batches->InstanceCount += batches->Ladder[batches->LadderCount].InstanceCount;
-            ++batches->LadderCount;
-            baseline += 12.0f;
+            for (int row = 0; row < 6; ++row)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("cell %d", row);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted("a very long label that must be elided ...");
+            }
+            ImGui::EndTable();
         }
 
-        // HUD line at the bottom.
-        char hud[256];
-        snprintf(hud, sizeof(hud),
-                 "bake %d px | zoom %.2fx | pixelsPerEm %.1f | validation %s | +/- size, </> zoom, 0 reset",
-                 g_App.BakeSize, g_App.Zoom, mainPpem, g_App.ValidationEnabled ? "ON" : "off");
-        batches->Hud.FirstInstance = batches->InstanceCount;
-        batches->Hud.InstanceCount =
-            BuildText(hud, (float)kMargin, height - (float)kMargin, 14.0f, 0.65f, 0.7f, 0.78f, 1.0f,
-                      instances + batches->InstanceCount, capacity - batches->InstanceCount);
-        batches->InstanceCount += batches->Hud.InstanceCount;
+        ImGui::Text("2) selectables with long labels (clip on all sides):");
+        for (int row = 0; row < 4; ++row)
+            ImGui::Selectable("a selectable with a ridiculously long caption that overflows", false, 0,
+                              ImVec2(180.0f, 0.0f));
+
+        ImGui::Text("3) child windows of shrinking size (window-edge + fine clip):");
+        const float widths[4] = { 220.0f, 96.0f, 40.0f, 14.0f };
+        for (int i = 0; i < 4; ++i)
+        {
+            ImGui::BeginChild(i == 0 ? "child-wide" : "child", ImVec2(widths[i], 34.0f), ImGuiChildFlags_Borders);
+            ImGui::TextUnformatted("Hamburgefonstiv in a small child window");
+            ImGui::TextUnformatted("second line, scrolled out of view");
+            ImGui::EndChild();
+            ImGui::SameLine();
+        }
+        ImGui::NewLine();
+
+        ImGui::Text("4) tooltips (hover the box):");
+        ImGui::Button("hover me", ImVec2(120.0f, 0.0f));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("tooltip text rendered by Slug as well\nsecond tooltip line");
+
+        ImGui::Text("5) text at the window edge (scrolled horizontally):");
+        ImGui::BeginChild("h-scroll", ImVec2(0.0f, 60.0f), ImGuiChildFlags_Borders,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::TextUnformatted("left edge | a long horizontally scrolling line with lots of words | right edge");
+        ImGui::TextUnformatted("Hamburgefonstiv 0123456789 repeated: abcdefghijklmnopqrstuvwxyz");
+        ImGui::EndChild();
+
+        ImGui::Text("6) a tiny child (a glyph squeezed on every side):");
+        ImGui::BeginChild("tiny", ImVec2(11.0f, 7.0f), ImGuiChildFlags_Borders);
+        ImGui::TextUnformatted("Wg");
+        ImGui::EndChild();
+
+        ImGui::End();
     }
 
-    // ---------------------------------------------------------------------
+    void SceneMixedFonts()
+    {
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 360.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("mixed fonts (Slug + atlas)");
+        ImGui::TextWrapped("The line below alternates between the Slug font and a stock atlas font in one frame; both "
+                           "paths must stay correct.");
+        ImGui::Separator();
+        for (int row = 0; row < 6; ++row)
+        {
+            if ((row % 2) == 0)
+                ImGui::Text("Slug: Hamburgefonstiv 0123456789");
+            else if (g_App.StockFont != nullptr)
+            {
+                ImGui::PushFont(g_App.StockFont, 0.0f);
+                ImGui::Text("atlas: Hamburgefonstiv 0123456789");
+                ImGui::PopFont();
+            }
+        }
+        ImGui::Separator();
+        ImGui::Text("Shapes, lines and images keep using the atlas:");
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        drawList->AddRectFilled(p, ImVec2(p.x + 180.0f, p.y + 24.0f), IM_COL32(70, 120, 200, 255), 4.0f);
+        drawList->AddCircleFilled(ImVec2(p.x + 220.0f, p.y + 12.0f), 12.0f, IM_COL32(200, 140, 60, 255));
+        drawList->AddText(ImVec2(p.x + 8.0f, p.y + 4.0f), IM_COL32(255, 255, 255, 255), "text over a shape");
+        ImGui::Dummy(ImVec2(240.0f, 30.0f));
+        ImGui::End();
+    }
+
+    void SceneDpi()
+    {
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 400.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("runtime FontScaleDpi");
+        ImGui::TextWrapped("Changing style.FontScaleDpi re-bakes the metrics at a new size while the Slug outlines and "
+                           "bands are reused: the atlas must not grow (watch the texture size).");
+        ImGui::SliderFloat("style.FontScaleDpi", &g_App.DpiScale, 0.5f, 3.0f, "%.2f");
+        ImGui::GetStyle().FontScaleDpi = g_App.DpiScale;
+        ImGui::SeparatorText("sample text");
+        ImGui::Text("Hamburgefonstiv 0123456789");
+        ImGui::TextWrapped("The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.");
+        ImGui::SeparatorText("atlas / backend state");
+        const ImTextureData* tex = ImGui::GetIO().Fonts->TexData;
+        Statistics stats;
+        ImSlug::GetStatistics(&stats);
+        ImGui::Text("atlas texture: %dx%d", tex != nullptr ? tex->Width : 0, tex != nullptr ? tex->Height : 0);
+        ImGui::Text("pixels per glyph rect (live): %d", stats.GlyphSlabs);
+        ImGui::Text("Slug instances last frame: %u", stats.Instances);
+        ImGui::End();
+    }
+
+    void DrawSceneSwitcher()
+    {
+        const char* sceneNames[kSceneCount] = { "demo window", "widgets / plots / tables", "clipping torture",
+                                                "mixed fonts", "runtime FontScaleDpi" };
+        ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("imslug M3 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("Scene (keys 1-%d):", kSceneCount);
+        for (int i = 0; i < kSceneCount; ++i)
+            if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)))
+                g_App.Scene = i;
+        ImGui::Separator();
+        ImGui::Text("font: Slug, base size %d px", g_App.BaseSize);
+        if (ImGui::Button("+") || ImGui::IsKeyPressed(ImGuiKey_Equal))
+            g_App.FontsDirty = true, g_App.BaseSize = g_App.BaseSize < kMaxSize ? g_App.BaseSize + 1 : kMaxSize;
+        ImGui::SameLine();
+        if (ImGui::Button("-") || ImGui::IsKeyPressed(ImGuiKey_Minus))
+            g_App.FontsDirty = true, g_App.BaseSize = g_App.BaseSize > kMinSize ? g_App.BaseSize - 1 : kMinSize;
+        ImGui::Separator();
+        Statistics stats;
+        ImSlug::GetStatistics(&stats);
+        ImGui::Text("Slug: %u instances, %u runs\n(%u slabs, %u dropped)", stats.Instances, stats.LiveBatches,
+                    stats.GlyphSlabs, stats.DroppedRuns);
+        ImGui::Text("validation: %s", g_App.ValidationEnabled ? "ON" : "off");
+        ImGui::End();
+    }
+
+    void BuildImGuiFrame()
+    {
+        ImGui::NewFrame();
+        DrawSceneSwitcher();
+        switch (g_App.Scene)
+        {
+        case 0:
+            SceneDemo();
+            break;
+        case 1:
+            SceneWidgets();
+            break;
+        case 2:
+            SceneClipping();
+            break;
+        case 3:
+            SceneMixedFonts();
+            break;
+        default:
+            SceneDpi();
+            break;
+        }
+    }
+
+    // Re-adds the Slug fonts at the current base size. The ImGui atlas keeps
+    // the previous ImFont objects; glyph slabs are freed through the bake
+    // discard path and our registry, while the outlines and bands in the pools
+    // stay valid and are reused across sizes (no atlas growth).
+    void RebuildFonts()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const char* fontPath = g_App.FontPath != nullptr ? g_App.FontPath : IMSLUG_EXAMPLE_FONT_PATH;
+        g_App.SlugFont = ImSlug::AddFontFromFileTTF(fontPath, (float)g_App.BaseSize);
+        if (g_App.SlugFont == nullptr)
+        {
+            fprintf(stderr, "[imslug] cannot add Slug font: %s\n", fontPath);
+            g_App.ShouldClose = true;
+            return;
+        }
+        // A stock font for the mixed-font scene: the same file through ImGui's
+        // own stb loader (Oversample 1 keeps the metrics identical).
+        ImFontConfig stockConfig;
+        stockConfig.OversampleH = 1;
+        stockConfig.OversampleV = 1;
+        g_App.StockFont = io.Fonts->AddFontFromFileTTF(fontPath, (float)g_App.BaseSize, &stockConfig);
+        io.FontDefault = g_App.SlugFont;
+        g_App.FontsDirty = false;
+        printf("[imslug] fonts: Slug + atlas at %d px (font: %s)\n", g_App.BaseSize, fontPath);
+    }
     // Screenshot (PPM readback)
     // ---------------------------------------------------------------------
     bool WritePpm(const char* path, const unsigned char* pixels, uint32_t width, uint32_t height, VkFormat format)
@@ -776,6 +925,7 @@ namespace
     // ---------------------------------------------------------------------
     // Input
     // ---------------------------------------------------------------------
+
     void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
     {
         (void)window;
@@ -786,22 +936,21 @@ namespace
         if (key == GLFW_KEY_ESCAPE)
             g_App.ShouldClose = true;
         else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD)
-            g_App.BakeSize = g_App.BakeSize < 96 ? g_App.BakeSize + 4 : g_App.BakeSize;
+            g_App.Scene = g_App.Scene < kSceneCount - 1 ? g_App.Scene + 1 : kSceneCount - 1;
         else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT)
-            g_App.BakeSize = g_App.BakeSize > 12 ? g_App.BakeSize - 4 : g_App.BakeSize;
-        else if (key == GLFW_KEY_PERIOD || key == GLFW_KEY_KP_MULTIPLY)
-            g_App.Zoom = g_App.Zoom < kMaxZoom ? g_App.Zoom + 0.25f : g_App.Zoom;
-        else if (key == GLFW_KEY_COMMA || key == GLFW_KEY_KP_DIVIDE)
-            g_App.Zoom = g_App.Zoom > kMinZoom ? g_App.Zoom - 0.25f : g_App.Zoom;
+            g_App.Scene = g_App.Scene > 0 ? g_App.Scene - 1 : 0;
         else if (key == GLFW_KEY_0)
         {
-            g_App.BakeSize = kDefaultSize;
-            g_App.Zoom = kDefaultZoom;
+            g_App.BaseSize = kDefaultSize;
+            g_App.DpiScale = 1.0f;
+            g_App.FontsDirty = true;
         }
         else
             return;
-        printf("[imslug] bake %d px, zoom %.2fx (pixelsPerEm %.1f)\n", g_App.BakeSize, g_App.Zoom,
-               (float)g_App.BakeSize * g_App.Zoom);
+        if (key == GLFW_KEY_0)
+            printf("[imslug] fonts reset to %d px, DPI 1.00\n", g_App.BaseSize);
+        else
+            printf("[imslug] scene %d\n", g_App.Scene + 1);
     }
 
     // ---------------------------------------------------------------------
@@ -837,26 +986,15 @@ namespace
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(app.CommandBuffers[frame], &beginInfo);
 
-        // Pool uploads: dirty rows only (the first call uploads everything).
-        // The frame index selects both the instance ring slot and this frame's
-        // staging buffer.
-        if (!ImSlugVulkanUploadPools(app.CommandBuffers[frame], &app.Pools, frame))
-        {
-            fprintf(stderr, "[imslug] pool upload failed\n");
-            return false;
-        }
+        // ImGui frame: platform + renderer new-frame, build, then the pre-pass.
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        BuildImGuiFrame();
+        ImGui::Render();
 
-        // Build this frame's instances in the ring slot.
-        ImSlugGlyphInstance* instances = ImSlugVulkanGetInstanceData(frame);
-        if (instances == nullptr)
-        {
-            fprintf(stderr, "[imslug] instance ring slot %u unavailable\n", frame);
-            return false;
-        }
-        FrameBatches batches;
-        BuildFrame(instances, ImSlugVulkanGetInstanceCapacity(), &batches);
-        if (batches.InstanceCount > ImSlugVulkanGetInstanceCapacity())
-            batches.InstanceCount = ImSlugVulkanGetInstanceCapacity();
+        // Glyph-pool uploads: dirty rows only; must stay outside the render
+        // pass (transfer commands are illegal inside one).
+        ImSlug_ImplVulkan_UploadPools(app.CommandBuffers[frame]);
 
         VkClearValue clearValue = {};
         clearValue.color.float32[0] = 0.055f;
@@ -871,36 +1009,9 @@ namespace
         renderPassInfo.pClearValues = &clearValue;
         vkCmdBeginRenderPass(app.CommandBuffers[frame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport = {};
-        viewport.width = (float)app.SwapchainExtent.width;
-        viewport.height = (float)app.SwapchainExtent.height;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(app.CommandBuffers[frame], 0, 1, &viewport);
-
-        float mvp[16];
-        ImSlugVulkanBuildOrthoMVP((float)app.SwapchainExtent.width, (float)app.SwapchainExtent.height, mvp);
-
-        VkRect2D fullScissor = {};
-        fullScissor.extent = app.SwapchainExtent;
-
-        ImSlugVulkanDrawInfo draw = {};
-        draw.FrameIndex = frame;
-        draw.RenderPass = app.RenderPass;
-        draw.Subpass = 0;
-        draw.MVP = mvp;
-        draw.ViewportWidth = (float)app.SwapchainExtent.width;
-        draw.ViewportHeight = (float)app.SwapchainExtent.height;
-        draw.Scissor = fullScissor;
-
-        const TextBatch* allBatches[5] = { &batches.Main, &batches.Hud, &batches.Ladder[0], &batches.Ladder[1],
-                                           &batches.Ladder[2] };
-        const int batchCount = 2 + (int)batches.LadderCount;
-        for (int i = 0; i < batchCount; ++i)
-        {
-            draw.FirstInstance = allBatches[i]->FirstInstance;
-            draw.InstanceCount = allBatches[i]->InstanceCount;
-            ImSlugVulkanDraw(app.CommandBuffers[frame], &draw);
-        }
+        // Everything (Slug text through callbacks, shapes through the stock
+        // path) goes through ImGui_ImplVulkan_RenderDrawData.
+        ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), app.CommandBuffers[frame]);
 
         vkCmdEndRenderPass(app.CommandBuffers[frame]);
 
@@ -962,29 +1073,37 @@ namespace
     void ParseArgs(int argc, char** argv)
     {
         g_App.FontPath = nullptr;
-        g_App.BakeSize = kDefaultSize;
-        g_App.Zoom = kDefaultZoom;
+        g_App.BaseSize = kDefaultSize;
+        g_App.Scene = 0;
+        g_App.DpiScale = 1.0f;
+        g_App.ShowDemoStats = false;
         g_App.ScreenshotPath = nullptr;
-        g_App.ScreenshotFrame = 2;
+        g_App.ScreenshotFrame = 3;
         g_App.FramesRendered = 0;
         for (int i = 1; i < argc; ++i)
         {
             if (strcmp(argv[i], "--font") == 0 && i + 1 < argc)
                 g_App.FontPath = argv[++i];
             else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
-                g_App.BakeSize = atoi(argv[++i]);
-            else if (strcmp(argv[i], "--zoom") == 0 && i + 1 < argc)
-                g_App.Zoom = (float)atof(argv[++i]);
-            else if (strcmp(argv[i], "--screenshot") == 0 && i + 3 < argc)
+                g_App.BaseSize = atoi(argv[++i]);
+            else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
+                g_App.Scene = atoi(argv[++i]);
+            else if (strcmp(argv[i], "--dpi") == 0 && i + 1 < argc)
+                g_App.DpiScale = (float)atof(argv[++i]);
+            else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             {
                 g_App.ScreenshotPath = argv[++i];
-                g_App.BakeSize = atoi(argv[++i]);
-                g_App.Zoom = (float)atof(argv[++i]);
+                if (i + 1 < argc && argv[i + 1][0] != '-')
+                    g_App.Scene = atoi(argv[++i]);
+                if (i + 1 < argc && argv[i + 1][0] != '-')
+                    g_App.DpiScale = (float)atof(argv[++i]);
             }
             else if (strcmp(argv[i], "--help") == 0)
             {
-                printf("usage: imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--zoom <scale>]\n"
-                       "                                  [--screenshot <file.ppm> <px_size> <scale>]\n");
+                printf("usage: imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--scene <1-%d>]\n"
+                       "                                  [--dpi <scale>]\n"
+                       "                                  [--screenshot <file.ppm> [scene] [dpi_scale]]\n",
+                       kSceneCount);
                 exit(0);
             }
             else
@@ -993,14 +1112,18 @@ namespace
                 exit(1);
             }
         }
-        if (g_App.BakeSize < 12)
-            g_App.BakeSize = 12;
-        if (g_App.BakeSize > 96)
-            g_App.BakeSize = 96;
-        if (g_App.Zoom < kMinZoom)
-            g_App.Zoom = kMinZoom;
-        if (g_App.Zoom > kMaxZoom)
-            g_App.Zoom = kMaxZoom;
+        if (g_App.BaseSize < kMinSize)
+            g_App.BaseSize = kMinSize;
+        if (g_App.BaseSize > kMaxSize)
+            g_App.BaseSize = kMaxSize;
+        if (g_App.Scene < 0 || g_App.Scene >= kSceneCount)
+            g_App.Scene = 0;
+        if (g_App.DpiScale < 0.5f)
+            g_App.DpiScale = 0.5f;
+        if (g_App.DpiScale > 3.0f)
+            g_App.DpiScale = 3.0f;
+        if (g_App.ScreenshotPath != nullptr)
+            g_App.Scene = g_App.Scene;  // scenes are 1-based on the CLI, see below
     }
 
     int Run()
@@ -1041,31 +1164,82 @@ namespace
         if (ok)
             ok = CreateSwapchain();
 
-        // Font: default to the committed test font next to the executable's
-        // source tree; --font overrides.
+        // imslug + ImGui: stock backends first (they publish the platform_io
+        // hooks imslug needs), then the imslug core and its Vulkan module.
         if (ok)
         {
-            const char* fontPath = g_App.FontPath != nullptr ? g_App.FontPath : IMSLUG_EXAMPLE_FONT_PATH;
-            int fontSize = 0;
-            unsigned char* fontData = ReadWholeFile(fontPath, &fontSize);
-            if (fontData == nullptr)
+            if (!ImSlug::Init())
             {
-                fprintf(stderr, "[imslug] cannot read font: %s\n", fontPath);
+                fprintf(stderr, "[imslug] ImSlug::Init failed\n");
                 ok = false;
             }
-            else
+        }
+        if (ok)
+        {
+            VkDescriptorPoolSize poolSizes[1] = { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64 } };
+            VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+            poolInfo.maxSets = 64;
+            poolInfo.poolSizeCount = 1;
+            poolInfo.pPoolSizes = poolSizes;
+            ok = Check(vkCreateDescriptorPool(g_App.Device, &poolInfo, nullptr, &g_App.ImGuiDescriptorPool),
+                       "vkCreateDescriptorPool");
+        }
+        if (ok)
+        {
+            IMGUI_CHECKVERSION();
+            ImGui::CreateContext();
+            ImGuiIO& io = ImGui::GetIO();
+            io.IniFilename = nullptr;  // deterministic screenshots
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+            ImGui::StyleColorsDark();
+            ImGui::GetStyle().FontScaleDpi = g_App.DpiScale;
+
+            if (!ImGui_ImplGlfw_InitForVulkan(g_App.Window, true))
             {
-                printf("[imslug] font: %s (%d bytes)\n", fontPath, fontSize);
-                g_App.Font = ImSlugCreateFontFromMemory(fontData, fontSize, 0, true);
-                free(fontData);
-                if (g_App.Font == nullptr)
-                {
-                    fprintf(stderr, "[imslug] ImSlugCreateFontFromMemory failed\n");
-                    ok = false;
-                }
+                fprintf(stderr, "[imslug] ImGui_ImplGlfw_InitForVulkan failed\n");
+                ok = false;
+            }
+
+            ImGui_ImplVulkan_InitInfo initInfo = {};
+            initInfo.ApiVersion = VK_API_VERSION_1_2;
+            initInfo.Instance = g_App.Instance;
+            initInfo.PhysicalDevice = g_App.PhysicalDevice;
+            initInfo.Device = g_App.Device;
+            initInfo.QueueFamily = g_App.QueueFamily;
+            initInfo.Queue = g_App.Queue;
+            initInfo.DescriptorPool = g_App.ImGuiDescriptorPool;
+            initInfo.MinImageCount = 2;
+            initInfo.ImageCount = g_App.SwapchainImageCount;
+            initInfo.PipelineInfoMain.RenderPass = g_App.RenderPass;
+            initInfo.PipelineInfoMain.Subpass = 0;
+            initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            initInfo.UseDynamicRendering = false;
+            initInfo.CheckVkResultFn = nullptr;
+            if (ok && !ImGui_ImplVulkan_Init(&initInfo))
+            {
+                fprintf(stderr, "[imslug] ImGui_ImplVulkan_Init failed\n");
+                ok = false;
+            }
+            if (ok)
+                g_App.ImGuiInitialized = true;
+
+            if (ok && !ImSlug_ImplVulkan_Init(&initInfo))
+            {
+                fprintf(stderr, "[imslug] ImSlug_ImplVulkan_Init failed\n");
+                ok = false;
+            }
+            if (ok)
+            {
+                g_App.ImSlugBackendInitialized = true;
+                // Cycle over the backend's actual frames in flight
+                // (min(images, 3)): a 2-image swapchain must not use slot 2.
+                g_App.FramesInFlight = ImSlugVulkanGetFramesInFlight();
+                if (g_App.FramesInFlight == 0 || g_App.FramesInFlight > kMaxFramesInFlight)
+                    g_App.FramesInFlight = 1;
+                g_App.FontsDirty = true;  // add the fonts (needs the module)
             }
         }
-        ImSlugInitPools(&g_App.Pools);
 
         if (ok)
         {
@@ -1096,47 +1270,6 @@ namespace
         if (ok)
             ok = CreateSyncObjects();
 
-        // imslug backend: maps 1:1 from what M3 will get out of
-        // ImGui_ImplVulkan_InitInfo.PipelineInfoMain.
-        if (ok)
-        {
-            ImSlugVulkanInitInfo initInfo;
-            initInfo.PhysicalDevice = g_App.PhysicalDevice;
-            initInfo.Device = g_App.Device;
-            initInfo.Queue = g_App.Queue;
-            initInfo.QueueFamily = g_App.QueueFamily;
-            initInfo.Allocator = nullptr;
-            initInfo.ImageCount = g_App.SwapchainImageCount;
-            initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-            initInfo.PipelineCache = VK_NULL_HANDLE;
-            initInfo.RenderPass = g_App.RenderPass;
-            initInfo.Subpass = 0;
-            initInfo.UseDynamicRendering = false;
-            ok = ImSlugVulkanInit(&initInfo);
-            if (!ok)
-                fprintf(stderr, "[imslug] ImSlugVulkanInit failed\n");
-            else
-            {
-                // Cycle over the backend's actual frames in flight (min(images,
-                // 3)): a 2-image swapchain must not use ring slot 2 (B3).
-                g_App.FramesInFlight = ImSlugVulkanGetFramesInFlight();
-                if (g_App.FramesInFlight == 0 || g_App.FramesInFlight > kMaxFramesInFlight)
-                    g_App.FramesInFlight = 1;  // unreachable: the backend caps at kMaxFramesInFlight
-            }
-        }
-
-        // Warm the glyph cache for the whole frame once so the screenshot path
-        // is deterministic; per-frame builds then only append new glyphs.
-        if (ok)
-        {
-            ImSlugGlyphInstance scratch[256];
-            FrameBatches batches;
-            BuildFrame(scratch, 256, &batches);
-            if (batches.InstanceCount > 256)
-                fprintf(stderr, "[imslug] warning: frame needs %u instances, scratch holds 256\n",
-                        batches.InstanceCount);
-        }
-
         while (ok && glfwWindowShouldClose(g_App.Window) == GLFW_FALSE && !g_App.ShouldClose)
         {
             glfwPollEvents();
@@ -1154,6 +1287,8 @@ namespace
                 if (!ok)
                     break;
             }
+            if (g_App.FontsDirty)
+                RebuildFonts();
             ok = RenderFrame();
         }
         if (ok)
@@ -1166,9 +1301,21 @@ namespace
         }
         if (g_App.Device != VK_NULL_HANDLE)
             vkDeviceWaitIdle(g_App.Device);
-        ImSlugVulkanShutdown();
-        ImSlugDestroyFont(g_App.Font);
-        ImSlugDestroyPools(&g_App.Pools);
+        if (g_App.ImSlugBackendInitialized)
+            ImSlug_ImplVulkan_Shutdown();
+        if (g_App.ImGuiInitialized)
+        {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplGlfw_Shutdown();
+        }
+        ImSlug::Shutdown();  // core pools + glyph registry (after the atlas)
+        if (ImGui::GetCurrentContext() != nullptr)
+            ImGui::DestroyContext();
+        if (g_App.ImGuiDescriptorPool != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorPool(g_App.Device, g_App.ImGuiDescriptorPool, nullptr);
+            g_App.ImGuiDescriptorPool = VK_NULL_HANDLE;
+        }
 
         if (g_App.Device != VK_NULL_HANDLE)
         {

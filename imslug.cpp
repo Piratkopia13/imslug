@@ -874,6 +874,11 @@ namespace ImSlug
         return g_Core.Initialized ? &g_Core.Pools : nullptr;
     }
 
+    const Config* ImSlugGetConfig()
+    {
+        return g_Core.Initialized ? &g_Core.Cfg : nullptr;
+    }
+
     ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
                                           float ascent, float pixelsPerEm, const void* bake, uint32_t* outSlot)
     {

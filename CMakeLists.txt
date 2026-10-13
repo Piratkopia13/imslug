@@ -189,7 +189,26 @@ endif()
 # ---------------------------------------------------------------------------
 if(IMSLUG_BACKEND_VULKAN)
     if(IMSLUG_HAVE_VULKAN)
-        # Standalone Vulkan rendering core (M2): ImGui-free, reused by M3.
+        # Dear ImGui's Vulkan renderer backend (third-party): the M3 adapter in
+        # imslug_vulkan calls ImGui_ImplVulkan_RenderDrawData, so it is linked
+        # together with the module (and reused by the examples).
+        add_library(imslug_imgui_vulkan_backend STATIC
+            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
+        set_target_properties(imslug_imgui_vulkan_backend PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        target_link_libraries(imslug_imgui_vulkan_backend PUBLIC ${IMSLUG_IMGUI_TARGET})
+        if(TARGET Vulkan::Vulkan)
+            target_link_libraries(imslug_imgui_vulkan_backend PUBLIC Vulkan::Vulkan)
+        else()
+            target_include_directories(imslug_imgui_vulkan_backend PUBLIC ${Vulkan_INCLUDE_DIRS})
+        endif()
+        if(MSVC)
+            target_compile_options(imslug_imgui_vulkan_backend PRIVATE /w)
+        else()
+            target_compile_options(imslug_imgui_vulkan_backend PRIVATE -w)
+        endif()
+
+        # Standalone Vulkan rendering core (M2) + ImGui adapter (M3): reused by
+        # the examples, the golden harness and the integration tests.
         add_library(imslug_vulkan STATIC
             backends/imslug_impl_vulkan.cpp
             backends/imslug_impl_vulkan.h)
@@ -198,12 +217,7 @@ if(IMSLUG_BACKEND_VULKAN)
         target_include_directories(imslug_vulkan PUBLIC
             "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>"
             PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
-        target_link_libraries(imslug_vulkan PUBLIC imslug)
-        if(TARGET Vulkan::Vulkan)
-            target_link_libraries(imslug_vulkan PUBLIC Vulkan::Vulkan)
-        else()
-            target_include_directories(imslug_vulkan PUBLIC ${Vulkan_INCLUDE_DIRS})
-        endif()
+        target_link_libraries(imslug_vulkan PUBLIC imslug imslug_imgui_vulkan_backend)
     else()
         add_library(imslug_vulkan INTERFACE)
         target_link_libraries(imslug_vulkan INTERFACE imslug)
@@ -235,27 +249,33 @@ if(IMSLUG_BUILD_EXAMPLES)
             FetchContent_MakeAvailable(glfw)
         endif()
 
-        # Dear ImGui platform/renderer backends (third-party; examples only).
+        # Dear ImGui platform backend (third-party; examples only). The Vulkan
+        # renderer backend is built globally (see below): the M3 ImGui adapter
+        # in imslug_vulkan calls into it.
         add_library(imslug_imgui_backends STATIC
-            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
-            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
+            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp")
         set_target_properties(imslug_imgui_backends PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         target_link_libraries(imslug_imgui_backends PUBLIC ${IMSLUG_IMGUI_TARGET} glfw)
-        if(TARGET Vulkan::Vulkan)
-            target_link_libraries(imslug_imgui_backends PUBLIC Vulkan::Vulkan)
-        else()
-            target_include_directories(imslug_imgui_backends PUBLIC ${Vulkan_INCLUDE_DIRS})
-        endif()
         if(MSVC)
             target_compile_options(imslug_imgui_backends PRIVATE /w)
         else()
             target_compile_options(imslug_imgui_backends PRIVATE -w)
         endif()
 
+        # Dear ImGui's demo window lives in its own TU (third-party settings).
+        add_library(imslug_imgui_demo STATIC "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_demo.cpp")
+        set_target_properties(imslug_imgui_demo PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        target_link_libraries(imslug_imgui_demo PUBLIC ${IMSLUG_IMGUI_TARGET})
+        if(MSVC)
+            target_compile_options(imslug_imgui_demo PRIVATE /w)
+        else()
+            target_compile_options(imslug_imgui_demo PRIVATE -w)
+        endif()
+
         add_executable(imslug_example_glfw_vulkan example/glfw_vulkan/main.cpp)
         set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_example_glfw_vulkan)
-        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends)
+        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
         target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
             IMSLUG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
             $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)

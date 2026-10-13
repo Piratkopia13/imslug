@@ -19,6 +19,14 @@
 
 #include "imslug_shaders_vulkan.h"
 
+// M3 ImGui adapter (the section at the bottom of this file). The M2 rendering
+// core above stays ImGui-agnostic; only the adapter block touches these.
+#include "imslug.h"
+#include "imslug_internal.h"
+
+#include "imgui.h"
+#include "imgui_impl_vulkan.h"
+
 #include <string.h>
 
 namespace ImSlug
@@ -897,5 +905,216 @@ namespace ImSlug
 
         vkCmdSetScissor(cmd, 0, 1, &drawInfo->Scissor);
         vkCmdDraw(cmd, 4, instanceCount, 0, (uint32_t)ringFirstInstance);
+    }
+
+    // =====================================================================
+    // M3 ImGui adapter
+    // =====================================================================
+    // Bridges the stock ImGui Vulkan backend and this module:
+    //   * Init maps ImGui_ImplVulkan_InitInfo onto ImSlugVulkanInitInfo and
+    //     registers the ImSlugRenderIO the core's pre-pass uses;
+    //   * UploadPools records the dirty-row copies (outside the render pass)
+    //     and advances the frames-in-flight slot;
+    //   * RenderDrawData rewrites the draw data (Slug text -> callbacks) and
+    //     hands everything to ImGui_ImplVulkan_RenderDrawData;
+    //   * the batch callback records one instanced draw per text run into the
+    //     backend's active command buffer (published through
+    //     PlatformIO().Renderer_RenderState by the stock backend).
+    // The callback runs before the stock scissor/texture setup, so it sets its
+    // own dynamic scissor; the core injects a ResetRenderState command right
+    // after every Slug run (R5).
+    namespace
+    {
+        struct ImGuiVulkanState
+        {
+            bool Initialized;
+            bool DynamicRendering;
+            VkRenderPass RenderPass;  // main viewport (multi-viewport: compatible passes)
+            uint32_t Subpass;
+
+            // Per-frame slot and the instance allocation cursor inside it.
+            uint32_t FrameIndex;
+            uint32_t FrameCounter;
+            uint32_t InstanceCursor;
+            bool PoolsUploaded;
+
+            // Per RenderDrawData call (callbacks run inside the stock backend's
+            // render loop, which republishes CommandBuffer + framebuffer size).
+            float DisplayPosX, DisplayPosY;
+            float FramebufferScaleX, FramebufferScaleY;
+            uint32_t FramebufferWidth, FramebufferHeight;
+        };
+
+        ImGuiVulkanState g_ImGuiVulkan;
+
+        uint32_t ImGuiRenderIO_GetFrameIndex()
+        {
+            return g_ImGuiVulkan.FrameIndex;
+        }
+
+        ImSlugGlyphInstance* ImGuiRenderIO_ReserveInstances(uint32_t count, uint32_t* outFirstInstance)
+        {
+            if (!g_ImGuiVulkan.Initialized || count == 0)
+                return nullptr;
+            const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
+            if (count > capacity - g_ImGuiVulkan.InstanceCursor)
+                return nullptr;
+            ImSlugGlyphInstance* base = ImSlugVulkanGetInstanceData(g_ImGuiVulkan.FrameIndex);
+            if (base == nullptr)
+                return nullptr;
+            const uint32_t first = g_ImGuiVulkan.InstanceCursor;
+            g_ImGuiVulkan.InstanceCursor += count;
+            *outFirstInstance = first;
+            return base + first;
+        }
+
+        void ImGuiRenderIO_DrawBatch(const ImSlugBatch* batch)
+        {
+            if (batch == nullptr || batch->InstanceCount == 0)
+                return;
+            const ImGui_ImplVulkan_RenderState* renderState =
+                (const ImGui_ImplVulkan_RenderState*)ImGui::GetPlatformIO().Renderer_RenderState;
+            if (renderState == nullptr || renderState->CommandBuffer == VK_NULL_HANDLE)
+                return;  // not inside ImGui_ImplVulkan_RenderDrawData
+            if (g_ImGuiVulkan.FramebufferWidth == 0 || g_ImGuiVulkan.FramebufferHeight == 0)
+                return;
+
+            // Clip rects arrive in ImGui display coordinates; convert and clamp
+            // exactly like the stock backend does (vkCmdSetScissor rejects
+            // off-bounds values).
+            float clipMinX = (batch->ClipMinX - g_ImGuiVulkan.DisplayPosX) * g_ImGuiVulkan.FramebufferScaleX;
+            float clipMinY = (batch->ClipMinY - g_ImGuiVulkan.DisplayPosY) * g_ImGuiVulkan.FramebufferScaleY;
+            float clipMaxX = (batch->ClipMaxX - g_ImGuiVulkan.DisplayPosX) * g_ImGuiVulkan.FramebufferScaleX;
+            float clipMaxY = (batch->ClipMaxY - g_ImGuiVulkan.DisplayPosY) * g_ImGuiVulkan.FramebufferScaleY;
+            if (clipMinX < 0.0f)
+                clipMinX = 0.0f;
+            if (clipMinY < 0.0f)
+                clipMinY = 0.0f;
+            if (clipMaxX > (float)g_ImGuiVulkan.FramebufferWidth)
+                clipMaxX = (float)g_ImGuiVulkan.FramebufferWidth;
+            if (clipMaxY > (float)g_ImGuiVulkan.FramebufferHeight)
+                clipMaxY = (float)g_ImGuiVulkan.FramebufferHeight;
+            if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
+                return;
+
+            float mvp[16];
+            ImSlugVulkanBuildOrthoMVP((float)g_ImGuiVulkan.FramebufferWidth, (float)g_ImGuiVulkan.FramebufferHeight,
+                                      mvp);
+
+            ImSlugVulkanDrawInfo drawInfo = {};
+            drawInfo.FrameIndex = batch->FrameIndex;
+            drawInfo.RenderPass = g_ImGuiVulkan.DynamicRendering ? VK_NULL_HANDLE : g_ImGuiVulkan.RenderPass;
+            drawInfo.Subpass = g_ImGuiVulkan.Subpass;
+            drawInfo.FirstInstance = batch->FirstInstance;
+            drawInfo.InstanceCount = batch->InstanceCount;
+            drawInfo.MVP = mvp;
+            drawInfo.ViewportWidth = (float)g_ImGuiVulkan.FramebufferWidth;
+            drawInfo.ViewportHeight = (float)g_ImGuiVulkan.FramebufferHeight;
+            drawInfo.Scissor.offset.x = (int32_t)clipMinX;
+            drawInfo.Scissor.offset.y = (int32_t)clipMinY;
+            drawInfo.Scissor.extent.width = (uint32_t)(clipMaxX - clipMinX);
+            drawInfo.Scissor.extent.height = (uint32_t)(clipMaxY - clipMinY);
+            ImSlugVulkanDraw(renderState->CommandBuffer, &drawInfo);
+        }
+
+        const ImSlugRenderIO g_ImGuiRenderIO = { "vulkan", ImGuiRenderIO_GetFrameIndex, ImGuiRenderIO_ReserveInstances,
+                                                 ImGuiRenderIO_DrawBatch };
+    }  // namespace
+
+    bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo* initInfo)
+    {
+        IMSLUG_ASSERT(initInfo != nullptr);
+        if (initInfo == nullptr)
+            return false;
+        if (g_ImGuiVulkan.Initialized)
+            ImSlug_ImplVulkan_Shutdown();
+
+        const Config* config = ImSlugGetConfig();
+        if (config == nullptr)
+        {
+            IMSLUG_ASSERT(false && "imslug: call ImSlug::Init() before ImSlug_ImplVulkan_Init()");
+            return false;
+        }
+
+        ImSlugVulkanInitInfo vulkanInfo = {};
+        vulkanInfo.PhysicalDevice = initInfo->PhysicalDevice;
+        vulkanInfo.Device = initInfo->Device;
+        vulkanInfo.Queue = initInfo->Queue;
+        vulkanInfo.QueueFamily = initInfo->QueueFamily;
+        vulkanInfo.Allocator = initInfo->Allocator;
+        vulkanInfo.ImageCount = initInfo->ImageCount;
+        vulkanInfo.PipelineCache = initInfo->PipelineCache;
+        vulkanInfo.MSAASamples = initInfo->PipelineInfoMain.MSAASamples != 0 ? initInfo->PipelineInfoMain.MSAASamples
+                                                                             : VK_SAMPLE_COUNT_1_BIT;
+        vulkanInfo.RenderPass = initInfo->PipelineInfoMain.RenderPass;
+        vulkanInfo.Subpass = initInfo->PipelineInfoMain.Subpass;
+        vulkanInfo.UseDynamicRendering = initInfo->UseDynamicRendering;
+#ifdef IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
+        if (initInfo->UseDynamicRendering && initInfo->PipelineInfoMain.PipelineRenderingCreateInfo.sType ==
+                                                 VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR)
+            vulkanInfo.PipelineRenderingCreateInfo = initInfo->PipelineInfoMain.PipelineRenderingCreateInfo;
+#endif
+        vulkanInfo.MaxInstancesPerFrame = config->MaxInstancesPerFrame;
+
+        if (!ImSlugVulkanInit(&vulkanInfo))
+            return false;
+
+        g_ImGuiVulkan = ImGuiVulkanState();
+        g_ImGuiVulkan.Initialized = true;
+        g_ImGuiVulkan.DynamicRendering = initInfo->UseDynamicRendering;
+        g_ImGuiVulkan.RenderPass = initInfo->PipelineInfoMain.RenderPass;
+        g_ImGuiVulkan.Subpass = initInfo->PipelineInfoMain.Subpass;
+        ImSlugSetRenderIO(&g_ImGuiRenderIO);
+        return true;
+    }
+
+    void ImSlug_ImplVulkan_Shutdown()
+    {
+        if (!g_ImGuiVulkan.Initialized)
+            return;
+        ImSlugSetRenderIO(nullptr);
+        ImSlugVulkanShutdown();
+        g_ImGuiVulkan = ImGuiVulkanState();
+    }
+
+    void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd)
+    {
+        if (!g_ImGuiVulkan.Initialized || cmd == VK_NULL_HANDLE)
+            return;
+        IMSLUG_ASSERT(!g_ImGuiVulkan.PoolsUploaded && "imslug: UploadPools already called this frame");
+
+        const uint32_t framesInFlight = ImSlugVulkanGetFramesInFlight();
+        g_ImGuiVulkan.FrameIndex = framesInFlight != 0 ? (g_ImGuiVulkan.FrameCounter % framesInFlight) : 0;
+        g_ImGuiVulkan.FrameCounter++;
+        g_ImGuiVulkan.InstanceCursor = 0;
+        g_ImGuiVulkan.PoolsUploaded = true;
+
+        ImSlugPools* pools = ImSlugGetPools();
+        if (pools != nullptr)
+            ImSlugVulkanUploadPools(cmd, pools, g_ImGuiVulkan.FrameIndex);
+    }
+
+    void ImSlug_ImplVulkan_RenderDrawData(ImDrawData* drawData, VkCommandBuffer cmd, VkPipeline mainPipeline)
+    {
+        if (!g_ImGuiVulkan.Initialized || drawData == nullptr)
+        {
+            // No Slug module (or no draw data): render through the stock path.
+            ImGui_ImplVulkan_RenderDrawData(drawData, cmd, mainPipeline);
+            return;
+        }
+        IMSLUG_ASSERT(g_ImGuiVulkan.PoolsUploaded &&
+                      "imslug: call ImSlug_ImplVulkan_UploadPools() before rendering (see imslug_impl_vulkan.h)");
+
+        g_ImGuiVulkan.FramebufferWidth = (uint32_t)(drawData->DisplaySize.x * drawData->FramebufferScale.x);
+        g_ImGuiVulkan.FramebufferHeight = (uint32_t)(drawData->DisplaySize.y * drawData->FramebufferScale.y);
+        g_ImGuiVulkan.DisplayPosX = drawData->DisplayPos.x;
+        g_ImGuiVulkan.DisplayPosY = drawData->DisplayPos.y;
+        g_ImGuiVulkan.FramebufferScaleX = drawData->FramebufferScale.x;
+        g_ImGuiVulkan.FramebufferScaleY = drawData->FramebufferScale.y;
+
+        ImSlug::PreprocessDrawData(drawData);
+        ImGui_ImplVulkan_RenderDrawData(drawData, cmd, mainPipeline);
+
+        g_ImGuiVulkan.FramebufferWidth = g_ImGuiVulkan.FramebufferHeight = 0;
     }
 }  // namespace ImSlug
