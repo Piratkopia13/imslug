@@ -146,3 +146,17 @@ target_compile_definitions(imslug_tests_stress PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 add_test(NAME imslug_stress COMMAND imslug_tests_stress)
 
+# ---------------------------------------------------------------------------
+# M4: benchmark tools (not ctest suites). Band tuning sweep (CPU-only) and the
+# perf harness (GPU, headless Vulkan). scripts/bench.* build and run them.
+# ---------------------------------------------------------------------------
+add_executable(imslug_tests_band_sweep bench/band_sweep.cpp test_util.h)
+target_link_libraries(imslug_tests_band_sweep PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_band_sweep PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_band_sweep)
+target_include_directories(imslug_tests_band_sweep PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(imslug_tests_band_sweep PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/cjk/NotoSansSC-subset.ttf"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+

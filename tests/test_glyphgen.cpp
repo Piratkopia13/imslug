@@ -287,15 +287,22 @@ static void TestExtractionForFont(const char* fontName)
 }
 
 // ---------------------------------------------------------------------------
-// Adaptive band counts
+// Adaptive band counts (M4 default: clamp(ceil(2*sqrt(n)), 4, 32); the
+// candidate sweep and the measured cost/memory trade-off are in the M4 report
+// and tests/bench/band_sweep.cpp)
 // ---------------------------------------------------------------------------
 static void TestBandCounts()
 {
     TEST_CHECK(ImSlugCalcBandCount(0) == 4);
-    TEST_CHECK(ImSlugCalcBandCount(1) == 4);
-    TEST_CHECK(ImSlugCalcBandCount(8) == 4);     // ceil(sqrt(16)) = 4
-    TEST_CHECK(ImSlugCalcBandCount(9) == 5);     // ceil(sqrt(18)) = 5
-    TEST_CHECK(ImSlugCalcBandCount(32) == 8);    // ceil(sqrt(64)) = 8
+    TEST_CHECK(ImSlugCalcBandCount(1) == 4);     // ceil(2*sqrt(1)) = 2 -> clamp 4
+    TEST_CHECK(ImSlugCalcBandCount(2) == 4);     // ceil(2.83) = 3 -> clamp 4
+    TEST_CHECK(ImSlugCalcBandCount(4) == 4);     // ceil(4) = 4
+    TEST_CHECK(ImSlugCalcBandCount(5) == 5);     // ceil(4.47) = 5
+    TEST_CHECK(ImSlugCalcBandCount(8) == 6);     // ceil(5.66) = 6
+    TEST_CHECK(ImSlugCalcBandCount(9) == 6);     // ceil(6) = 6
+    TEST_CHECK(ImSlugCalcBandCount(32) == 12);   // ceil(11.31) = 12
+    TEST_CHECK(ImSlugCalcBandCount(146) == 25);  // the worst CJK subset glyph
+    TEST_CHECK(ImSlugCalcBandCount(256) == 32);  // ceil(32) = 32
     TEST_CHECK(ImSlugCalcBandCount(512) == 32);  // clamp at 32
     TEST_CHECK(ImSlugCalcBandCount(100000) == 32);
     for (int n = 0; n < 2000; ++n)

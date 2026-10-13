@@ -211,11 +211,26 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Band construction
     // ---------------------------------------------------------------------
+    // M4 band tuning (numbers: the M4 report and the band-sweep tool,
+    // tests/bench/band_sweep.cpp; decision in PLAN §11 D13). Measured over
+    // Roboto/Inter Latin and the CJK subset, sizes 8..72 px, with a model of
+    // the pixel shader's reference walk (band index + sorted early-out):
+    //
+    //   sqrt(2n) 4..32 (M1) : 6.86 / 7.20 / 9.25 refs per pixel, 114/129/193 KB
+    //   2*sqrt(n) 4..32 (M4): 6.12 / 6.42 / 8.25 refs per pixel, 143/159/240 KB
+    //   2.5*sqrt(n)         : 5.76 / 6.03 / 7.71, 168/188/281 KB
+    //   3*sqrt(n)           : 5.51 / 5.74 / 7.38, 193/214/320 KB
+    //
+    // 2*sqrt(n) buys ~11% less fragment work (and ~15% better p99/max tails,
+    // which matters for low-end GPUs) for ~25% more band-pool memory - still
+    // far inside the PLAN §4.7 budget for a typical UI font. Further steps cost
+    // ~2x the memory for ~5% more, so they were rejected. The cap stays 32
+    // (kMaxBandCountPerAxis): the header run must fit in one pool row.
     int ImSlugCalcBandCount(int curveCount)
     {
         if (curveCount <= 0)
-            return 4;  // clamp(ceil(sqrt(0)), 4, 32)
-        const float n = ceilf(sqrtf(2.0f * (float)curveCount));
+            return 4;  // clamp(ceil(2*sqrt(0)), 4, 32)
+        const float n = ceilf(2.0f * sqrtf((float)curveCount));
         int count = (int)n;
         if (count < 4)
             count = 4;

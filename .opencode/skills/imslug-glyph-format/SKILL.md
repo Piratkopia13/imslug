@@ -92,10 +92,20 @@ shader masks `bandMax.y &= 0x00FF` and tests bit 12. The CPU record uses
    inflated by `1/1024` em on both ends, inclusive overlap
    (`bbox.min - eps <= band.max && bbox.max + eps >= band.min`).
 4. Uniform bands per glyph, adaptive count
-   `n = clamp(ceil(sqrt(2 * curveCount)), 4, 32)` per axis - the single tuning
-   point is `ImSlugCalcBandCount()` (M4 re-tunes). Empty glyphs (space) use one
-   band per axis with `bandScale = 0`; a zero em extent on an axis also forces
-   `bandScale = 0` for that axis (all curves there are axis-parallel anyway).
+   `n = clamp(ceil(2 * sqrt(curveCount)), 4, 32)` per axis (M4 default; the M1
+   formula was `ceil(sqrt(2 * curveCount))`). The sweep tool
+   (`tests/bench/band_sweep.cpp`, run via `scripts/bench.*`) models the pixel
+   shader's per-pixel reference walk and the band-pool footprint: the M4
+   default cuts that walk by ~11% (mean and p99/max tails, which matter for
+   low-end GPUs) for ~25% more band-pool memory (measured 8..72 px on Roboto /
+   Inter / the CJK subset: 6.12/6.42/8.25 vs 6.86/7.20/9.25 refs per pixel,
+   143/159/240 KB vs 114/129/193 KB); the next coefficients (2.5x, 3x) cost
+   ~2x the memory for ~5% more, so they were rejected. The cap stays 32 because
+   the two band header runs must fit in the glyph's first pool row. Decision:
+   PLAN §11 D13. The single tuning point is `ImSlugCalcBandCount()`.
+   Empty glyphs (space) use one band per axis with `bandScale = 0`; a zero em
+   extent on an axis also forces `bandScale = 0` for that axis (all curves there
+   are axis-parallel anyway).
 5. Outline extraction: upstream `stb_truetype` (vendored under
    `third_party/stb/`, pinned commit + SHA-256 in `PROVENANCE.txt`, **not**
    ImGui's `imstb_truetype.h`). `stbtt_GetGlyphShape` -> lines/quadratics ->
