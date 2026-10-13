@@ -1,0 +1,15 @@
+stb_truetype.h — provenance
+===========================
+
+Upstream:       https://github.com/nothings/stb  (single-file, public domain / MIT)
+Pinned commit:  2c980bb59875b0d32144a71867fbdebb2f77cd20  (2026-08-02, branch master)
+Source URL:     https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_truetype.h
+SHA-256:        ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab
+Size:           199192 bytes
+
+Vendored unmodified and read-only (AGENTS.md invariant 2: never modify
+third-party sources). This is upstream stb, deliberately NOT ImGui's
+imstb_truetype.h, to avoid symbol/macro coupling with ImGui (PLAN §4.1, D1).
+
+License: public domain / MIT (dual), quoted in NOTICE section 2.
+Not a git submodule: single header committed so builds do not need network.

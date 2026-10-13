@@ -106,16 +106,37 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# stb (vendored, third-party) — its own target so our warning settings never
+# apply to third-party code (AGENTS.md invariant 2; M1 brief).
+# ---------------------------------------------------------------------------
+add_library(imslug_stb STATIC imslug_stb.cpp)
+target_include_directories(imslug_stb PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb")
+if(MSVC)
+    target_compile_options(imslug_stb PRIVATE /w)
+else()
+    target_compile_options(imslug_stb PRIVATE -w)
+endif()
+
+# ---------------------------------------------------------------------------
 # Core library (no backend, no ImGui linkage required yet — see PLAN §6)
 # ---------------------------------------------------------------------------
 add_library(imslug STATIC
     imslug.cpp
-    imslug.h)
+    imslug.h
+    imslug_internal.h
+    imslug_glyphgen.h
+    imslug_glyphgen.cpp
+    imslug_packer.h
+    imslug_packer.cpp
+    imslug_refraster.h
+    imslug_refraster.cpp)
 set_target_properties(imslug PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 imslug_target_defaults(imslug)
 target_include_directories(imslug PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb>"
     "$<INSTALL_INTERFACE:include>")
+target_link_libraries(imslug PRIVATE imslug_stb)
 
 # ---------------------------------------------------------------------------
 # Optional targets — placeholders until their milestones land. They are

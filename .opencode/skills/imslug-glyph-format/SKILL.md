@@ -1,70 +1,192 @@
 ---
 name: imslug glyph format
-description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer/texel budgets, and how to run the reference and packing tests. Load when editing the generator, packer, glyph records, or the CPU reference rasterizer (M1+).
+description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer caps, the frozen M1 core API and how to run the reference/packing tests. Load when editing the generator, packer, glyph records, or the CPU reference rasterizer (M1+).
 ---
 
 # imslug glyph data format
 
-Distilled from `.agent-docs/PLAN.md` §2.1-§2.2 and §4 (the plan is the
-authoritative source; this skill is the working checklist).
+Implemented contract as of M1 (`.agent-docs/milestones/M1-core-glyph-pipeline.md`;
+constants live in `imslug_internal.h`, the behavior in `imslug_{packer,glyphgen,refraster}.*`).
+PLAN §2.1-§2.2/§4.1-§4.3 remain the design source; where this file and the plan
+disagree on a detail, the code + this skill are the implemented truth (the M1
+brief says the plan is authoritative "in all matters it specifies" — these are
+the specifications it delegated).
 
-**All coordinates are em space (1.0 = em), Y-up, per the reference contract.
-Never mix in glyph-local pixel units (Sluggish uses those) and never assume
-ImGui's Y-down orientation inside the pipeline - convert once at the boundary
-and test it.**
+**All coordinates are em space (1.0 = em), Y-up, origin at the pen position on
+the baseline. Never mix in font units or pixels in stored geometry, and never
+assume ImGui's Y-down orientation inside the pipeline - convert once at the
+boundary (`1/unitsPerEm`, no Y flip: stbtt shapes are already Y-up) and test it
+with 'g' (descender) in `tests/test_glyphgen.cpp`.**
 
-## Texel layouts
+## Constants (imslug_internal.h)
 
-### Curve texture (one global pool shared by all fonts)
-* Format `RGBA16F`, fixed width 4096 texels; the shader row wrap is `log2 = 12`.
+* `kPoolWidth = 4096`, `kPoolWidthLog2 = 12` (both pools, fixed width).
+* `kPoolMaxHeight = 65536` (16-bit texel y).
+* `kGlyphMaxBlockTexels = 65535` (band offsets are u16 relative to glyphLoc).
+* `kMaxBandCountPerAxis = 32` (adaptive cap).
+* `kBandOverlapEpsilon = 1/1024` em (band membership inflation).
+* Solver epsilon `1/65536` (nearly-linear branch and coverage denominator).
+
+## Curve pool (one global pool shared by all fonts)
+
+* Format `RGBA16F`, width 4096; shader row wrap is `log2 = 12`. Stored as fp16
+  texels on the CPU too (the reference rasterizer reads the quantized values).
 * One quadratic Bézier = **2 texels**: `(x1,y1,x2,y2)`, then `(x3,y3,0,0)`.
-* Straight lines are encoded `{p1, p2, p2}` - duplicate the endpoint; never a
-  degenerate quadratic.
-* Connected curves may share the endpoint texel (optional optimization).
-* Keep a curve's two texels on one row, or use the per-fetch row-wrap
-  `CalcCurveLoc` like Sluggish/Slughorn.
+* Straight lines are `{p1, p3, p3}` (duplicate endpoint, never degenerate);
+  fully degenerate segments (all three points equal) are dropped at extraction.
+* A glyph's curves are one **contiguous block** allocated in 2-texel units
+  starting on an even x, so a curve's two texels always share a row (the
+  reference shader reads `curveLoc` and `curveLoc + 1` with no wrap). The
+  record's `CurveLocX/Y` + `CurveCount` address the block; the shader itself
+  only uses band reference lists.
+* Endpoint sharing between connected curves is **not** implemented (optional
+  optimization, skipped in M1 by time-box).
 
-### Band texture (one global pool)
+## Band pool (one global pool)
+
 * Format `R16G16_UINT` (`usampler2D` / `Texture2D<uint2>`).
-* At glyph base `glyphLoc = (glyphLocX, glyphLocY)`:
-  * `glyphLoc + 0 .. bandMaxY` - horizontal band headers `(curveCount, offset)`;
-  * `glyphLoc + bandMaxY+1 .. bandMaxY+bandMaxX+1` - vertical band headers;
-  * after the headers - curve reference lists `(curveTexX, curveTexY)`.
-* Offsets are relative to `glyphLoc` and resolved with the row-wrap formula
+* At glyph base `glyphLoc = (glyphLocX, glyphLocY)`, **all of these live in the
+  glyph's first row** - the shader reads them contiguously in x with no wrap:
+  * `glyphLoc.x + 0 .. bandMaxY` - horizontal band headers `(curveCount, offset)`;
+  * `glyphLoc.x + bandMaxY+1 .. bandMaxY+bandMaxX+1` - vertical band headers
+    (`glyphLoc.x + bandMax.y + 1 + bandIndex.x` in the shader);
+  * the reference lists after them, `(curveTexX, curveTexY)` per entry.
+* **Row rules (the shader never row-wraps a read):** the header run must fit in
+  one row, and every band's reference list must fit in one row. The band
+  allocator (`ImSlugAllocBandBlock`) pads to the next row wherever a list would
+  straddle and returns one u16 `listOffset` per band; `CalcBandLoc` is only
+  needed to resolve the list *start*:
   `CalcBandLoc(loc, off) = ((loc.x + off) & 4095, loc.y + ((loc.x + off) >> 12))`.
 * Each band's reference list is sorted **descending by max x** (horizontal
-  bands) / **descending by max y** (vertical bands) so the shader early-outs
-  without missing hits.
+  bands) / **max y** (vertical bands) - insertion sort, stable, by the max of
+  the three control points, so the shader early-outs
+  (`max(max(p.x, p.z), p3.x) * pixelsPerEm < -0.5`) without missing hits.
 
-### Glyph record (CPU/vertex data, not a texture)
-`glyphLoc`, `bandMaxX`, `bandMaxY`, `bandScale = (bands / glyphWidth,
-bands / glyphHeight)`, `bandOffset = (-minX*scaleX, -minY*scaleY)`, em-space
-bbox, advance, later color-layer info.
-Pixel lookup: `bandIndex = clamp(emCoord * bandScale + bandOffset, 0, bandMax)`.
-The even-odd flag is bit 12 of the packed `bandMax` word in the reference pixel
-shader (the bit 28 in the vertex-shader diagram is a known inconsistency).
+## Glyph record (ImSlugGlyphRecord, CPU/vertex data)
+
+`BandLocX/Y`, `BandMaxX/Y`, `BandScale = (bandCount / em extent)` per axis,
+`BandOffset = -emMin * bandScale`, `CurveLocX/Y` + `CurveCount`, control-point
+em bbox `MinX..MaxY`, `Advance` (em), `Flags`.
+Lookup: `bandIndex = clamp(int(emCoord * bandScale + bandOffset), 0, bandMax)`
+(HLSL `int()` truncation + clamp; equivalent to floor because of the lower clamp).
+The E (even-odd) flag is **bit 28 of the packed tex.w word** (bit 12 of its high
+16-bit half) - `ImSlugPackBandMaxWord(bandMaxX, bandMaxY, flags)`; the pixel
+shader masks `bandMax.y &= 0x00FF` and tests bit 12. The CPU record uses
+`ImSlugGlyphFlags_EvenOdd` (bit 0) and the rasterizer maps it.
 
 ## Generation rules that bite if wrong
 
-1. Lines -> `{p1,p2,p2}` (above).
+1. Lines -> `{p1,p3,p3}` (above); contour order preserved; stbtt already closes
+   contours (`stbtt__close_shape`) - never add another closing segment.
 2. **Axis-parallel curves are excluded from the matching-axis bands**: horizontal
-   lines never enter horizontal bands, vertical lines never vertical bands -
-   rays parallel to them cannot cross them.
-3. Band membership uses the **control-point bounding box** (conservative), with
-   an epsilon such as `1/1024` em so adjacent bands overlap slightly.
-4. Uniform band thickness per glyph; adaptive count
-   `n = clamp(ceil(sqrt(2 * curveCount)), 4, 32)` per axis (tuned in M4,
-   `sluggish`-style 16 and DearWidgets' adaptive counts are the comparison
-   points).
-5. Outline extraction: upstream `stb_truetype` (vendored under `third_party/stb/`,
-   **not** ImGui's `imstb_truetype.h`). `stbtt_GetGlyphShape` -> lines/quadratics
-   -> em space (`/ unitsPerEm`). Metrics mirror ImGui's stb loader so layout
-   stays pixel-identical (`AdvanceX`, `X0..Y1` in baked pixel space).
-6. Packer: 16-bit capacity guards, row-aligned band headers, growth by doubling,
-   dirty-row tracking per frame; overflow -> assert + graceful fallback to
-   ImGui's texture path for that glyph/font. Never write outside the pool.
-7. Adaptive band counts and packing must be deterministic: same font in -> same
-   bytes out, or committed/golden data churns.
+   curves (all three control y bitwise equal after em conversion) never enter
+   horizontal bands, vertical curves never vertical bands - rays parallel to
+   them cannot cross them.
+3. Band membership uses the **control-point bounding box** (conservative),
+   inflated by `1/1024` em on both ends, inclusive overlap
+   (`bbox.min - eps <= band.max && bbox.max + eps >= band.min`).
+4. Uniform bands per glyph, adaptive count
+   `n = clamp(ceil(sqrt(2 * curveCount)), 4, 32)` per axis - the single tuning
+   point is `ImSlugCalcBandCount()` (M4 re-tunes). Empty glyphs (space) use one
+   band per axis with `bandScale = 0`; a zero em extent on an axis also forces
+   `bandScale = 0` for that axis (all curves there are axis-parallel anyway).
+5. Outline extraction: upstream `stb_truetype` (vendored under
+   `third_party/stb/`, pinned commit + SHA-256 in `PROVENANCE.txt`, **not**
+   ImGui's `imstb_truetype.h`). `stbtt_GetGlyphShape` -> lines/quadratics ->
+   em space (`/ unitsPerEm`). Cubics (never produced by glyf) go through
+   `ImSlugConvertCubicToQuadratics`.
+6. Packer: growth by doubling (32-row base), 16-bit/4096 capacity guards with
+   asserts + returned `ImSlugBuildStatus` (`CurvePoolLimit`, `BandPoolLimit`,
+   `GlyphTooLarge`, `OutOfMemory`) for the graceful fallback; dirty-row tracking
+   (`DirtyRowMin/Max`) + `UsedRows` high-water mark for M2 uploads. Never write
+   outside the pool.
+7. Deterministic: same font in -> same bytes out (tests compare two builds).
+   The ref list order is stable insertion sort; curves are laid out in
+   extraction order; band layout is a linear allocator.
+
+## Metrics parity (ImGui v1.92.9b stb loader)
+
+Mirrored in `imslug_glyphgen.cpp` with the config Slug fonts use:
+`OversampleH/V = 1`, `RasterizerDensity = 1`, `ExtraSizeScale = 1`,
+`GlyphOffset = 0`, no `PixelSnapH`, no advance clamping.
+
+* `scale = stbtt_ScaleForPixelHeight(font, 1.0f) * size` = `size / (hhea.ascent - hhea.descent)`
+  (hhea, not OS/2, and not unitsPerEm).
+* `AdvanceX = advance_fu * scale`; `record.Advance = advance_fu / unitsPerEm`;
+  `PixelsPerEm = scale * unitsPerEm`.
+* `X0 = floor(gx0 * scale)`, `X1 = ceil(gx1 * scale)`, `Y0 = floor(-gy1 * scale) + IM_ROUND(Ascent)`,
+  `Y1 = ceil(-gy0 * scale) + IM_ROUND(Ascent)` with `Ascent = ImCeil(hhea.ascent * scale)`
+  (`IM_ROUND(x) = (int)(x + 0.5f)`, `ImCeil = ceilf`, `ImFloor` = exact floor).
+* Empty bitmap box (space) -> `X0 = Y0 = X1 = Y1 = 0` (ImFontGlyph's zeroed
+  defaults), `AdvanceX` still set. Missing codepoints: the metrics API returns
+  false; ImGui's atlas-level fallback handles the substitution (same as the
+  stock loader returning false per source).
+* `tests/test_imguiparity.cpp` compiles Dear ImGui into a test-only target and
+  asserts **exact equality** for every glyph/size pair; `tests/test_metrics.cpp`
+  re-derives the formulas from stbtt independently.
+
+## CPU reference rasterizer (the arbiter)
+
+`imslug_refraster.cpp` mirrors `SlugPixelShader.hlsl` function by function
+(CalcRootCode table `0x2E74 >> shift & 0x0101`, SolveHoriz/VertPoly with the
+`1/65536` nearly-linear branch, CalcBandLoc, CalcCoverage
+`max(|xcov*xwgt + ycov*ywgt| / max(xwgt + ywgt, eps), min(|xcov|, |ycov|))` then
+saturate (nonzero) or even-odd wrap). Deviations: the exactly-degenerate linear
+solve uses Slughorn's guard (no 0/0 NaN); `frac()` is IEEE `x - floor(x)`.
+`fwidth` is CPU-impossible, so `pixelsPerEm` is a parameter. Banded and
+unbanded (`ImSlugRasterSampleUnbanded`) must agree; banding is only an
+acceleration structure.
+
+## Tests to run after generator edits
+
+* `scripts/test.*` - suites: `imslug_glyphgen` (extraction, contours, line
+  encoding, cubic bound, band superset/sort/axis-parallel, determinism),
+  `imslug_packer` (fp16, doubling, pair rows, band row padding, guards, dirty
+  rows), `imslug_metrics` (stbtt re-derivation), `imslug_refraster` (math pins +
+  the stbtt coverage gate + banded/unbanded + convergence),
+  `imslug_metrics_imgui_parity` (test-only ImGui build, exact equality).
+* Coverage gate (`g`, `A`, `W`, `é` at 16/32/64 px, both test fonts): deep
+  pixels (3x3 stbtt neighbourhood saturated) must match within 0.05; aggregate
+  tripwires are per-size (mean 9%/5%/3%, p99 27%/32%/27% for 16/32/64 px) plus a
+  256 px convergence check (mean <= 1.2% and <= 1/4 of the 16 px mean). The
+  reference estimator is **not** exact area coverage: mean deviations 1.5-8.3%
+  at 16 px come from the sampler's ±0.5 px ramp on edge pixels, not geometry
+  (deep pixels are exact and the mean collapses ~40x by 256 px). Change these
+  numbers only with measurements + a PLAN §11 entry.
+* After shader-affecting format changes: `scripts/gen_shaders.* --check` and the
+  goldens (`scripts/golden.*`, M2+).
+* Never "fix" a failing invariant by loosening the epsilon or the superset check
+  without recording the decision in `.agent-docs/PLAN.md` §11.
+
+## Frozen core API for M2 (imslug_internal.h + modules)
+
+```c
+ImSlugFont* ImSlugCreateFontFromMemory(const void* data, int size, int fontIndex, bool copyData);
+void        ImSlugDestroyFont(ImSlugFont*);
+void        ImSlugGetFontMetrics(const ImSlugFont*, float bakeSizePixels, ImSlugFontMetrics*);
+bool        ImSlugGetGlyphMetrics(const ImSlugFont*, unsigned int codepoint, float bakeSizePixels, ImSlugGlyphMetrics*);
+int         ImSlugGetGlyphIndex(const ImSlugFont*, unsigned int codepoint);
+ImSlugBuildStatus ImSlugGetGlyphRecord(ImSlugFont*, ImSlugPools*, unsigned int codepoint,
+                                       const ImSlugGlyphRecord** outRecord);   // lazy + cached
+ImSlugBuildStatus ImSlugGetGlyphRecordByIndex(ImSlugFont*, ImSlugPools*, int glyphIndex,
+                                              const ImSlugGlyphRecord** outRecord);
+
+void ImSlugInitPools(ImSlugPools*);              // one pool set per atlas, shared by all fonts
+void ImSlugDestroyPools(ImSlugPools*);
+void ImSlugPoolClearDirtyRows(ImSlugPools*);     // call after the backend uploaded
+uint32_t ImSlugPackBandMaxWord(int bandMaxX, int bandMaxY, uint32_t glyphFlags); // tex.w
+
+float ImSlugRasterSample(const ImSlugPools*, const ImSlugGlyphRecord*, float emX, float emY,
+                         float pixelsPerEmX, float pixelsPerEmY);                // ground truth
+void  ImSlugRasterGlyphRect(const ImSlugPools*, const ImSlugGlyphRecord*, float centerX0, float centerY0,
+                            float pixelsPerEm, float* outCoverage, int width, int height);
+```
+
+Pools expose `Curves.Texels` (RGBA16F, `4*u16` per texel), `Bands.Texels`
+(R16G16_UINT, `2*u16`), `Width`, `Height`, `UsedRows`, `DirtyRowMin/Max` for
+the M2 uploads. Records point into the font's cache and stay valid until the
+font is destroyed (they are rebuilt if a different `ImSlugPools` is passed).
+The pipeline is single-threaded; build scratch buffers live inside `ImSlugFont`.
 
 ## Budgets (typical Latin UI font, ~2000 glyphs)
 
@@ -73,19 +195,6 @@ shader (the bit 28 in the vertex-shader diagram is a known inconsistency).
 * CPU pre-pass target <= ~0.5 ms @ 5k glyphs; first-use glyph build <= ~50 us.
 * Zero glyph bitmaps for Slug fonts (the whole point).
 
-## Tests to run after generator edits
-
-* `scripts/test.*` - unit tests: bbox/advance vs `stbtt`, superset check that
-  every curve appears in every band it can cross, sort order per band,
-  packing bounds/row-wrap, plane/contour winding signs.
-* The **CPU reference rasterizer is the arbiter** when shader and generator
-  disagree: render `g`, `A`, `W`, `é` at 16/32/64 px and compare against
-  `stbtt` bitmaps within tolerance (M1 acceptance).
-* After shader-affecting format changes: `scripts/gen_shaders.* --check` and the
-  goldens (`scripts/golden.*`, M2+).
-* Never "fix" a failing invariant by loosening the epsilon or the superset check
-  without recording the decision in `.agent-docs/PLAN.md` §11.
-
 ## Gotchas
 
 * Emit curves in a stable contour order; flipping winding signs silently breaks
@@ -93,3 +202,9 @@ shader (the bit 28 in the vertex-shader diagram is a known inconsistency).
 * Em space and Y-up: the sign of `bandOffset.y` is a classic bug source.
 * Keep texture width 4096 (`log2 = 12`) in sync with the shader constant; if the
   pool grows in rows, only the y coordinate changes.
+* The reference shader reads band headers and ref lists **contiguously in x**;
+  only the list *start* goes through `CalcBandLoc`. A naive linear allocator
+  that lets a list cross a row boundary produces garbage coverage at high band
+  indexes (caught by `imslug_packer`).
+* `int2(x)` in HLSL truncates toward zero; the CPU rasterizer must use `(int)`,
+  not `floorf`, before the clamp.

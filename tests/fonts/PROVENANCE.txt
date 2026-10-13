@@ -1,0 +1,35 @@
+Test fonts — provenance
+=======================
+
+Both fonts are committed unmodified, only as test assets for the glyph
+pipeline (outline extraction, band generation, CPU reference rasterizer and
+ImGui metric parity tests). Each font keeps its license text next to it.
+
+Roboto
+------
+File:           Roboto-Regular.ttf  (hinted static instance)
+Upstream repo:  https://github.com/googlefonts/roboto-2
+Pinned commit:  38062f4b4a0be4346d07a928408da21602545e9e  (branch main)
+Source URL:     https://raw.githubusercontent.com/googlefonts/roboto-2/38062f4b4a0be4346d07a928408da21602545e9e/src/hinted/Roboto-Regular.ttf
+SHA-256:        56a45233d29f11b4dfb86d248e921939d115778f87325e7ae8cc108383d6664d
+License:        Apache License 2.0 — see Roboto-LICENSE.txt (copied verbatim
+                from the same pinned commit, repo-root LICENSE file).
+
+Inter
+-----
+File:           Inter-Regular.ttf  (static instance from the v4.1 release)
+Upstream repo:  https://github.com/rsms/inter
+Pinned release: v4.1 (tag object e3a3d4c57d5ecc01453a575621882a384c1995a3)
+Source:         https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+                entry extras/ttf/Inter-Regular.ttf
+SHA-256:        40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82
+License:        SIL Open Font License 1.1 — see Inter-LICENSE.txt (copied
+                verbatim from LICENSE.txt in the same release archive).
+
+Notes
+-----
+* No reserved-font-name renaming applies: the files are byte-identical to the
+  upstream releases (no subsetting, no modification), so the OFL/Apache
+  conditions for derived versions do not apply.
+* Roboto is the primary test font; Inter is the second, to catch glyph-data
+  assumptions that only hold for one font (composites, curve counts, extents).

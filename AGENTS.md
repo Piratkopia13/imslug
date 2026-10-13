@@ -7,12 +7,18 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 
 | Path | What it is |
 |---|---|
-| `imslug.h` / `imslug.cpp` | Public API + core (glyph generator, packer, pre-pass). Header must stay C++11-compatible and STL-free. |
+| `imslug.h` / `imslug.cpp` | Public API + core. Header must stay C++11-compatible and STL-free. |
+| `imslug_internal.h` | Impl-only frozen core API: pools, glyph records, font/metrics/raster declarations (M1; umbrella over the module headers). |
+| `imslug_glyphgen.{h,cpp}` | stbtt outline extraction → em-space quadratics, band construction, font handle + lazy glyph cache + ImGui-parity metrics (M1). |
+| `imslug_packer.{h,cpp}` | Shared curve/band pools: allocation, row rules, growth, dirty rows, capacity guards (M1). |
+| `imslug_refraster.{h,cpp}` | CPU coverage rasterizer — the arbiter for M2+ golden tests (M1). |
+| `imslug_stb.cpp` | Single TU instantiating vendored stb_truetype; own third-party warning target. |
+| `third_party/stb/` | Vendored upstream stb (read-only; `PROVENANCE.txt` pins commit + SHA-256). |
 | `backends/` | Backend modules (`imslug_impl_vulkan.*`, from M3). |
 | `shaders/` | Authoritative GLSL sources (M2) + committed generated SPIR-V header `imslug_shaders_vulkan.h`. |
 | `tools/imslug_gen/` | Offline generator CLI (M7). |
 | `example/` | Example applications (M2+). |
-| `tests/` | Unit tests (M1+), CPU reference rasterizer, golden images (M2+). |
+| `tests/` | Unit tests (M1+), CPU reference rasterizer, golden images (M2+), test fonts under `tests/fonts/`. |
 | `scripts/` | Deterministic build/test/generate entry points (see Commands). |
 | `.opencode/` | Commands, repo skills and subagents for agent sessions. |
 | `.agent-docs/` | Transient agent working material (plan, briefs, notes). **Gitignored — never committed.** |

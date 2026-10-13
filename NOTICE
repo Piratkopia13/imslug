@@ -363,7 +363,22 @@ layouts and format decisions are cross-checked against them.
   Reference only; no code is copied from it (it has no license grant).
 
 --------------------------------------------------------------------------------
-5. Trademarks and affiliation
+5. Test fonts (tests/fonts/)
+--------------------------------------------------------------------------------
+
+Roboto-Regular.ttf — Copyright 2011 Google Inc., licensed under the Apache
+License, Version 2.0 (full text in tests/fonts/Roboto-LICENSE.txt). Source:
+https://github.com/googlefonts/roboto-2 (pinned in tests/fonts/PROVENANCE.txt).
+
+Inter-Regular.ttf — Copyright 2016 The Inter Project Authors
+(https://github.com/rsms/inter), licensed under the SIL Open Font License,
+Version 1.1 (full text in tests/fonts/Inter-LICENSE.txt). Source: Inter v4.1
+release archive (pinned in tests/fonts/PROVENANCE.txt).
+
+Both files are committed unmodified and are used only as test assets.
+
+--------------------------------------------------------------------------------
+6. Trademarks and affiliation
 --------------------------------------------------------------------------------
 
 imslug is an unofficial project, not affiliated with or endorsed by Terathon
