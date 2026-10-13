@@ -14,7 +14,7 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 | `imslug_refraster.{h,cpp}` | CPU coverage rasterizer — the arbiter for M2+ golden tests (M1). |
 | `imslug_stb.cpp` | Single TU instantiating vendored stb_truetype; own third-party warning target. |
 | `third_party/stb/` | Vendored upstream stb (read-only; `PROVENANCE.txt` pins commit + SHA-256). |
-| `backends/` | Backend modules (`imslug_impl_vulkan.*`, from M3). |
+| `backends/` | Backend modules: `imslug_impl_vulkan.*` (M2 standalone Vulkan core, ImGui-free); the M3 ImGui adapter lives here too. |
 | `shaders/` | Authoritative GLSL sources (M2) + committed generated SPIR-V header `imslug_shaders_vulkan.h`. |
 | `tools/imslug_gen/` | Offline generator CLI (M7). |
 | `example/` | Example applications (M2+). |
@@ -56,10 +56,18 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   never the emitter directly.
 * Overrides: `IMSLUG_BUILD_DIR` (default `build`), `IMSLUG_BUILD_TYPE`
   (default `Release`), `IMSLUG_RECONFIGURE=1` (force configure),
-  `IMSLUG_CMAKE=<path to cmake>`.
+  `IMSLUG_CMAKE=<path to cmake>`, `IMSLUG_CMAKE_DEFINES="-D<var>=<value> ..."`
+  (configure-time CMake options, forces a reconfigure; needed on Windows where
+  cmd.exe splits `-Dvar=value` arguments).
+* `IMSLUG_BUILD_EXAMPLES=ON` (configure option) builds the GLFW+Vulkan example
+  (`build/imslug_example_glfw_vulkan.exe`; GLFW is fetched at a pinned tag or
+  taken from `IMSLUG_GLFW_DIR`).
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/golden`, `/bench`, `/check-docs`, `/plan-next`,
   `/update-plan`.
+* Golden images compare GPU output against the M1 CPU reference in a headless
+  offscreen pass (`tests/golden/`, PPMs in `<build>/golden/`); they skip with
+  exit 77 when no Vulkan device is available.
 * If a workflow is missing a script, add one under `scripts/` (and a
   `.opencode/commands/` entry) instead of inventing ad-hoc commands.
 
