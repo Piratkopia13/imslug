@@ -9,6 +9,11 @@ rem
 rem   scripts\build.bat                    build the default targets
 rem   scripts\build.bat --target imslug    any extra arg goes to cmake --build
 rem
+rem Configure-time overrides (cmd.exe splits batch args on '=', so -D can't be
+rem used here):
+rem   set IMSLUG_CMAKE_DEFINES=-DIMSLUG_BUILD_EXAMPLES=ON [-D...]
+rem                                        forces a reconfigure with these -D args
+rem
 rem Overrides:
 rem   IMSLUG_BUILD_DIR=<dir>    build directory        (default: build)
 rem   IMSLUG_BUILD_TYPE=<cfg>   single-config config   (default: Release)
@@ -62,6 +67,7 @@ if defined VCVARS call "%VCVARS%" >nul 2>&1
 rem --- Configure only when there is no cache (or when asked) -------------------
 if not exist "%IMSLUG_BUILD_DIR%\CMakeCache.txt" goto :configure
 if /i "%IMSLUG_RECONFIGURE%"=="1" goto :configure
+if defined IMSLUG_CMAKE_DEFINES goto :configure
 goto :build
 
 :configure
@@ -78,15 +84,16 @@ echo [build] root:       "%IMSLUG_ROOT%"
 echo [build] cmake:      "%CMAKE_EXE%"
 echo [build] build dir:  "%IMSLUG_BUILD_DIR%"
 echo [build] generator:  "%GEN%"
+if defined IMSLUG_CMAKE_DEFINES echo [build] defines:    %IMSLUG_CMAKE_DEFINES%
 if /i "%GEN%"=="Ninja" goto :configure_ninja
 echo [build] configuring ...
-"%CMAKE_EXE%" -S . -B "%IMSLUG_BUILD_DIR%" -G "%GEN%"
+"%CMAKE_EXE%" -S . -B "%IMSLUG_BUILD_DIR%" -G "%GEN%" %IMSLUG_CMAKE_DEFINES%
 goto :configure_done
 
 :configure_ninja
 if not defined NINJA_EXE set "NINJA_EXE=ninja"
 echo [build] configuring with Ninja + MSVC ...
-"%CMAKE_EXE%" -S . -B "%IMSLUG_BUILD_DIR%" -G Ninja -DCMAKE_MAKE_PROGRAM="%NINJA_EXE%" -DCMAKE_BUILD_TYPE=%IMSLUG_BUILD_TYPE%
+"%CMAKE_EXE%" -S . -B "%IMSLUG_BUILD_DIR%" -G Ninja -DCMAKE_MAKE_PROGRAM="%NINJA_EXE%" -DCMAKE_BUILD_TYPE=%IMSLUG_BUILD_TYPE% %IMSLUG_CMAKE_DEFINES%
 
 :configure_done
 if errorlevel 1 (

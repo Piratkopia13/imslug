@@ -3,7 +3,8 @@
 # imslug - scripts/format.sh
 #
 # Run clang-format over our C/C++ sources. Vendored trees (third_party/,
-# vendor/) are never touched - upstream files keep their own style.
+# vendor/) and generated artifacts (shaders/imslug_shaders_vulkan.h) are never
+# touched - upstream/emitted files keep their own byte layout.
 #
 #   scripts/format.sh            format in place
 #   scripts/format.sh --check    report files that would change, exit non-zero
@@ -37,7 +38,8 @@ if [ -z "$CLANG_FORMAT" ]; then
 fi
 
 files=$(git ls-files -co --exclude-standard -- '*.h' '*.hpp' '*.c' '*.cpp' '*.cc' '*.cxx' \
-    | grep -Ev '^(third_party|vendor)/')
+    | grep -Ev '^(third_party|vendor)/' \
+    | grep -Ev '^shaders/imslug_shaders_vulkan\.h$')
 
 count=0
 rc=0

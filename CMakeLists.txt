@@ -27,6 +27,11 @@ set(IMSLUG_IMGUI_DIR "" CACHE PATH
 set(IMSLUG_IMGUI_TAG "v1.92.9b" CACHE STRING
     "Dear ImGui release tag fetched with FetchContent")
 
+set(IMSLUG_GLFW_DIR "" CACHE PATH
+    "Use an existing GLFW checkout instead of fetching it (-DIMSLUG_GLFW_DIR=...)")
+set(IMSLUG_GLFW_TAG "3.4" CACHE STRING
+    "GLFW release tag fetched with FetchContent")
+
 enable_testing()
 
 # ---------------------------------------------------------------------------
@@ -139,19 +144,77 @@ target_include_directories(imslug PUBLIC
 target_link_libraries(imslug PRIVATE imslug_stb)
 
 # ---------------------------------------------------------------------------
+# Vulkan (backend module, golden tests, example)
+# ---------------------------------------------------------------------------
+find_package(Vulkan QUIET)
+set(IMSLUG_HAVE_VULKAN OFF)
+if(Vulkan_FOUND)
+    set(IMSLUG_HAVE_VULKAN ON)
+    message(STATUS "imslug: Vulkan found - backend module, golden tests and example enabled")
+else()
+    message(STATUS "imslug: Vulkan not found - backend module, golden tests and example disabled")
+endif()
+
+# ---------------------------------------------------------------------------
 # Optional targets — placeholders until their milestones land. They are
 # created only when the corresponding option is ON; see the milestone briefs.
 # ---------------------------------------------------------------------------
 if(IMSLUG_BACKEND_VULKAN)
-    add_library(imslug_vulkan INTERFACE)
-    target_link_libraries(imslug_vulkan INTERFACE imslug)
-    message(STATUS "imslug: imslug_vulkan placeholder target (Vulkan backend lands in M3)")
+    if(IMSLUG_HAVE_VULKAN)
+        # Standalone Vulkan rendering core (M2): ImGui-free, reused by M3.
+        add_library(imslug_vulkan STATIC
+            backends/imslug_impl_vulkan.cpp
+            backends/imslug_impl_vulkan.h)
+        set_target_properties(imslug_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        imslug_target_defaults(imslug_vulkan)
+        target_include_directories(imslug_vulkan PUBLIC
+            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>"
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+        target_link_libraries(imslug_vulkan PUBLIC imslug)
+        if(TARGET Vulkan::Vulkan)
+            target_link_libraries(imslug_vulkan PUBLIC Vulkan::Vulkan)
+        else()
+            target_include_directories(imslug_vulkan PUBLIC ${Vulkan_INCLUDE_DIRS})
+        endif()
+    else()
+        add_library(imslug_vulkan INTERFACE)
+        target_link_libraries(imslug_vulkan INTERFACE imslug)
+        message(STATUS "imslug: imslug_vulkan placeholder target (Vulkan not found)")
+    endif()
 endif()
 
 if(IMSLUG_BUILD_EXAMPLES)
-    add_library(imslug_example_glfw_vulkan INTERFACE)
-    target_link_libraries(imslug_example_glfw_vulkan INTERFACE imslug)
-    message(STATUS "imslug: imslug_example_glfw_vulkan placeholder target (example lands in M2)")
+    if(NOT IMSLUG_HAVE_VULKAN)
+        message(STATUS "imslug: examples need Vulkan - skipped")
+    else()
+        # GLFW: local checkout (IMSLUG_GLFW_DIR), an existing glfw target, or
+        # FetchContent at the pinned tag. Read-only third-party tree either way.
+        if(IMSLUG_GLFW_DIR)
+            if(NOT EXISTS "${IMSLUG_GLFW_DIR}/include/GLFW/glfw3.h")
+                message(FATAL_ERROR "IMSLUG_GLFW_DIR='${IMSLUG_GLFW_DIR}' does not look like a GLFW checkout")
+            endif()
+            add_subdirectory("${IMSLUG_GLFW_DIR}" "${CMAKE_BINARY_DIR}/_deps/glfw-local" EXCLUDE_FROM_ALL)
+        elseif(NOT TARGET glfw)
+            include(FetchContent)
+            set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+            set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+            FetchContent_Declare(glfw
+                GIT_REPOSITORY https://github.com/glfw/glfw.git
+                GIT_TAG        ${IMSLUG_GLFW_TAG}
+                GIT_SHALLOW    TRUE)
+            FetchContent_MakeAvailable(glfw)
+        endif()
+
+        add_executable(imslug_example_glfw_vulkan example/glfw_vulkan/main.cpp)
+        set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        imslug_target_defaults(imslug_example_glfw_vulkan)
+        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw)
+        target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
+            IMSLUG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+    endif()
 endif()
 
 if(IMSLUG_BUILD_TOOLS)

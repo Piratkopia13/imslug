@@ -43,6 +43,34 @@ imslug_add_m1_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
 imslug_add_m1_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
 
 # ---------------------------------------------------------------------------
+# M2 golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so
+# they run on lavapipe in CI; the comparison arbiter is the M1 CPU rasterizer,
+# not a committed image. SKIP_RETURN_CODE 77 = no usable Vulkan device.
+# ---------------------------------------------------------------------------
+if(IMSLUG_HAVE_VULKAN)
+    set(IMSLUG_GOLDEN_OUT_DIR "${CMAKE_BINARY_DIR}/golden")
+    file(MAKE_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+
+    add_executable(imslug_tests_golden golden/test_golden_vulkan.cpp test_util.h)
+    target_link_libraries(imslug_tests_golden PRIVATE imslug imslug_vulkan)
+    set_target_properties(imslug_tests_golden PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_tests_golden)
+    target_compile_definitions(imslug_tests_golden PRIVATE
+        IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+
+    add_test(NAME imslug_golden
+        COMMAND imslug_tests_golden
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    add_test(NAME imslug_golden_dynamic
+        COMMAND imslug_tests_golden --dynamic-rendering
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    set_tests_properties(imslug_golden imslug_golden_dynamic PROPERTIES SKIP_RETURN_CODE 77)
+else()
+    message(STATUS "imslug tests: golden-image tests skipped (Vulkan not found)")
+endif()
+
+# ---------------------------------------------------------------------------
 # ImGui metric parity (M1 brief: "vs ImGui's loader in a test-only build").
 # Dear ImGui is compiled here only — never into the library or the backend.
 # Skipped when ImGui came from find_package (no source tree to compile).

@@ -4,7 +4,8 @@ rem ===========================================================================
 rem imslug - scripts\format.bat
 rem
 rem Run clang-format over our C/C++ sources. Vendored trees (third_party/,
-rem vendor/) are never touched - upstream files keep their own style.
+rem vendor/) and generated artifacts (shaders\imslug_shaders_vulkan.h) are never
+rem touched - upstream/emitted files keep their own byte layout.
 rem
 rem   scripts\format.bat            format in place
 rem   scripts\format.bat --check    report files that would change, exit non-zero
@@ -35,7 +36,7 @@ if "%CHECK%"=="1" ( set "CF_ARGS=--dry-run --Werror" ) else ( set "CF_ARGS=-i" )
 
 set "RC=0"
 set "COUNT=0"
-for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/"') do (
+for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/" /c:"shaders/imslug_shaders_vulkan.h"') do (
     "%CLANG_FORMAT%" !CF_ARGS! "%%F" || set "RC=1"
     set /a COUNT+=1
 )

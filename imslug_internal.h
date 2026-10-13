@@ -166,6 +166,51 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
+    // Glyph instance (frozen M2 layout; mirrored by shaders/vulkan/slug.vert)
+    // ---------------------------------------------------------------------
+    // One instance per glyph quad. The vertex shader builds the quad corners
+    // from gl_VertexIndex (4 vertices, triangle strip) and reads this record
+    // through VK_VERTEX_INPUT_RATE_INSTANCE attributes at locations 0..6:
+    //
+    //   loc 0  vec4   EmBBox      (MinX, MinY, MaxX, MaxY) em space, Y up
+    //   loc 1  vec4   ScreenRect  (MinX, MinY, MaxX, MaxY) screen pixels, Y down
+    //   loc 2  vec4   Jac         inverse Jacobian rows: em += (dot(d, .xy), dot(d, .zw))
+    //   loc 3  vec4   Banding     (BandScaleX, BandScaleY, BandOffsetX, BandOffsetY)
+    //   loc 4  uvec2  GlyphLoc    band pool glyph location (x, y)
+    //   loc 5  uint   BandMaxWord bandMaxX | bandMaxY << 16 | E << 28 (D8(g))
+    //   loc 6  vec4   Color       straight alpha (r, g, b, a)
+    //
+    // ScreenRect corners correspond to EmBBox corners with the Y flip applied
+    // (em Y up, screen Y down): em (MinX, MinY) maps to (ScreenMinX,
+    // ScreenMaxY). The placement must be an axis-aligned scale+translate (no
+    // rotation): the shader dilates along the screen-space corner diagonals.
+    struct ImSlugGlyphInstance
+    {
+        float EmMinX, EmMinY, EmMaxX, EmMaxY;
+        float ScreenMinX, ScreenMinY, ScreenMaxX, ScreenMaxY;
+        float Jac00, Jac01, Jac10, Jac11;
+        float BandScaleX, BandScaleY, BandOffsetX, BandOffsetY;
+        uint32_t GlyphLocX, GlyphLocY;
+        uint32_t BandMaxWord;
+        float ColorR, ColorG, ColorB, ColorA;
+    };
+    static_assert(sizeof(ImSlugGlyphInstance) == 92, "frozen M2 instance layout (shaders + vertex input)");
+    static_assert(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16, "frozen M2 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, Jac00) == 32, "frozen M2 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, BandScaleX) == 48, "frozen M2 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, GlyphLocX) == 64, "frozen M2 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, BandMaxWord) == 72, "frozen M2 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, ColorR) == 76, "frozen M2 instance layout");
+
+    // Fills one instance for `record` placed by an axis-aligned transform:
+    //   screen (pixels, Y down) = (penX + emX * pixelsPerEm, penY - emY * pixelsPerEm)
+    // where (penX, penY) is the pen position on the baseline. Color is straight
+    // alpha. Empty glyphs (CurveCount == 0) are representable (coverage 0), but
+    // callers normally skip them.
+    void ImSlugBuildGlyphInstance(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEm, float r,
+                                  float g, float b, float a, ImSlugGlyphInstance* outInstance);
+
+    // ---------------------------------------------------------------------
     // Build status (capacity guards feed the graceful fallback of PLAN R11)
     // ---------------------------------------------------------------------
     enum ImSlugBuildStatus

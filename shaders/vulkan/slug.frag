@@ -217,5 +217,9 @@ void main()
     if (fill < 0.001)
         discard;
 
-    outColor = vColor * fill;
+    // Unpremultiplied output: the pipeline blend is stock ImGui's
+    // src-alpha / one-minus-src-alpha, so the coverage scales the alpha only
+    // (the reference returns color * coverage, which assumes a premultiplied
+    // blend state; using it here would square the edge coverage).
+    outColor = vec4(vColor.rgb, vColor.a * fill);
 }
