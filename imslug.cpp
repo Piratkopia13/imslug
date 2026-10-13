@@ -74,11 +74,14 @@ namespace ImSlug
         // unclipped corners; clipped corners carry float rounding of the encoded
         // value, so the openness test uses a small epsilon. The placement slack
         // absorbs ImGui's integer glyph box: X0..Y1 are floor/ceil of the exact
-        // em box, so the drawn quad can exceed the control-point bbox by <1px
-        // per side.
+        // em box *plus* round(baked ascent) on Y, so the drawn quad can exceed
+        // the control-point bbox by up to ~1.5 px per side (M4 fuzz: measured
+        // max 1.076 px at 6.5 px, where ceil + round can both contribute). It is
+        // a garbage filter, not a correctness gate: the fuzz harness bounds the
+        // real placement error separately.
         static const float kFracOpenEpsilon = 1e-3f;  // 0/1 exactness margin
         static const float kSpanReliable = 0.02f;     // use the fitted slope below this
-        static const float kPlacementSlack = 1.05f;   // px; see the note above kFracOpenEpsilon
+        static const float kPlacementSlack = 1.6f;    // px; see the note above kFracOpenEpsilon
         static const float kClipEdgeEpsilon = 0.01f;  // px, same-fine-clip comparison
 
         struct InstanceArena
@@ -339,6 +342,51 @@ namespace ImSlug
             return true;
         }
 
+        // R3 fallback for Config::EnableFineClipReconstruction == false: place
+        // the glyph by mapping its em box into the quad ImGui actually drew
+        // (the CPU fine clip already cropped that quad), with a uniform scale
+        // so the whole glyph fits inside the quad and is centered in it. Ink
+        // therefore never leaves the fine-clip rectangle even without the run
+        // scissor, at the documented cost of a visibly squeezed glyph near a
+        // clip edge. Unclipped quads take the exact reconstruction path in
+        // EmitGlyph, so the fallback only affects cropped glyphs.
+        bool PlaceGlyphFromQuad(const ImSlugGlyphSlab* slab, const ImVec2 pos[4], float* outPenX, float* outPenY,
+                                float* outPixelsPerEm)
+        {
+            const ImSlugGlyphRecord* record = slab->Record;
+            float quadL = pos[0].x, quadR = pos[0].x, quadT = pos[0].y, quadB = pos[0].y;
+            for (int i = 1; i < 4; ++i)
+            {
+                quadL = ImSlugMin(quadL, pos[i].x);
+                quadR = ImSlugMax(quadR, pos[i].x);
+                quadT = ImSlugMin(quadT, pos[i].y);
+                quadB = ImSlugMax(quadB, pos[i].y);
+            }
+
+            const float emWidth = record->MaxX - record->MinX;
+            const float emHeight = record->MaxY - record->MinY;
+            const float quadWidth = quadR - quadL;
+            const float quadHeight = quadB - quadT;
+            if (!(emWidth > 0.0f) || !(emHeight > 0.0f) || !(quadWidth > 0.0f) || !(quadHeight > 0.0f))
+                return false;
+
+            const float pixelsPerEm = ImSlugMin(quadWidth / emWidth, quadHeight / emHeight);
+            if (!(pixelsPerEm > 0.0f) || !isfinite(pixelsPerEm))
+                return false;
+
+            const float emCenterX = 0.5f * (record->MinX + record->MaxX);
+            const float emCenterY = 0.5f * (record->MinY + record->MaxY);
+            const float penX = 0.5f * (quadL + quadR) - emCenterX * pixelsPerEm;
+            const float penY = 0.5f * (quadT + quadB) + emCenterY * pixelsPerEm;
+            if (!isfinite(penX) || !isfinite(penY))
+                return false;
+
+            *outPenX = penX;
+            *outPenY = penY;
+            *outPixelsPerEm = pixelsPerEm;
+            return true;
+        }
+
         // ---------------------------------------------------------------------
         // Command rewriting
         // ---------------------------------------------------------------------
@@ -484,8 +532,18 @@ namespace ImSlug
             }
 
             float penX = 0.0f, penY = 0.0f, pixelsPerEm = 0.0f;
-            if (!ReconstructPlacement(slab, pos, fracX, fracY, &penX, &penY, &pixelsPerEm))
+            const bool cropped = croppedL || croppedR || croppedT || croppedB;
+            if (cropped && !g_Core.Cfg.EnableFineClipReconstruction)
+            {
+                // R3 fallback: compress the clipped glyph into the quad ImGui
+                // drew (PlaceGlyphFromQuad documents the trade-off).
+                if (!PlaceGlyphFromQuad(slab, pos, &penX, &penY, &pixelsPerEm))
+                    return false;  // degenerate placement: drop this glyph
+            }
+            else if (!ReconstructPlacement(slab, pos, fracX, fracY, &penX, &penY, &pixelsPerEm))
+            {
                 return false;  // degenerate placement: drop this glyph
+            }
 
             // A run shares one scissor: every glyph of the run must be consistent
             // with a single CPU fine-clip rectangle. Cropped sides pin the edge;
@@ -516,12 +574,23 @@ namespace ImSlug
 
             if (g_Core.Cfg.DebugDrawBounds)
             {
-                const bool covers =
-                    instance.ScreenMinX <= quadL + kPlacementSlack && instance.ScreenMaxX >= quadR - kPlacementSlack &&
-                    instance.ScreenMinY <= quadT + kPlacementSlack && instance.ScreenMaxY >= quadB - kPlacementSlack;
-                if (!covers)
+                // Reconstruction: the instance must cover the drawn (possibly
+                // cropped) quad. Fallback: the instance must stay inside it
+                // (PlaceGlyphFromQuad compresses the em box into the quad).
+                bool valid;
+                if (cropped && !g_Core.Cfg.EnableFineClipReconstruction)
+                    valid = instance.ScreenMinX >= quadL - kPlacementSlack &&
+                            instance.ScreenMaxX <= quadR + kPlacementSlack &&
+                            instance.ScreenMinY >= quadT - kPlacementSlack &&
+                            instance.ScreenMaxY <= quadB + kPlacementSlack;
+                else
+                    valid = instance.ScreenMinX <= quadL + kPlacementSlack &&
+                            instance.ScreenMaxX >= quadR - kPlacementSlack &&
+                            instance.ScreenMinY <= quadT + kPlacementSlack &&
+                            instance.ScreenMaxY >= quadB - kPlacementSlack;
+                if (!valid)
                     g_Core.Stats.BoundsMismatches++;
-                IMSLUG_ASSERT(covers && "imslug: reconstructed glyph bounds do not cover the source quad");
+                IMSLUG_ASSERT(valid && "imslug: reconstructed glyph bounds do not cover the source quad");
             }
 
             // Open or extend the run, then append the instance. The arena holds the
@@ -625,25 +694,48 @@ namespace ImSlug
                     const unsigned int a0 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 0];
                     const unsigned int a1 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 1];
                     const unsigned int a2 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 2];
-                    const bool slug = ImSlugAdapterDecodeVertex(verts[a0].uv.x, verts[a0].uv.y, &d0) &&
-                                      ImSlugAdapterDecodeVertex(verts[a1].uv.x, verts[a1].uv.y, &d1) &&
-                                      ImSlugAdapterDecodeVertex(verts[a2].uv.x, verts[a2].uv.y, &d2);
-                    if (!slug)
-                        continue;  // ordinary geometry
+                    const bool d0ok = ImSlugAdapterDecodeVertex(verts[a0].uv.x, verts[a0].uv.y, &d0);
+                    const bool d1ok = ImSlugAdapterDecodeVertex(verts[a1].uv.x, verts[a1].uv.y, &d1);
+                    const bool d2ok = ImSlugAdapterDecodeVertex(verts[a2].uv.x, verts[a2].uv.y, &d2);
+                    if (!(d0ok && d1ok && d2ok))
+                    {
+                        // Mixed triangle (M4 fuzz): one or two corners decode as
+                        // Slug handles, the rest do not - ImGui produced this,
+                        // for example with a degenerate (NaN interpolating)
+                        // fine clip. Neither path can draw it: geometry would
+                        // sample the atlas at the magic UVs, so it is dropped
+                        // instead of leaking Slug-looking vertices into the
+                        // geometry stream. Fully non-Slug triangles stay
+                        // geometry (an app UV can only misfire in the magic
+                        // band if all three corners land there, the same
+                        // narrow false-positive window as M3).
+                        if (d0ok || d1ok || d2ok)
+                            g_Core.TriActions[tri] = TriAction_Drop;
+                        continue;
+                    }
                     bool complete = false;
                     if (tri + 1 < triCount && g_Core.TriActions[tri + 1] == TriAction_Geometry)
                     {
                         const unsigned int b0 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 3];
                         const unsigned int b1 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 4];
                         const unsigned int b2 = src.VtxOffset + indices[src.IdxOffset + tri * 3 + 5];
-                        const bool tailSlug = ImSlugAdapterDecodeVertex(verts[b0].uv.x, verts[b0].uv.y, &e0) &&
-                                              ImSlugAdapterDecodeVertex(verts[b1].uv.x, verts[b1].uv.y, &e1) &&
-                                              ImSlugAdapterDecodeVertex(verts[b2].uv.x, verts[b2].uv.y, &e2);
+                        bool tailDecoded = false;
+                        if (ImSlugAdapterDecodeVertex(verts[b0].uv.x, verts[b0].uv.y, &e0) &&
+                            ImSlugAdapterDecodeVertex(verts[b1].uv.x, verts[b1].uv.y, &e1) &&
+                            ImSlugAdapterDecodeVertex(verts[b2].uv.x, verts[b2].uv.y, &e2))
+                            tailDecoded = true;
                         const unsigned int m = ImSlugMin(ImSlugMin(a0, a1), a2);
                         const bool pattern = (a0 == m && a1 == m + 1 && a2 == m + 2);
-                        const bool tailPattern = tailSlug && (b0 == m && b1 == m + 2 && b2 == m + 3) &&
+                        const bool tailPattern = tailDecoded && (b0 == m && b1 == m + 2 && b2 == m + 3) &&
                                                  (e0.Slab == d0.Slab && e1.Slab == d0.Slab && e2.Slab == d0.Slab);
                         complete = pattern && tailPattern;
+                        if (!complete && b0 == m && b1 == m + 2 && b2 == m + 3)
+                        {
+                            // This quad's tail half cannot complete the glyph:
+                            // drop it too, or its Slug UVs would be drawn as
+                            // geometry (the head is dropped just below).
+                            g_Core.TriActions[tri + 1] = TriAction_Drop;
+                        }
                     }
                     if (complete)
                     {

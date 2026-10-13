@@ -339,6 +339,9 @@ namespace ImSlug
                                            // list longer than one row, or a
                                            // padded block > 65535 texels (u16
                                            // offsets) -- definitive fallback
+        ImSlugBuildStatus_InvalidOutline   // non-finite or out-of-range control
+                                           // points (M4 robustness; synthetic
+                                           // callers only) -- definitive fallback
     };
 }  // namespace ImSlug
 

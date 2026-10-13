@@ -691,6 +691,25 @@ namespace ImSlug
         record->Flags = ImSlugGlyphFlags_None;  // nonzero fill rule
         record->Advance = advanceEm;
 
+        // Robustness (M4): reject outlines that are not finite, or whose
+        // coordinates dwarf any sane em box, before they reach the bbox, the
+        // band math or the fp16 pool texels (a NaN bbox would poison the band
+        // scales and put NaN positions into the vertex stream). TTF extraction
+        // cannot produce these; the synthetic caller path can, and a font with
+        // a corrupt bbox could. Definitive failure -> stock ImGui fallback.
+        const float kMaxCoord = 64.0f;  // em; real outlines live within a few em
+        for (int i = 0; i < quadCount; ++i)
+        {
+            const float coordinates[6] = {
+                quads[i].X1, quads[i].Y1, quads[i].X2, quads[i].Y2, quads[i].X3, quads[i].Y3
+            };
+            for (int c = 0; c < 6; ++c)
+            {
+                if (!isfinite(coordinates[c]) || fabsf(coordinates[c]) > kMaxCoord)
+                    return ImSlugBuildStatus_InvalidOutline;
+            }
+        }
+
         // Control-point bbox (conservative and equal to what the bands assume).
         float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
         ControlBoundsOfQuads(quads, quadCount, &minX, &minY, &maxX, &maxY);
@@ -889,11 +908,12 @@ namespace ImSlug
         ImSlugGlyphRecord record;
         const ImSlugBuildStatus status = BuildGlyphRecord(font, pools, glyphIndex, &record);
 
-        // Cache successes and definitive failures ("not found" / too large);
-        // transient capacity or allocation failures are retried on the next
-        // call (BuildGlyphRecord rolled the pools back).
-        const bool cacheable = (status == ImSlugBuildStatus_Ok || status == ImSlugBuildStatus_GlyphNotFound ||
-                                status == ImSlugBuildStatus_GlyphTooLarge);
+        // Cache successes and definitive failures ("not found" / too large /
+        // invalid outline); transient capacity or allocation failures are
+        // retried on the next call (BuildGlyphRecord rolled the pools back).
+        const bool cacheable =
+            (status == ImSlugBuildStatus_Ok || status == ImSlugBuildStatus_GlyphNotFound ||
+             status == ImSlugBuildStatus_GlyphTooLarge || status == ImSlugBuildStatus_InvalidOutline);
         if (!cacheable)
         {
             free(entry);

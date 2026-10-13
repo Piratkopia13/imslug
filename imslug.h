@@ -70,8 +70,21 @@ namespace ImSlug
 
         // Debug aid: validate the reconstructed placement of every text glyph
         // and report (IMSLUG_ASSERT + Statistics::BoundsMismatches) when an
-        // instance does not cover its source quad. Cheap; off by default.
+        // instance does not cover its source quad. Cheap; off by default. On
+        // the Vulkan backend it also seeds the glyph-bounds debug overlay
+        // (M4; toggle at runtime with ImSlug_ImplVulkan_SetDebugOverlay).
         bool DebugDrawBounds = false;
+
+        // Fine-clip reconstruction (default on): rebuild a glyph's unclipped
+        // placement from the corner fractions that ImGui's CPU fine clip left
+        // in the UVs, so a glyph half outside a clip edge renders at its true
+        // position (the scissor cuts it). When disabled — the R3 fallback —
+        // clipped glyphs are placed by compressing the glyph's em box into the
+        // quad ImGui actually drew, so all ink stays inside the fine-clip
+        // rectangle at the cost of a visibly squeezed glyph near the edge;
+        // unclipped glyphs are placed identically either way. Useful as a
+        // safety valve and as the fuzz target of `imslug_fuzz`.
+        bool EnableFineClipReconstruction = true;
 
         // Instance ring sizing per frame; 0 selects the backend default
         // (16384). The pre-pass needs one instance per glyph; a frame that

@@ -43,7 +43,6 @@ imslug_add_cpu_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
 imslug_add_cpu_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
 # M2: the frozen glyph-instance record + placement mapping (no GPU needed).
 imslug_add_cpu_test(imslug_tests_instance test_instance.cpp imslug_instance)
-
 # ---------------------------------------------------------------------------
 # M2 golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so
 # they run on lavapipe in CI; the comparison arbiter is the M1 CPU rasterizer,
@@ -110,3 +109,24 @@ target_compile_definitions(imslug_tests_imgui_parity PRIVATE
     IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
     $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 add_test(NAME imslug_metrics_imgui_parity COMMAND imslug_tests_imgui_parity)
+
+# ---------------------------------------------------------------------------
+# M4: fine-clip fuzz harness (deterministic; no GPU). Runs the same case
+# sequence through the reconstruction path and the R3 fallback.
+# ---------------------------------------------------------------------------
+add_executable(imslug_tests_fuzz test_fuzz.cpp test_util.h)
+target_link_libraries(imslug_tests_fuzz PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_fuzz PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_fuzz)
+target_compile_definitions(imslug_tests_fuzz PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_fuzz COMMAND imslug_tests_fuzz)
+
+# The CI fuzz profile is deliberately larger than a quick developer run;
+# IMSLUG_FUZZ_ITERATIONS overrides both ("continuous fuzz/stress" in CI). The
+# cases are tiny frames, so 100k cases per pass is ~1 s on a desktop CPU.
+set(IMSLUG_FUZZ_ITERATIONS "100000" CACHE STRING "Fuzz cases per pass for ctest")
+set_tests_properties(imslug_fuzz PROPERTIES
+    ENVIRONMENT "IMSLUG_FUZZ_ITERATIONS=${IMSLUG_FUZZ_ITERATIONS}")
+
