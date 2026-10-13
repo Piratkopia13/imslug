@@ -560,21 +560,6 @@ namespace
         if (!CreateTarget(target->Width, target->Height, target))
             return false;
 
-        if (std::getenv("IMSLUG_GOLDEN_DEBUG") != nullptr && testCase.Scale == 1.0f && testCase.BakeSize == 32.0f)
-        {
-            const ImSlugGlyphInstance* probe = ImSlugVulkanGetInstanceData(0);
-            for (uint32_t i = 0; i < instanceCount && i < 3; ++i)
-            {
-                std::printf("  [debug] host instance %u: em=(%.4f %.4f %.4f %.4f) screen=(%.3f %.3f %.3f %.3f) "
-                            "jac=(%.5f %.1f %.1f %.5f) band=(%.3f %.3f %.3f %.3f) glyph=(%u %u) word=0x%08x\n",
-                            i, probe[i].EmMinX, probe[i].EmMinY, probe[i].EmMaxX, probe[i].EmMaxY, probe[i].ScreenMinX,
-                            probe[i].ScreenMinY, probe[i].ScreenMaxX, probe[i].ScreenMaxY, probe[i].Jac00,
-                            probe[i].Jac01, probe[i].Jac10, probe[i].Jac11, probe[i].BandScaleX, probe[i].BandScaleY,
-                            probe[i].BandOffsetX, probe[i].BandOffsetY, probe[i].GlyphLocX, probe[i].GlyphLocY,
-                            probe[i].BandMaxWord);
-            }
-        }
-
         VkCommandBuffer cmd = g_State.CommandBuffer;
         vkResetCommandBuffer(cmd, 0);
         VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
