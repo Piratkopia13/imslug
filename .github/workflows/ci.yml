@@ -12,6 +12,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '17 4 * * *'  # daily ImGui-master smoke (drift check, R1)
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -73,3 +76,25 @@ jobs:
         run: ./scripts/build.sh
       - name: Golden images (render-pass + dynamic-rendering paths)
         run: ./scripts/golden.sh
+
+  # Optional, informational: does the internal-API layer still work against
+  # Dear ImGui master? Daily (see `on.schedule`) and on demand; a failure here
+  # means upstream moved something imslug relies on (R1) - pin or adapt, but do
+  # not block the release train on it (the pinned v1.92.9b jobs are the gate).
+  imgui-master-smoke:
+    name: Dear ImGui master smoke (informational)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Vulkan (loader + lavapipe for the golden tests)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri
+      - name: ImGui master: build + full test suite
+        run: ./scripts/smoke_imgui_master.sh

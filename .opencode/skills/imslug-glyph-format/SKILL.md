@@ -257,6 +257,31 @@ evaluates it at the record's em bbox corners; `Ascent` bridges ImGui's
 line-top Y and em's baseline Y. The sanity slack is ~1 px because `X0..Y1` are
 the *integer* (floor/ceil) box around the exact control-point bbox.
 
+## ImGui version support / master drift (R1)
+
+Supported + verified: **v1.92.9b** (the pinned `IMSLUG_IMGUI_TAG`). `imslug.h`
+hard-errors below `IMGUI_VERSION_NUM 19208`. Every `imgui_internal.h` use lives
+in `imslug_imgui_adapter.cpp` (plus the API-shape comments there), so drift is
+isolated to one file.
+
+Drift status as of 2026-10-13 (checked with `scripts/smoke_imgui_master.*`,
+which configures a separate build dir against a fetched **master** and runs the
+full suite; also a daily informational CI job):
+
+* master is **1.93.0 WIP** and reworked the loader to be *glyph-index* based:
+  a new `FontSrcGetGlyphIndexFromCodepoint(atlas, src, ImWchar codepoint) -> int`,
+  `FontSrcContainsGlyph(atlas, src, int glyph_index)` and
+  `FontBakedLoadGlyph(..., int glyph_index, ...)` (was `ImWchar codepoint`);
+  `ImWchar` may also be 32-bit there.
+* That makes the *compile* fail in the adapter (the smoke job's signal). The
+  adaptation is contained: resolve codepoints through the new hook, key the
+  glyph records by index (`ImSlugGetGlyphRecordByIndex` already exists), and
+  revisit the synthetic ellipsis (its "contains" check is index-based now).
+  Planned with the next upstream release, not for the pinned-version milestone.
+
+Keep the smoke job informational (`continue-on-error`): a red run means
+"upstream moved something", while the pinned v1.92.9b jobs stay the gate.
+
 ## Budgets (typical Latin UI font, ~2000 glyphs)
 
 * Curve pool 50-150 KB, band pool 50-400 KB; uploaded once, incremental after.

@@ -35,6 +35,7 @@ humans, CI and the `.opencode/commands`:
 | Regenerate shader header | `scripts\gen_shaders.bat` | `scripts/gen_shaders.sh` |
 | Verify committed shader header | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
 | Golden-image tests (M2+) | `scripts\golden.bat` | `scripts/golden.sh` |
+| Dear ImGui master smoke (drift check) | `scripts\smoke_imgui_master.bat` | `scripts/smoke_imgui_master.sh` |
 | Benchmarks (M4+) | `scripts\bench.bat` | `scripts/bench.sh` |
 | Docs-hygiene check | `scripts\check_docs.bat` | `scripts/check_docs.sh` |
 
