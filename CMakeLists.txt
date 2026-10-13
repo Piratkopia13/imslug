@@ -278,6 +278,7 @@ if(IMSLUG_BUILD_EXAMPLES)
         target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
         target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
             IMSLUG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+            IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
             $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
     endif()
 endif()

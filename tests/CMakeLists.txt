@@ -75,6 +75,7 @@ if(IMSLUG_HAVE_VULKAN)
     imslug_target_defaults(imslug_tests_imgui_golden)
     target_compile_definitions(imslug_tests_imgui_golden PRIVATE
         IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+        IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/cjk/NotoSansSC-subset.ttf"
         $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
     add_test(NAME imslug_imgui_golden
         COMMAND imslug_tests_imgui_golden
@@ -129,4 +130,19 @@ add_test(NAME imslug_fuzz COMMAND imslug_tests_fuzz)
 set(IMSLUG_FUZZ_ITERATIONS "100000" CACHE STRING "Fuzz cases per pass for ctest")
 set_tests_properties(imslug_fuzz PROPERTIES
     ENVIRONMENT "IMSLUG_FUZZ_ITERATIONS=${IMSLUG_FUZZ_ITERATIONS}")
+
+# ---------------------------------------------------------------------------
+# M4: stress suite (5k glyphs, wrapped text, CJK, degenerate outlines, pool
+# limits, atlas repack). The CJK font is a fetched, gitignored asset
+# (scripts/fetch_cjk_font.*); the suite skips it when absent.
+# ---------------------------------------------------------------------------
+add_executable(imslug_tests_stress test_stress.cpp test_util.h)
+target_link_libraries(imslug_tests_stress PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_stress PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_stress)
+target_compile_definitions(imslug_tests_stress PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/cjk/NotoSansSC-subset.ttf"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_stress COMMAND imslug_tests_stress)
 

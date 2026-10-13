@@ -23,3 +23,11 @@ compile_commands.json
 
 # Local example-app state (Dear ImGui writes these next to the binary)
 imgui.ini
+
+# Fetched CJK test font (scripts/fetch_cjk_font.*) and its download cache.
+# Provenance, the subset character set and the exact subset command are
+# committed in tests/fonts/cjk/ (see PROVENANCE.txt there).
+tests/fonts/cjk/*.ttf
+tests/fonts/cjk/*.otf
+tests/fonts/cjk/.cache/
+tests/fonts/cjk/OFL.txt

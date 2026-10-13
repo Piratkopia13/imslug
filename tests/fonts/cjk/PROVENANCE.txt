@@ -1,0 +1,49 @@
+Test font — CJK subset (fetched, never committed)
+==================================================
+
+Why this one is different
+-------------------------
+The committed Latin test fonts (Roboto, Inter) stay small because Latin needs
+few hundred glyphs. A CJK font does not: the upstream Noto Sans SC variable
+TTF is ~17 MB, which must not land in the repository. This font is therefore
+fetched and subset by scripts/fetch_cjk_font.* into the gitignored directory
+tests/fonts/cjk/; suites that need it skip cleanly when it is absent (the
+imslug_stress suite prints a skip line and continues).
+
+Source
+------
+File:            NotoSansSC[wght].ttf  (variable font; stb_truetype uses the
+                 default instance)
+Upstream repo:   https://github.com/google/fonts (main)
+Source URL:      https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf
+SHA-256:         a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da
+                 (verified 2026-10-13; the fetch script fails on a mismatch)
+License:         SIL Open Font License 1.1 (google/fonts ofl/notosanssc/OFL.txt;
+                 the OFL declares no Reserved Font Name, so the subset below may
+                 keep the name). The fetch script downloads the license text
+                 next to the subset when the network is available.
+
+Subsetting (documented, reproducible)
+-------------------------------------
+Command (run by scripts/fetch_cjk_font.*; fontTools 4.63.0 verified
+byte-identical across runs on this machine):
+
+    python -m fontTools.subset <source>.ttf \
+        --output-file=tests/fonts/cjk/NotoSansSC-subset.ttf \
+        --text-file=tests/fonts/cjk/subset_chars.txt \
+        --layout-features-=kern,liga,clig,calt --no-hinting --desubroutinize
+
+* subset_chars.txt (committed, 657 code points): ASCII printable, U+00A0,
+  U+2026, U+3000..U+303F (CJK punctuation), U+4E00..U+4EFF (256 Hanzi with the
+  curve counts a CJK stress test needs), U+FF00..U+FFEF (fullwidth forms).
+* Result: ~160 KB, stb_truetype-compatible glyf outlines (no CFF).
+* The subset is a derived version of the font, used only as a test asset.
+
+Usage
+-----
+    scripts\fetch_cjk_font.bat      (Windows)
+    scripts/fetch_cjk_font.sh       (Linux/macOS)
+
+Exit codes: 0 = font ready (or the environment cannot fetch it — CI/test runs
+skip CJK then); 1 = a download/verification/subset step failed. The suites
+never fail because the font is missing.

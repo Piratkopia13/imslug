@@ -5,26 +5,28 @@
 // An ordinary Dear ImGui application: the stock GLFW+Vulkan backends render
 // everything, imslug renders the text of the registered fonts through Slug.
 // The scene switcher exercises the M3 acceptance scenes (demo, widgets/plots/
-// tables, clipping torture, mixed fonts, runtime FontScaleDpi). Vulkan
-// validation layers are enabled by default (set IMSLUG_VALIDATION=0 to
-// disable); every message is printed and the error count is reported on exit.
+// tables, clipping torture, mixed fonts, runtime FontScaleDpi) and the M4
+// stress scenes (5k glyphs, the fetched CJK subset). Vulkan validation layers
+// are enabled by default (set IMSLUG_VALIDATION=0 to disable); every message is
+// printed and the error count is reported on exit.
 //
 // Usage:
 //   imslug_example_glfw_vulkan [--font <path>] [--size <px>]
 //                              [--screenshot <file.ppm> [scene] [dpi_scale]]
 // Keys:
-//   1 .. 5   select scene (demo / widgets / clipping / mixed fonts / dpi)
+//   1 .. 7   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk)
 //   + / -    base font size +-1 px (12 .. 48)
 //   0        reset fonts/DPI to the defaults    Esc     quit
 //
 // Third-party: Dear ImGui (MIT, pinned v1.92.9b) and GLFW (zlib license) are
 // fetched by CMake; the example itself is imslug code. Fonts come from
-// tests/fonts/ (Roboto, Apache-2.0).
+// tests/fonts/ (Roboto, Apache-2.0; the CJK subset is fetched locally).
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 #include "imgui.h"
+#include "imgui_internal.h"  // ImTextCharToUtf8 (CJK stress scene)
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 
@@ -46,7 +48,7 @@ namespace
     const int kDefaultSize = 17;
     const int kMinSize = 12;
     const int kMaxSize = 48;
-    const int kSceneCount = 5;
+    const int kSceneCount = 7;
 
     struct App
     {
@@ -85,6 +87,8 @@ namespace
         VkDescriptorPool ImGuiDescriptorPool;
         ImFont* SlugFont;   // rendered by Slug
         ImFont* StockFont;  // rendered through the atlas (mixed-font scene)
+        ImFont* CjkFont;    // fetched CJK subset (M4 stress scene; may stay null)
+        bool CjkAttempted;
         bool ImGuiInitialized;
         bool ImSlugBackendInitialized;
         bool FontsDirty;  // re-add fonts at the current size next frame
@@ -738,13 +742,106 @@ namespace
         ImGui::End();
     }
 
+    // M4 stress scene: ~5k glyphs of long multi-line text plus a wrapped
+    // paragraph, at the current base size (watch the stats: instances/runs).
+    // The text is regenerated only when the layout inputs change.
+    void SceneStress()
+    {
+        ImGui::SetNextWindowSize(ImVec2(1100.0f, 700.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("5k glyph stress");
+        ImGui::TextWrapped("One window, thousands of glyphs: %d lines of long mixed text plus a wrapped paragraph. "
+                           "The stats below come from ImSlug::GetStatistics(); dropped runs must stay 0.",
+                           38);
+        static char* text = nullptr;
+        if (text == nullptr)
+        {
+            const char* pattern = "Hamburgefonstiv 0123456789 Grumpy wizards make toxic brew. ";
+            const int patternLength = (int)strlen(pattern);
+            const int lines = 38;
+            const int columns = (int)(1300.0f / (float)g_App.BaseSize * 10.0f);  // ~fill the window width
+            text = (char*)malloc((size_t)lines * (size_t)(columns + 2) + 2);
+            if (text != nullptr)
+            {
+                int at = 0;
+                for (int line = 0; line < lines; ++line)
+                {
+                    for (int column = 0; column < columns; ++column)
+                        text[at++] = pattern[(line * columns + column) % patternLength];
+                    if (line + 1 < lines)
+                        text[at++] = '\n';
+                }
+                text[at] = '\0';
+            }
+        }
+        if (text != nullptr)
+            ImGui::TextUnformatted(text);
+        ImGui::End();
+    }
+
+    // M4 CJK scene: the fetched Noto Sans SC subset (scripts/fetch_cjk_font.*)
+    // as a second Slug font. Skipped with a message when the font is absent.
+    void SceneCjk()
+    {
+        ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("CJK (fetched subset)");
+        if (g_App.CjkFont == nullptr && !g_App.CjkAttempted)
+        {
+            g_App.CjkAttempted = true;
+            FILE* cjkFile = fopen(IMSLUG_CJK_TEST_FONT, "rb");
+            if (cjkFile != nullptr)
+            {
+                fclose(cjkFile);
+                g_App.CjkFont = ImSlug::AddFontFromFileTTF(IMSLUG_CJK_TEST_FONT, 22.0f);
+            }
+        }
+        if (g_App.CjkFont == nullptr)
+        {
+            ImGui::TextWrapped("The CJK test font is not fetched. Run scripts/fetch_cjk_font.* (see "
+                               "tests/fonts/cjk/PROVENANCE.txt), then restart or reselect this scene.");
+        }
+        else
+        {
+            ImGui::PushFont(g_App.CjkFont, 22.0f);
+            ImGui::TextWrapped("3600 Hanzi (U+4E00..U+4EFF, 120 lines x 30) through the fetched subset font; the "
+                               "worst glyph in the range has 146 quadratic curves.");
+            static char* cjkText = nullptr;
+            if (cjkText == nullptr)
+            {
+                const int lines = 60;
+                const int columns = 34;
+                cjkText = (char*)malloc((size_t)lines * (size_t)columns * 4 + 8);
+                if (cjkText != nullptr)
+                {
+                    int at = 0;
+                    int index = 0;
+                    for (int line = 0; line < lines; ++line)
+                    {
+                        for (int column = 0; column < columns; ++column)
+                        {
+                            const unsigned int codepoint = 0x4E00u + (unsigned int)(index++ % 0x100);
+                            at += ImTextCharToUtf8(cjkText + at, codepoint);
+                        }
+                        if (line + 1 < lines)
+                            cjkText[at++] = '\n';
+                    }
+                    cjkText[at] = '\0';
+                }
+            }
+            if (cjkText != nullptr)
+                ImGui::TextUnformatted(cjkText);
+            ImGui::PopFont();
+        }
+        ImGui::End();
+    }
+
     void DrawSceneSwitcher()
     {
-        const char* sceneNames[kSceneCount] = { "demo window", "widgets / plots / tables", "clipping torture",
-                                                "mixed fonts", "runtime FontScaleDpi" };
+        const char* sceneNames[kSceneCount] = { "demo window",         "widgets / plots / tables", "clipping torture",
+                                                "mixed fonts",         "runtime FontScaleDpi",     "5k glyph stress",
+                                                "CJK (fetched subset)" };
         ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
-        ImGui::Begin("imslug M3 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Begin("imslug M4 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("Scene (keys 1-%d):", kSceneCount);
         for (int i = 0; i < kSceneCount; ++i)
             if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)))
@@ -783,8 +880,14 @@ namespace
         case 3:
             SceneMixedFonts();
             break;
-        default:
+        case 4:
             SceneDpi();
+            break;
+        case 5:
+            SceneStress();
+            break;
+        default:
+            SceneCjk();
             break;
         }
     }

@@ -36,6 +36,10 @@
 #include <string.h>
 #include <vulkan/vulkan.h>
 
+#ifndef IMSLUG_CJK_TEST_FONT
+#define IMSLUG_CJK_TEST_FONT "tests/fonts/cjk/NotoSansSC-subset.ttf"
+#endif
+
 using namespace ImSlug;
 
 namespace
@@ -45,14 +49,27 @@ namespace
     const uint32_t kHeight = 640;
     const uint32_t kFrames = 3;  // let the atlas finish building/baking
 
-    // Comparison budgets (measured on the RTX 5080; see the M3 notes):
+    // M4: golden scenes. 0 = the M3 acceptance scene, 1 = 5k-glyph stress
+    // (multi-line, filled frame), 2 = CJK subset (skipped when the fetched
+    // font is absent; see tests/fonts/cjk/PROVENANCE.txt).
+    const int kSceneCount = 3;
+
+    // Comparison budgets (measured on the RTX 5080; see the M3 notes and the
+    // M4 report):
     //   * the ink masks must agree after a 1 px dilation (layout exactness);
     //   * mean per-channel difference over the whole frame stays small;
-    //   * only AA edge pixels may exceed the per-pixel budget, and only a
-    //     small fraction of the frame may do so.
+    //   * per-pixel differences above the AA band are budgeted *relative to
+    //     the ink area* (a fully-filled 5k-glyph frame has 3.7x the ink of the
+    //     M3 scene, so a frame-relative budget would be meaningless): at most
+    //     15% of ink pixels may differ by more than 64 LSB (unhinted analytic
+    //     coverage vs hinted atlas bitmaps shifts stem AA, not layout), and at
+    //     most 2% may exceed 128 LSB (a structural/artifact tripwire).
     const double kMaxMeanDiff = 8.0;
+    const double kMaxMeanInkDiff = 32.0;  // per-ink-pixel mean budget (measured 27.4 at 17 px)
     const int kEdgeDiffThreshold = 64;
-    const double kMaxEdgeFraction = 0.02;
+    const int kStructuralDiffThreshold = 128;
+    const double kMaxEdgeInkFraction = 0.15;
+    const double kMaxStructuralInkFraction = 0.02;
 
     struct Target
     {
@@ -483,7 +500,84 @@ namespace
     // ---------------------------------------------------------------------
     // Scene (identical for both font variants)
     // ---------------------------------------------------------------------
-    void BuildScene(const char* title)
+    // Returns the font file for a scene (scene 2 needs the fetched CJK subset).
+    const char* SceneFontPath(int scene)
+    {
+        return scene == 2 ? IMSLUG_CJK_TEST_FONT : IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf");
+    }
+
+    float SceneFontSize(int scene)
+    {
+        return scene == 2 ? 20.0f : 17.0f;
+    }
+
+    const char* SceneTitle(int scene)
+    {
+        return scene == 2 ? "cjk stress" : (scene == 1 ? "5k glyph stress" : "imslug ImGui golden scene");
+    }
+
+    // 5k visible glyphs at the default UI size: 38 lines x 132 chars at 17 px
+    // fill the 1024x640 frame.
+    void BuildStressSceneText(char* out, int capacity)
+    {
+        const char* pattern = "Hamburgefonstiv 0123456789 Grumpy wizards make toxic brew. ";
+        int at = 0;
+        const int patternLength = (int)strlen(pattern);
+        for (int line = 0; line < 38; ++line)
+        {
+            for (int column = 0; column < 132; ++column)
+            {
+                out[at++] = pattern[(line * 132 + column) % patternLength];
+                if (at >= capacity - 2)
+                    break;
+            }
+            if (line + 1 < 38 && at < capacity - 2)
+                out[at++] = '\n';
+        }
+        out[at] = '\0';
+    }
+
+    // Minimal UTF-8 encoder (the harness stays on public ImGui APIs).
+    int EncodeUtf8(char* out, unsigned int codepoint)
+    {
+        if (codepoint < 0x80)
+        {
+            out[0] = (char)codepoint;
+            return 1;
+        }
+        if (codepoint < 0x800)
+        {
+            out[0] = (char)(0xC0 | (codepoint >> 6));
+            out[1] = (char)(0x80 | (codepoint & 0x3F));
+            return 2;
+        }
+        out[0] = (char)(0xE0 | (codepoint >> 12));
+        out[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (codepoint & 0x3F));
+        return 3;
+    }
+
+    // 1200 Hanzi (30 lines x 40) at 20 px, all inside the subset range.
+    void BuildCjkSceneText(char* out, int capacity)
+    {
+        int at = 0;
+        int index = 0;
+        for (int line = 0; line < 30; ++line)
+        {
+            for (int column = 0; column < 40; ++column)
+            {
+                unsigned int codepoint = 0x4E00u + (unsigned int)(index++ % 0x100);
+                if (at + 4 >= capacity)
+                    break;
+                at += EncodeUtf8(out + at, codepoint);
+            }
+            if (line + 1 < 30 && at + 1 < capacity)
+                out[at++] = '\n';
+        }
+        out[at] = '\0';
+    }
+
+    void BuildScene(int scene)
     {
         ImGuiIO& io = ImGui::GetIO();
         io.DisplaySize = ImVec2((float)kWidth, (float)kHeight);
@@ -492,9 +586,34 @@ namespace
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2((float)kWidth, (float)kHeight), ImGuiCond_Always);
-        ImGui::Begin(title, nullptr,
+        ImGui::Begin(SceneTitle(scene), nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+
+        if (scene == 1)
+        {
+            char* text = (char*)std::malloc(38 * 133 + 2);
+            if (text != nullptr)
+            {
+                BuildStressSceneText(text, 38 * 133 + 2);
+                ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), SceneFontSize(1), ImVec2(0.0f, 0.0f),
+                                                    IM_COL32(255, 255, 255, 255), text);
+                std::free(text);
+            }
+            ImGui::End();
+            ImGui::Render();
+            return;
+        }
+        if (scene == 2)
+        {
+            char text[30 * 40 * 4 + 64];
+            BuildCjkSceneText(text, (int)sizeof(text));
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), SceneFontSize(2), ImVec2(0.0f, 0.0f),
+                                                IM_COL32(255, 255, 255, 255), text);
+            ImGui::End();
+            ImGui::Render();
+            return;
+        }
 
         // Several sizes through the same (registered) font.
         ImGui::TextUnformatted("Hamburgefonstiv 0123456789 - base size");
@@ -565,7 +684,7 @@ namespace
     // ---------------------------------------------------------------------
     // Rendering one variant
     // ---------------------------------------------------------------------
-    bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name)
+    bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name, int scene)
     {
         ImGui::CreateContext();
         // ImSlug::Init requires a live context (imslug.h); the module lives per
@@ -581,10 +700,11 @@ namespace
         ImGui::StyleColorsDark();
         ImGui::GetStyle().FontScaleDpi = 1.0f;
 
-        const char* fontPath = IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf");
+        const char* fontPath = SceneFontPath(scene);
+        const float baseSize = SceneFontSize(scene);
         if (slugVariant)
         {
-            ImFont* font = ImSlug::AddFontFromFileTTF(fontPath, 17.0f);
+            ImFont* font = ImSlug::AddFontFromFileTTF(fontPath, baseSize);
             if (font == nullptr)
                 return false;
             io.FontDefault = font;
@@ -594,7 +714,7 @@ namespace
             ImFontConfig config;
             config.OversampleH = 1;
             config.OversampleV = 1;
-            ImFont* font = io.Fonts->AddFontFromFileTTF(fontPath, 17.0f, &config);
+            ImFont* font = io.Fonts->AddFontFromFileTTF(fontPath, baseSize, &config);
             if (font == nullptr)
                 return false;
             io.FontDefault = font;
@@ -641,7 +761,7 @@ namespace
         bool ok = true;
         for (uint32_t frame = 0; frame < kFrames && ok; ++frame)
         {
-            BuildScene("imslug ImGui golden scene");
+            BuildScene(scene);
             ImDrawData* drawData = ImGui::GetDrawData();
 
             vkResetCommandBuffer(g_State.CommandBuffer, 0);
@@ -832,76 +952,108 @@ int main(int argc, char** argv)
     }
 
     int failures = 0;
-    if (!RenderVariant(/*slugVariant=*/true, slugPixels, "slug"))
+    for (int scene = 0; scene < kSceneCount; ++scene)
     {
-        std::printf("imslug_tests_imgui_golden: FAIL (Slug variant)\n");
-        ++failures;
-    }
-
-    if (!RenderVariant(/*slugVariant=*/false, stockPixels, "atlas"))
-    {
-        std::printf("imslug_tests_imgui_golden: FAIL (atlas variant)\n");
-        ++failures;
-    }
-
-    if (failures == 0)
-    {
-        // Whole-frame statistics.
-        double mean = 0.0;
-        int worst = 0;
-        int edgePixels = 0;
-        for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+        if (scene == 2)
         {
-            for (uint32_t channel = 0; channel < 3; ++channel)
+            std::FILE* cjkFile = std::fopen(IMSLUG_CJK_TEST_FONT, "rb");
+            if (cjkFile == nullptr)
             {
-                const double diff = ChannelDiff(slugPixels, stockPixels, i, channel);
-                mean += diff;
-                if ((int)diff > worst)
-                    worst = (int)diff;
+                std::printf("  scene %d (cjk): SKIP (%s not fetched; scripts/fetch_cjk_font.*)\n", scene,
+                            IMSLUG_CJK_TEST_FONT);
+                continue;
             }
-            const double diffSum = ChannelDiff(slugPixels, stockPixels, i, 0) +
-                                   ChannelDiff(slugPixels, stockPixels, i, 1) +
-                                   ChannelDiff(slugPixels, stockPixels, i, 2);
-            if (diffSum / 3.0 > kEdgeDiffThreshold)
-                edgePixels++;
+            std::fclose(cjkFile);
         }
-        mean /= (double)kWidth * kHeight * 3.0;
-        const double edgeFraction = (double)edgePixels / ((double)kWidth * kHeight);
-
-        unsigned char* maskA = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
-        unsigned char* maskB = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
-        int missA = 0, missB = 0;
-        if (maskA != nullptr && maskB != nullptr)
+        std::printf("  scene %d (%s):\n", scene, SceneTitle(scene));
+        if (!RenderVariant(/*slugVariant=*/true, slugPixels, "slug", scene))
         {
-            BuildInkMask(slugPixels, maskA);
-            BuildInkMask(stockPixels, maskB);
-            MasksAgree(maskA, maskB, &missA, &missB);
+            std::printf("imslug_tests_imgui_golden: FAIL (Slug variant, scene %d)\n", scene);
+            ++failures;
+            continue;
         }
-        int inkPixels = 0;
-        if (maskA != nullptr)
+        if (!RenderVariant(/*slugVariant=*/false, stockPixels, "atlas", scene))
+        {
+            std::printf("imslug_tests_imgui_golden: FAIL (atlas variant, scene %d)\n", scene);
+            ++failures;
+            continue;
+        }
+
+        {
+            // Whole-frame statistics.
+            double mean = 0.0;
+            int worst = 0;
+            int edgePixels = 0;
+            int structuralPixels = 0;
+            int inkPixels = 0;
             for (uint32_t i = 0; i < kWidth * kHeight; ++i)
-                inkPixels += maskA[i];
-        std::free(maskA);
-        std::free(maskB);
+            {
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    const double diff = ChannelDiff(slugPixels, stockPixels, i, channel);
+                    mean += diff;
+                    if ((int)diff > worst)
+                        worst = (int)diff;
+                }
+                const double diffSum = ChannelDiff(slugPixels, stockPixels, i, 0) +
+                                       ChannelDiff(slugPixels, stockPixels, i, 1) +
+                                       ChannelDiff(slugPixels, stockPixels, i, 2);
+                const double average = diffSum / 3.0;
+                // A pixel counts as ink when either variant inks it.
+                if (slugPixels[i * 4] + slugPixels[i * 4 + 1] + slugPixels[i * 4 + 2] > 60 ||
+                    stockPixels[i * 4] + stockPixels[i * 4 + 1] + stockPixels[i * 4 + 2] > 60)
+                {
+                    inkPixels++;
+                    if (average > kEdgeDiffThreshold)
+                        edgePixels++;
+                    if (average > kStructuralDiffThreshold)
+                        structuralPixels++;
+                }
+            }
+            mean /= (double)kWidth * kHeight * 3.0;
+            const double inkFraction = (double)inkPixels / ((double)kWidth * kHeight);
+            const double meanBudget =
+                kMaxMeanDiff > kMaxMeanInkDiff * inkFraction ? kMaxMeanDiff : kMaxMeanInkDiff * inkFraction;
+            const double edgeInkFraction = inkPixels > 0 ? (double)edgePixels / (double)inkPixels : 0.0;
+            const double structuralInkFraction = inkPixels > 0 ? (double)structuralPixels / (double)inkPixels : 0.0;
 
-        std::printf("  Slug vs atlas: mean %.3f LSB, worst %d LSB, pixels > %d: %.3f%%, ink %d px\n", mean, worst,
-                    kEdgeDiffThreshold, edgeFraction * 100.0, inkPixels);
-        std::printf("  layout: ink pixels without a match within 1 px: %d (slug->atlas) / %d (atlas->slug)\n", missA,
-                    missB);
+            unsigned char* maskA = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+            unsigned char* maskB = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+            int missA = 0, missB = 0;
+            if (maskA != nullptr && maskB != nullptr)
+            {
+                BuildInkMask(slugPixels, maskA);
+                BuildInkMask(stockPixels, maskB);
+                MasksAgree(maskA, maskB, &missA, &missB);
+            }
+            std::free(maskA);
+            std::free(maskB);
 
-        TEST_CHECKF(mean <= kMaxMeanDiff, "mean |diff| %.3f > %.3f LSB", mean, kMaxMeanDiff);
-        TEST_CHECKF(edgeFraction <= kMaxEdgeFraction, "%.3f%% of pixels differ by more than %d LSB",
-                    edgeFraction * 100.0, kEdgeDiffThreshold);
-        TEST_CHECK(missA == 0 && missB == 0);
-        TEST_CHECKF(inkPixels > 5000, "scene produced almost no ink (%d px)", inkPixels);
+            std::printf("  Slug vs atlas: mean %.3f LSB (budget %.2f), worst %d LSB, ink %d px (%.2f%% of frame)\n",
+                        mean, meanBudget, worst, inkPixels, 100.0 * inkFraction);
+            std::printf("  ink pixels > %d LSB: %d (%.2f%% of ink), > %d LSB: %d (%.2f%% of ink)\n", kEdgeDiffThreshold,
+                        edgePixels, edgeInkFraction * 100.0, kStructuralDiffThreshold, structuralPixels,
+                        structuralInkFraction * 100.0);
+            std::printf("  layout: ink pixels without a match within 1 px: %d (slug->atlas) / %d (atlas->slug)\n",
+                        missA, missB);
 
-        const char* dir = ".";
-        char path[512];
-        std::snprintf(path, sizeof(path), "%s/imgui_golden_slug.ppm", dir);
-        WritePpm(path, slugPixels);
-        std::snprintf(path, sizeof(path), "%s/imgui_golden_atlas.ppm", dir);
-        WritePpm(path, stockPixels);
-        std::printf("  frames: imgui_golden_slug.ppm / imgui_golden_atlas.ppm\n");
+            TEST_CHECKF(mean <= meanBudget, "mean |diff| %.3f > %.3f LSB", mean, meanBudget);
+            TEST_CHECKF(edgeInkFraction <= kMaxEdgeInkFraction, "%.3f%% of ink pixels differ by more than %d LSB",
+                        edgeInkFraction * 100.0, kEdgeDiffThreshold);
+            TEST_CHECKF(structuralInkFraction <= kMaxStructuralInkFraction,
+                        "%.3f%% of ink pixels differ by more than %d LSB", structuralInkFraction * 100.0,
+                        kStructuralDiffThreshold);
+            TEST_CHECK(missA == 0 && missB == 0);
+            TEST_CHECKF(inkPixels > 5000, "scene produced almost no ink (%d px)", inkPixels);
+
+            const char* dir = ".";
+            char path[512];
+            std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d_slug.ppm", dir, scene);
+            WritePpm(path, slugPixels);
+            std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d_atlas.ppm", dir, scene);
+            WritePpm(path, stockPixels);
+            std::printf("  frames: imgui_golden_s%d_slug.ppm / imgui_golden_s%d_atlas.ppm\n", scene, scene);
+        }
     }
 
     if (g_State.ValidationErrors > 0)
