@@ -197,7 +197,9 @@ ImSlugBuildStatus ImSlugGetGlyphRecordByIndex(ImSlugFont*, ImSlugPools*, int gly
 
 void ImSlugInitPools(ImSlugPools*);              // one pool set per atlas, shared by all fonts
 void ImSlugDestroyPools(ImSlugPools*);
-void ImSlugPoolClearDirtyRows(ImSlugPools*);     // call after the backend uploaded
+void ImSlugCurvePoolClearDirtyRows(ImSlugCurvePool*); // after a partial upload consumed one pool
+void ImSlugBandPoolClearDirtyRows(ImSlugBandPool*);
+void ImSlugPoolClearDirtyRows(ImSlugPools*);     // both pools at once
 uint32_t ImSlugPackBandMaxWord(int bandMaxX, int bandMaxY, uint32_t glyphFlags); // tex.w
 
 float ImSlugRasterSample(const ImSlugPools*, const ImSlugGlyphRecord*, float emX, float emY,

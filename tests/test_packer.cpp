@@ -133,7 +133,20 @@ static void TestCurveBlocks()
 
     ImSlugPoolClearDirtyRows(&pools);
     TEST_CHECK(pools.Curves.DirtyRowMin > pools.Curves.DirtyRowMax);
+    TEST_CHECK(pools.Bands.DirtyRowMin > pools.Bands.DirtyRowMax);
     TEST_CHECK(pools.Curves.UsedRows == 2);  // the high-water mark survives
+
+    // Per-pool clearing (M2 uploads consume one pool at a time): clearing only
+    // the curve pool must leave the band pool's pending rows untouched.
+    pools.Curves.DirtyRowMin = 1;
+    pools.Curves.DirtyRowMax = 3;
+    pools.Bands.DirtyRowMin = 2;
+    pools.Bands.DirtyRowMax = 5;
+    ImSlugCurvePoolClearDirtyRows(&pools.Curves);
+    TEST_CHECK(pools.Curves.DirtyRowMin > pools.Curves.DirtyRowMax);
+    TEST_CHECK(pools.Bands.DirtyRowMin == 2 && pools.Bands.DirtyRowMax == 5);
+    ImSlugBandPoolClearDirtyRows(&pools.Bands);
+    TEST_CHECK(pools.Bands.DirtyRowMin > pools.Bands.DirtyRowMax);
 
     // Capacity guard: beyond the 16-bit texel y limit the allocator refuses
     // (constructing the fake pool state avoids a 2 GB allocation).

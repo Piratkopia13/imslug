@@ -72,6 +72,7 @@ namespace
         VkSemaphore RenderFinished[kMaxFramesInFlight];
         VkFence InFlight[kMaxFramesInFlight];
         uint32_t FrameIndex;
+        uint32_t FramesInFlight;  // backend ring size: min(swapchain images, 3)
         bool SwapchainDirty;
 
         ImSlugFont* Font;
@@ -421,10 +422,14 @@ namespace
 
         vkGetSwapchainImagesKHR(g_App.Device, g_App.Swapchain, &g_App.SwapchainImageCount, nullptr);
         g_App.SwapchainImages = (VkImage*)malloc(sizeof(VkImage) * g_App.SwapchainImageCount);
+        if (g_App.SwapchainImages == nullptr)
+            return false;
         vkGetSwapchainImagesKHR(g_App.Device, g_App.Swapchain, &g_App.SwapchainImageCount, g_App.SwapchainImages);
         g_App.SwapchainExtent = extent;
 
         g_App.SwapchainViews = (VkImageView*)malloc(sizeof(VkImageView) * g_App.SwapchainImageCount);
+        if (g_App.SwapchainViews == nullptr)
+            return false;
         for (uint32_t i = 0; i < g_App.SwapchainImageCount; ++i)
         {
             VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -471,6 +476,8 @@ namespace
             return false;
 
         g_App.Framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * g_App.SwapchainImageCount);
+        if (g_App.Framebuffers == nullptr)
+            return false;
         for (uint32_t i = 0; i < g_App.SwapchainImageCount; ++i)
         {
             VkFramebufferCreateInfo framebufferInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
@@ -666,6 +673,11 @@ namespace
         fprintf(file, "P6\n%u %u\n255\n", width, height);
         const bool bgra = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
         unsigned char* row = (unsigned char*)malloc((size_t)width * 3);
+        if (row == nullptr)
+        {
+            fclose(file);
+            return false;
+        }
         for (uint32_t y = 0; y < height; ++y)
         {
             const unsigned char* source = pixels + (size_t)y * width * 4;
@@ -798,7 +810,9 @@ namespace
     bool RenderFrame()
     {
         App& app = g_App;
-        const uint32_t frame = app.FrameIndex;
+        if (app.FramesInFlight == 0)
+            return false;
+        const uint32_t frame = app.FrameIndex % app.FramesInFlight;
 
         if (!Check(vkWaitForFences(app.Device, 1, &app.InFlight[frame], VK_TRUE, UINT64_MAX), "vkWaitForFences"))
             return false;
@@ -824,7 +838,9 @@ namespace
         vkBeginCommandBuffer(app.CommandBuffers[frame], &beginInfo);
 
         // Pool uploads: dirty rows only (the first call uploads everything).
-        if (!ImSlugVulkanUploadPools(app.CommandBuffers[frame], &app.Pools))
+        // The frame index selects both the instance ring slot and this frame's
+        // staging buffer.
+        if (!ImSlugVulkanUploadPools(app.CommandBuffers[frame], &app.Pools, frame))
         {
             fprintf(stderr, "[imslug] pool upload failed\n");
             return false;
@@ -832,6 +848,11 @@ namespace
 
         // Build this frame's instances in the ring slot.
         ImSlugGlyphInstance* instances = ImSlugVulkanGetInstanceData(frame);
+        if (instances == nullptr)
+        {
+            fprintf(stderr, "[imslug] instance ring slot %u unavailable\n", frame);
+            return false;
+        }
         FrameBatches batches;
         BuildFrame(instances, ImSlugVulkanGetInstanceCapacity(), &batches);
         if (batches.InstanceCount > ImSlugVulkanGetInstanceCapacity())
@@ -931,7 +952,7 @@ namespace
         }
 
         app.FramesRendered++;
-        app.FrameIndex = (frame + 1) % kMaxFramesInFlight;
+        app.FrameIndex = (frame + 1) % app.FramesInFlight;
         return true;
     }
 
@@ -1057,12 +1078,20 @@ namespace
         if (ok)
         {
             g_App.CommandBuffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * kMaxFramesInFlight);
-            VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-            allocateInfo.commandPool = g_App.CommandPool;
-            allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            allocateInfo.commandBufferCount = kMaxFramesInFlight;
-            ok = Check(vkAllocateCommandBuffers(g_App.Device, &allocateInfo, g_App.CommandBuffers),
-                       "vkAllocateCommandBuffers");
+            if (g_App.CommandBuffers == nullptr)
+            {
+                fprintf(stderr, "[imslug] out of memory (command buffers)\n");
+                ok = false;
+            }
+            else
+            {
+                VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+                allocateInfo.commandPool = g_App.CommandPool;
+                allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocateInfo.commandBufferCount = kMaxFramesInFlight;
+                ok = Check(vkAllocateCommandBuffers(g_App.Device, &allocateInfo, g_App.CommandBuffers),
+                           "vkAllocateCommandBuffers");
+            }
         }
         if (ok)
             ok = CreateSyncObjects();
@@ -1086,6 +1115,14 @@ namespace
             ok = ImSlugVulkanInit(&initInfo);
             if (!ok)
                 fprintf(stderr, "[imslug] ImSlugVulkanInit failed\n");
+            else
+            {
+                // Cycle over the backend's actual frames in flight (min(images,
+                // 3)): a 2-image swapchain must not use ring slot 2 (B3).
+                g_App.FramesInFlight = ImSlugVulkanGetFramesInFlight();
+                if (g_App.FramesInFlight == 0 || g_App.FramesInFlight > kMaxFramesInFlight)
+                    g_App.FramesInFlight = 1;  // unreachable: the backend caps at kMaxFramesInFlight
+            }
         }
 
         // Warm the glyph cache for the whole frame once so the screenshot path
@@ -1152,6 +1189,8 @@ namespace
             }
             if (g_App.CommandPool != VK_NULL_HANDLE)
                 vkDestroyCommandPool(g_App.Device, g_App.CommandPool, nullptr);
+            free(g_App.CommandBuffers);
+            g_App.CommandBuffers = nullptr;
             DestroySwapchain();
             vkDestroyDevice(g_App.Device, nullptr);
         }

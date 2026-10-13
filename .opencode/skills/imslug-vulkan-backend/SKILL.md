@@ -35,7 +35,7 @@ struct ImSlugVulkanInitInfo
 bool ImSlugVulkanInit(const ImSlugVulkanInitInfo*);   // false => not usable (formats missing)
 void ImSlugVulkanShutdown();                          // waits for the device, frees everything
 
-bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools);  // records, does not submit
+bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools, uint32_t frameIndex);  // records, does not submit
 
 uint32_t ImSlugVulkanGetFramesInFlight();
 uint32_t ImSlugVulkanGetInstanceCapacity();
@@ -45,7 +45,8 @@ struct ImSlugVulkanDrawInfo
 {
     uint32_t FrameIndex;                       // < frames in flight
     VkRenderPass RenderPass; uint32_t Subpass; // VK_NULL_HANDLE => dynamic rendering
-    uint32_t FirstInstance, InstanceCount;
+    uint32_t FirstInstance;                    // slot-relative (indexes GetInstanceData(FrameIndex))
+    uint32_t InstanceCount;                    // clamped to the remaining slot capacity
     const float* MVP;                          // 16 floats, screen px -> clip, row-major
     float ViewportWidth, ViewportHeight;       // framebuffer px (SlugDilate's dim)
     VkRect2D Scissor;                          // set by Draw (dynamic state)
@@ -79,7 +80,12 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
 * Vertex input: **one instance-rate binding** (stride 92,
   `ImSlugGlyphInstance`) with attributes at locations 0..6; no vertex-rate
   attributes - the quad comes from `gl_VertexIndex`. Draws are
-  `vkCmdDraw(4, instanceCount, 0, firstInstance)`.
+  `vkCmdDraw(4, instanceCount, 0, FrameIndex * InstanceCapacity + FirstInstance)`:
+  `FirstInstance` is **slot-relative** (it indexes the records the caller wrote
+  at `ImSlugVulkanGetInstanceData(FrameIndex)`) and the draw itself adds the
+  ring base. Forgetting the base silently reads slot 0 for every frame (the
+  review's B1); the golden harness pins it with a `FrameIndex = 1` +
+  `FirstInstance != 0` case.
 * Push constants: 4 MVP rows + viewport size (72 B, vertex stage).
 * Required features: none beyond core - the pool formats
   (`R16G16B16A16_SFLOAT`, `R16G16_UINT`) must support `SAMPLED_IMAGE`
@@ -98,11 +104,19 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
 
 ## Upload rules (implemented)
 
-* `ImSlugVulkanUploadPools(cmd, pools)` creates/recreates both images to the
-  pools' allocated size, records staging copies + barriers for the dirty rows
-  into `cmd`, and clears the dirty rows (`ImSlugPoolClearDirtyRows`). The caller
-  submits. The **first** upload after creation sends `[0, UsedRows)`; later
-  frames send `[DirtyRowMin, DirtyRowMax]`.
+* `ImSlugVulkanUploadPools(cmd, pools, frameIndex)` creates/recreates both
+  images to the pools' allocated size, records staging copies + barriers for
+  the dirty rows into `cmd`, and clears the dirty rows **of exactly the pools
+  it consumed** (per-pool clearing: a missing pool view must not drop the other
+  pool's pending rows). The caller submits. The **first** upload after creation
+  sends `[0, UsedRows)`; later frames send `[DirtyRowMin, DirtyRowMax]`.
+* **One staging buffer per frame in flight** (B2): the CPU memcpys for frame N
+  use `Staging[N]` only, so recording a later frame can never overwrite bytes an
+  earlier frame's recorded copy still has to read. Recording frame N again
+  requires its previous submission to have completed (the standard
+  frames-in-flight contract) - that is also why staging growth needs no device
+  wait. Passing the wrong `frameIndex` (or one >= frames in flight) fails the
+  call (debug assert + `false`).
 * Growth (rare) recreates the image and re-uploads everything, with a
   `vkDeviceWaitIdle` because in-flight frames may still read the old image;
   the descriptor sets are rewritten then. One queue is assumed.
@@ -111,8 +125,14 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   (src stage FRAGMENT_SHADER / TRANSFER). Verification-clean with the layer.
 * Instance ring: host-visible, host-coherent, persistently mapped,
   `frames_in_flight x capacity` records; the caller writes one frame's records
-  into `ImSlugVulkanGetInstanceData(frameIndex)` and indexes them with
-  `FirstInstance` (the buffer is bound whole, never per-batch).
+  into `ImSlugVulkanGetInstanceData(frameIndex)` and batches them with
+  slot-relative `FirstInstance` (the buffer is bound whole, never per-batch;
+  the draw adds the ring base, see the pipeline rules).
+* Release-safe early-outs (R3): `ImSlugVulkanDraw` is a no-op for an
+  out-of-range `FrameIndex`, a slot-relative `FirstInstance` at/beyond the
+  capacity, a null MVP, and when no pool upload happened yet (descriptor sets
+  not written); `InstanceCount` is clamped to the remaining slot capacity.
+  Debug builds still assert on all of those.
 
 ## Instance record (frozen, `imslug_internal.h`)
 
@@ -159,6 +179,14 @@ screen-space corner diagonals. `ImSlugBuildGlyphInstance()` fills one record;
   coordinate, where `CalcRootCode`'s sign-bit eligibility table legitimately
   resolves either way - up to ~0.5 coverage at that one pixel). PPMs land in
   `<build>/golden/`.
+* The same binary runs the backend contract regressions before the matrix
+  (full-frame readbacks, no golden files): the *ring-slot* case (distinct
+  content in slot 0 vs slot 1, draw `FrameIndex = 1`, slot-relative
+  `FirstInstance = 2`; fails without the ring base), the *upload-staging* cases
+  (consecutive frames recorded/back-to-back before any submit, each adding
+  different dirty rows; fails on a shared staging buffer), and the *draw-clamp*
+  case (out-of-range `FrameIndex`/`FirstInstance` must leave the target clear).
+  They run in both the render-pass and dynamic-rendering invocations.
 
 ## Example app
 
@@ -166,7 +194,9 @@ screen-space corner diagonals. `ImSlugBuildGlyphInstance()` fills one record;
 + swapchain, validation layers on by default (`IMSLUG_VALIDATION=0` disables,
 `IMSLUG_VALIDATION_VERBOSE=1` adds info messages), keyboard size/zoom control,
 `--screenshot <file.ppm> <px_size> <scale>` readback mode. It prints the
-validation message/error counts on exit.
+validation message/error counts on exit. The frame loop cycles over
+`ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and null-checks the ring
+slot pointer - a 2-image swapchain must not touch ring slot 2 (review B3).
 
 ## M3 callback protocol (planned; unchanged)
 
@@ -182,10 +212,11 @@ validation message/error counts on exit.
    CommandBuffer / Pipeline / PipelineLayout), published for the duration of
    `ImGui_ImplVulkan_RenderDrawData`.
 4. One draw = `ImSlugVulkanDraw` with the frame index, current render pass
-   (`VK_NULL_HANDLE` under dynamic rendering), the batch's `FirstInstance`/
-   `InstanceCount`, the projection (screen px -> clip), the framebuffer size and
-   the clip-rect scissor. The M3 pre-pass also calls
-   `ImSlugVulkanUploadPools(cmd, pools)` once per frame before the draws.
+   (`VK_NULL_HANDLE` under dynamic rendering), the batch's slot-relative
+   `FirstInstance`/`InstanceCount`, the projection (screen px -> clip), the
+   framebuffer size and the clip-rect scissor. The M3 pre-pass also calls
+   `ImSlugVulkanUploadPools(cmd, pools, frameIndex)` once per frame before the
+   draws (the frame index must be the current ring slot).
 5. The pre-pass rewrites only `CmdBuffer` (scratch vector): geometry triangles
    keep exact order/offsets, each maximal text run becomes a callback command
    with `ElemCount = 0` and `ClipRect`/`TexRef` copied from the original; the

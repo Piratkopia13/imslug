@@ -197,13 +197,29 @@ namespace ImSlug
         ImSlugInitPools(pools);
     }
 
+    void ImSlugCurvePoolClearDirtyRows(ImSlugCurvePool* pool)
+    {
+        IMSLUG_ASSERT(pool != NULL);
+        if (pool == NULL)
+            return;
+        pool->DirtyRowMin = 1;
+        pool->DirtyRowMax = 0;
+    }
+
+    void ImSlugBandPoolClearDirtyRows(ImSlugBandPool* pool)
+    {
+        IMSLUG_ASSERT(pool != NULL);
+        if (pool == NULL)
+            return;
+        pool->DirtyRowMin = 1;
+        pool->DirtyRowMax = 0;
+    }
+
     void ImSlugPoolClearDirtyRows(ImSlugPools* pools)
     {
         IMSLUG_ASSERT(pools != NULL);
-        pools->Curves.DirtyRowMin = 1;
-        pools->Curves.DirtyRowMax = 0;
-        pools->Bands.DirtyRowMin = 1;
-        pools->Bands.DirtyRowMax = 0;
+        ImSlugCurvePoolClearDirtyRows(&pools->Curves);
+        ImSlugBandPoolClearDirtyRows(&pools->Bands);
     }
 
     // ---------------------------------------------------------------------

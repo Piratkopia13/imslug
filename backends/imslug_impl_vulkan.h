@@ -10,7 +10,7 @@
 //   * the two pool textures (curve RGBA16F + band R16G16_UINT), their views,
 //     samplers and descriptor sets (one set per frame in flight, static after
 //     upload);
-//   * the staging buffer used for dirty-row uploads;
+//   * one staging buffer per frame in flight, used for dirty-row uploads;
 //   * the host-visible persistently mapped instance ring
 //     (frames_in_flight x MaxInstancesPerFrame);
 //   * the Slug pipeline, created lazily per render pass/subpass (or once for
@@ -81,9 +81,17 @@ namespace ImSlug
     // Creates/recreates both pool images to match the pools' allocated size
     // (growth => full re-upload; rare, and a device wait is used), records
     // staging copies + layout barriers for the dirty rows into `cmd`, then
-    // clears the dirty rows. `cmd` must be in the recording state; the caller
-    // submits it. Must be called before the first draw.
-    bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools);
+    // clears the dirty rows of every pool it actually consumed. `cmd` must be
+    // in the recording state; the caller submits it. Must be called before the
+    // first draw.
+    //
+    // `frameIndex` selects the frame's staging buffer (and its pool-image
+    // hazard ordering) and must match the index later passed to
+    // ImSlugVulkanDraw / ImSlugVulkanGetInstanceData. Recording frame N again
+    // is only allowed after the submission that previously used frame N has
+    // completed (the standard frames-in-flight contract), which is also what
+    // makes per-frame staging safe without a device wait.
+    bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools, uint32_t frameIndex);
 
     // ---------------------------------------------------------------------
     // Instance ring
@@ -103,7 +111,7 @@ namespace ImSlug
         uint32_t FrameIndex = 0;                   // < ImSlugVulkanGetFramesInFlight()
         VkRenderPass RenderPass = VK_NULL_HANDLE;  // VK_NULL_HANDLE => dynamic rendering
         uint32_t Subpass = 0;
-        uint32_t FirstInstance = 0;
+        uint32_t FirstInstance = 0;  // slot-relative: indexes into GetInstanceData(FrameIndex)
         uint32_t InstanceCount = 0;
 
         // 16 floats: the four rows of the object-space (screen pixels) -> clip
@@ -118,9 +126,14 @@ namespace ImSlug
     // Records one Slug draw call: binds the pipeline (created lazily for
     // RenderPass/Subpass), the frame's descriptor set and the instance ring,
     // pushes the MVP + viewport, sets the scissor, then
-    // vkCmdDraw(4, InstanceCount, 0, FirstInstance). The caller owns the
-    // viewport dynamic state: bind a viewport matching ViewportWidth/Height
-    // before drawing (the example sets it once per frame).
+    // vkCmdDraw(4, InstanceCount, 0, FrameIndex * GetInstanceCapacity() +
+    // FirstInstance). FirstInstance/InstanceCount are slot-relative (they
+    // index the records written at GetInstanceData(FrameIndex)); the draw adds
+    // the ring slot base itself. Out-of-range FrameIndex or slot-relative
+    // FirstInstance, and draws before any pool upload, are no-ops (release-safe
+    // early-outs); InstanceCount is clamped to the remaining slot capacity.
+    // The caller owns the viewport dynamic state: bind a viewport matching
+    // ViewportWidth/Height before drawing (the example sets it once per frame).
     void ImSlugVulkanDraw(VkCommandBuffer cmd, const ImSlugVulkanDrawInfo* drawInfo);
 
     // ---------------------------------------------------------------------

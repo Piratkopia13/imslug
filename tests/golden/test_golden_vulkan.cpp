@@ -535,8 +535,9 @@ namespace
         std::memset(target, 0, sizeof(*target));
     }
 
-    void TransitionImage(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags srcStage,
-                         VkAccessFlags srcAccess, VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
+    void TransitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+                         VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, VkPipelineStageFlags dstStage,
+                         VkAccessFlags dstAccess)
     {
         VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
         barrier.srcAccessMask = srcAccess;
@@ -549,33 +550,22 @@ namespace
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(g_State.CommandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
     // ---------------------------------------------------------------------
     // One case: render, read back
     // ---------------------------------------------------------------------
-    bool RenderCase(const Case& testCase, Target* target, uint32_t instanceCount)
+    // Records the clear + the one Slug draw of `instanceCount` slot-relative
+    // instances (frame `frameIndex`, `firstInstance`) into `target`; the
+    // command buffer must be recording and the pools must already be uploaded.
+    void RecordDraw(VkCommandBuffer cmd, Target* target, uint32_t frameIndex, uint32_t firstInstance,
+                    uint32_t instanceCount)
     {
-        if (!CreateTarget(target->Width, target->Height, target))
-            return false;
-
-        VkCommandBuffer cmd = g_State.CommandBuffer;
-        vkResetCommandBuffer(cmd, 0);
-        VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &beginInfo);
-
-        if (!ImSlugVulkanUploadPools(cmd, &g_State.Pools))
-        {
-            std::printf("  [golden] %s: pool upload failed\n", testCase.Name);
-            return false;
-        }
-
         const VkClearValue clearValue = { { { 0.0f, 0.0f, 0.0f, 0.0f } } };
         if (g_State.UseDynamicRendering)
         {
-            TransitionImage(target->Image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            TransitionImage(cmd, target->Image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
             VkRenderingAttachmentInfo colorAttachment = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
@@ -614,10 +604,10 @@ namespace
         ImSlugVulkanBuildOrthoMVP((float)target->Width, (float)target->Height, mvp);
 
         ImSlugVulkanDrawInfo drawInfo = {};
-        drawInfo.FrameIndex = 0;
+        drawInfo.FrameIndex = frameIndex;
         drawInfo.RenderPass = g_State.RenderPass;
         drawInfo.Subpass = 0;
-        drawInfo.FirstInstance = 0;
+        drawInfo.FirstInstance = firstInstance;
         drawInfo.InstanceCount = instanceCount;
         drawInfo.MVP = mvp;
         drawInfo.ViewportWidth = (float)target->Width;
@@ -629,7 +619,7 @@ namespace
         if (g_State.UseDynamicRendering)
         {
             vkCmdEndRendering(cmd);
-            TransitionImage(target->Image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            TransitionImage(cmd, target->Image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                             VK_ACCESS_TRANSFER_READ_BIT);
@@ -638,7 +628,10 @@ namespace
         {
             vkCmdEndRenderPass(cmd);
         }
+    }
 
+    void RecordCopyToReadback(VkCommandBuffer cmd, const Target* target)
+    {
         VkBufferImageCopy copy = {};
         copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         copy.imageSubresource.layerCount = 1;
@@ -646,17 +639,43 @@ namespace
         copy.imageExtent.height = target->Height;
         copy.imageExtent.depth = 1;
         vkCmdCopyImageToBuffer(cmd, target->Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target->Readback, 1, &copy);
-        vkEndCommandBuffer(cmd);
+    }
 
+    // Submits `cmd` and waits on `fence` (resetting it afterwards).
+    bool SubmitAndWait(VkCommandBuffer cmd, VkFence fence)
+    {
         VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &cmd;
-        if (vkQueueSubmit(g_State.Queue, 1, &submitInfo, g_State.Fence) != VK_SUCCESS)
+        if (vkQueueSubmit(g_State.Queue, 1, &submitInfo, fence) != VK_SUCCESS)
             return false;
-        if (vkWaitForFences(g_State.Device, 1, &g_State.Fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        if (vkWaitForFences(g_State.Device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
             return false;
-        vkResetFences(g_State.Device, 1, &g_State.Fence);
+        vkResetFences(g_State.Device, 1, &fence);
         return true;
+    }
+
+    bool RenderCase(const Case& testCase, Target* target, uint32_t instanceCount)
+    {
+        if (!CreateTarget(target->Width, target->Height, target))
+            return false;
+
+        VkCommandBuffer cmd = g_State.CommandBuffer;
+        vkResetCommandBuffer(cmd, 0);
+        VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &beginInfo);
+
+        if (!ImSlugVulkanUploadPools(cmd, &g_State.Pools, 0))
+        {
+            std::printf("  [golden] %s: pool upload failed\n", testCase.Name);
+            return false;
+        }
+
+        RecordDraw(cmd, target, 0, 0, instanceCount);
+        RecordCopyToReadback(cmd, target);
+        vkEndCommandBuffer(cmd);
+        return SubmitAndWait(cmd, g_State.Fence);
     }
 
     // ---------------------------------------------------------------------
@@ -825,6 +844,326 @@ namespace
         stats.MeanChannel = samples > 0 ? (double)total / (double)samples : 0.0;
         return stats;
     }
+
+    // ---------------------------------------------------------------------
+    // Backend contract regressions (M2 review findings B1/B2/R3)
+    // ---------------------------------------------------------------------
+    // These run against the same headless pipeline as the golden matrix: they
+    // need a real device, but they are not golden-image comparisons - they pin
+    // the instance-ring and upload contracts with full-frame readbacks.
+    struct RegressionGlyphs
+    {
+        CpuGlyph Glyphs[64];
+        int Count;
+        float ExtentX, ExtentY;
+    };
+
+    // Lays out an ASCII string on the baseline y = 0 and shifts it so its
+    // bbox starts at (kMargin, kMargin) with the same sub-pixel jitter the
+    // golden cases use. Writes the instances into `outInstances` (the caller
+    // picks the ring slot / slot-relative offset) and fills the CPU pairs.
+    bool LayoutRegressionText(const char* text, float pixelsPerEm, ImSlugGlyphInstance* outInstances,
+                              RegressionGlyphs* out)
+    {
+        out->Count = 0;
+        float penX = 0.0f;
+        for (const char* p = text; *p != '\0' && out->Count < 64; ++p)
+        {
+            const ImSlugGlyphRecord* record = nullptr;
+            if (ImSlugGetGlyphRecord(g_State.Font, &g_State.Pools, (unsigned char)*p, &record) != ImSlugBuildStatus_Ok)
+            {
+                continue;
+            }
+            if (record->CurveCount == 0)
+            {
+                penX += record->Advance * pixelsPerEm;
+                continue;
+            }
+            ImSlugBuildGlyphInstance(record, penX, 0.0f, pixelsPerEm, 1.0f, 1.0f, 1.0f, 1.0f,
+                                     &outInstances[out->Count]);
+            out->Glyphs[out->Count].Record = record;
+            penX += record->Advance * pixelsPerEm;
+            ++out->Count;
+        }
+        if (out->Count == 0)
+            return false;
+
+        float minX = outInstances[0].ScreenMinX;
+        float maxX = outInstances[0].ScreenMaxX;
+        float minY = outInstances[0].ScreenMinY;
+        float maxY = outInstances[0].ScreenMaxY;
+        for (int i = 1; i < out->Count; ++i)
+        {
+            minX = outInstances[i].ScreenMinX < minX ? outInstances[i].ScreenMinX : minX;
+            maxX = outInstances[i].ScreenMaxX > maxX ? outInstances[i].ScreenMaxX : maxX;
+            minY = outInstances[i].ScreenMinY < minY ? outInstances[i].ScreenMinY : minY;
+            maxY = outInstances[i].ScreenMaxY > maxY ? outInstances[i].ScreenMaxY : maxY;
+        }
+        const float offsetX = kMargin - minX + 0.0137f;
+        const float offsetY = kMargin - minY + 0.0113f;
+        for (int i = 0; i < out->Count; ++i)
+        {
+            outInstances[i].ScreenMinX += offsetX;
+            outInstances[i].ScreenMaxX += offsetX;
+            outInstances[i].ScreenMinY += offsetY;
+            outInstances[i].ScreenMaxY += offsetY;
+            out->Glyphs[i].Instance = outInstances[i];
+        }
+        out->ExtentX = maxX - minX;
+        out->ExtentY = maxY - minY;
+        return true;
+    }
+
+    // Full-frame readback vs the CPU reference for `glyphs` (same thresholds
+    // and outlier budget as the golden matrix).
+    bool CompareRegressionImage(const char* name, const Target& target, const RegressionGlyphs& glyphs,
+                                float pixelsPerEm)
+    {
+        const uint32_t width = target.Width;
+        const uint32_t height = target.Height;
+        unsigned char* gpuPixels = (unsigned char*)std::malloc((size_t)width * height * 4);
+        unsigned char* cpuPixels = (unsigned char*)std::malloc((size_t)width * height * 4);
+        if (gpuPixels == nullptr || cpuPixels == nullptr)
+        {
+            std::printf("  %s: FAIL (out of memory)\n", name);
+            std::free(gpuPixels);
+            std::free(cpuPixels);
+            return false;
+        }
+        std::memcpy(gpuPixels, target.ReadbackMapped, (size_t)width * height * 4);
+        std::memset(cpuPixels, 0, (size_t)width * height * 4);
+        CompositeCpu(glyphs.Glyphs, glyphs.Count, pixelsPerEm, cpuPixels, width, height);
+
+        const DiffStats stats = Compare(gpuPixels, cpuPixels, width, height);
+        const int outlierBudget = (int)((double)(width * height) * kOutlierFraction) + kMinOutlierBudget;
+        const bool pass = stats.MeanChannel <= kMaxMeanDiff && stats.OutlierPixels <= outlierBudget;
+        std::printf("  %-22s %4ux%-4u max=%d mean=%.3f deep=%d over=%d outliers=%d/%d (worst %d)  %s\n", name, width,
+                    height, stats.MaxChannel, stats.MeanChannel, stats.MaxDeep, stats.OverThreshold,
+                    stats.OutlierPixels, outlierBudget, stats.OutlierWorst, pass ? "ok" : "FAIL");
+        std::free(gpuPixels);
+        std::free(cpuPixels);
+        return pass;
+    }
+
+    // B1: the draw must apply the frame's instance-ring base. Distinct content
+    // is written into ring slot 1 at a non-zero slot-relative FirstInstance,
+    // while slot 0 holds a decoy at the same relative offset; the draw runs
+    // with FrameIndex = 1 and must produce slot 1's content. Before the fix
+    // the draw read slot 0 (the decoy) and this comparison fails.
+    bool RunRingSlotRegression()
+    {
+        const uint32_t frames = ImSlugVulkanGetFramesInFlight();
+        const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
+        if (frames < 2)
+        {
+            std::printf("  ring-slot (frame 1, first 2): skipped (frames in flight = %u)\n", frames);
+            return true;
+        }
+        ImSlugGlyphInstance* slot0 = ImSlugVulkanGetInstanceData(0);
+        ImSlugGlyphInstance* slot1 = ImSlugVulkanGetInstanceData(1);
+        const uint32_t firstInstance = 2;
+        if (slot0 == nullptr || slot1 == nullptr || capacity < firstInstance + 8)
+        {
+            std::printf("  ring-slot: FAIL (instance ring unavailable)\n");
+            return false;
+        }
+
+        const float pixelsPerEm = 32.0f;
+        RegressionGlyphs expected = {};
+        RegressionGlyphs decoy = {};
+        if (!LayoutRegressionText("MMMMMM", pixelsPerEm, slot1 + firstInstance, &expected) ||
+            !LayoutRegressionText("WWWWWW", pixelsPerEm, slot0 + firstInstance, &decoy))
+        {
+            std::printf("  ring-slot: FAIL (glyph layout)\n");
+            return false;
+        }
+
+        Target target;
+        const uint32_t width = (uint32_t)std::ceil(expected.ExtentX + 2.0f * kMargin);
+        const uint32_t height = (uint32_t)std::ceil(expected.ExtentY + 2.0f * kMargin);
+        if (!CreateTarget(width, height, &target))
+        {
+            std::printf("  ring-slot: FAIL (target creation)\n");
+            return false;
+        }
+
+        VkCommandBuffer cmd = g_State.CommandBuffer;
+        vkResetCommandBuffer(cmd, 0);
+        VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &beginInfo);
+        bool ok = ImSlugVulkanUploadPools(cmd, &g_State.Pools, 1);
+        if (ok)
+            RecordDraw(cmd, &target, 1, firstInstance, (uint32_t)expected.Count);
+        if (ok)
+            RecordCopyToReadback(cmd, &target);
+        vkEndCommandBuffer(cmd);
+        ok = ok && SubmitAndWait(cmd, g_State.Fence);
+        const bool pass = ok && CompareRegressionImage("ring-slot (frame 1, first 2)", target, expected, pixelsPerEm);
+        DestroyTarget(&target);
+        return pass;
+    }
+
+    // B2: consecutive frames (up to three, at least two), each recorded (and
+    // staged) before any submission, each appending different dirty rows.
+    // Every frame's readback must match the CPU reference for its own text.
+    // With one shared staging buffer the later recordings overwrite the bytes
+    // the earlier frames' copies read, so frame 0/1 would contain another
+    // frame's rows.
+    bool RunStagingRegression()
+    {
+        const uint32_t frames = ImSlugVulkanGetFramesInFlight();
+        const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
+        if (frames < 2)
+        {
+            std::printf("  upload-staging frames: skipped (frames in flight = %u)\n", frames);
+            return true;
+        }
+        const int frameCount = frames < 3 ? (int)frames : 3;
+
+        const char* texts[3] = { "ABDK", "CENV", "GHMT" };
+        const float pixelsPerEm = 32.0f;
+
+        VkCommandBuffer cmds[3] = {};
+        VkFence fences[3] = {};
+        Target targets[3] = {};
+        RegressionGlyphs glyphs[3] = {};
+        VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+        allocateInfo.commandPool = g_State.CommandPool;
+        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocateInfo.commandBufferCount = (uint32_t)frameCount;
+        bool ok = vkAllocateCommandBuffers(g_State.Device, &allocateInfo, cmds) == VK_SUCCESS;
+        if (!ok)
+            std::printf("  upload-staging frames: FAIL (command buffer allocation)\n");
+
+        for (int k = 0; k < frameCount && ok; ++k)
+        {
+            VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            ok = vkCreateFence(g_State.Device, &fenceInfo, nullptr, &fences[k]) == VK_SUCCESS;
+        }
+
+        // Record every frame first: no submission runs between the records, so
+        // the staging writes happen back to back - exactly the window the
+        // per-frame staging buffers protect.
+        for (int k = 0; k < frameCount && ok; ++k)
+        {
+            ImSlugGlyphInstance* slot = ImSlugVulkanGetInstanceData((uint32_t)k);
+            char name[64];
+            std::snprintf(name, sizeof(name), "upload-staging frame %d", k);
+            if (slot == nullptr || capacity < (uint32_t)k + 8 ||
+                !LayoutRegressionText(texts[k], pixelsPerEm, slot + (uint32_t)k, &glyphs[k]))
+            {
+                std::printf("  %s: FAIL (glyph layout)\n", name);
+                ok = false;
+                break;
+            }
+            targets[k].Width = (uint32_t)std::ceil(glyphs[k].ExtentX + 2.0f * kMargin);
+            targets[k].Height = (uint32_t)std::ceil(glyphs[k].ExtentY + 2.0f * kMargin);
+            if (!CreateTarget(targets[k].Width, targets[k].Height, &targets[k]))
+            {
+                std::printf("  %s: FAIL (target creation)\n", name);
+                ok = false;
+                break;
+            }
+
+            vkResetCommandBuffer(cmds[k], 0);
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmds[k], &beginInfo);
+            if (!ImSlugVulkanUploadPools(cmds[k], &g_State.Pools, (uint32_t)k))
+            {
+                std::printf("  %s: FAIL (pool upload)\n", name);
+                ok = false;
+                break;
+            }
+            RecordDraw(cmds[k], &targets[k], (uint32_t)k, (uint32_t)k, (uint32_t)glyphs[k].Count);
+            RecordCopyToReadback(cmds[k], &targets[k]);
+            vkEndCommandBuffer(cmds[k]);
+        }
+
+        for (int k = 0; k < frameCount && ok; ++k)
+        {
+            VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &cmds[k];
+            ok = vkQueueSubmit(g_State.Queue, 1, &submitInfo, fences[k]) == VK_SUCCESS;
+        }
+        for (int k = 0; k < frameCount && ok; ++k)
+        {
+            ok = vkWaitForFences(g_State.Device, 1, &fences[k], VK_TRUE, UINT64_MAX) == VK_SUCCESS &&
+                 vkResetFences(g_State.Device, 1, &fences[k]) == VK_SUCCESS;
+        }
+
+        bool allPass = ok;
+        for (int k = 0; k < frameCount && ok; ++k)
+        {
+            char name[64];
+            std::snprintf(name, sizeof(name), "upload-staging frame %d", k);
+            allPass = CompareRegressionImage(name, targets[k], glyphs[k], pixelsPerEm) && allPass;
+        }
+
+        for (int k = 0; k < frameCount; ++k)
+        {
+            if (fences[k] != VK_NULL_HANDLE)
+                vkDestroyFence(g_State.Device, fences[k], nullptr);
+            DestroyTarget(&targets[k]);
+        }
+        if (cmds[0] != VK_NULL_HANDLE)
+            vkFreeCommandBuffers(g_State.Device, g_State.CommandPool, (uint32_t)frameCount, cmds);
+        return allPass;
+    }
+
+    // R3: out-of-range frame indices / first instances are release-safe
+    // no-ops (debug asserts cover the programming error). Both draws are
+    // recorded after a real upload, so the "no texture yet" early-out cannot
+    // mask them; a regression would bind an unwritten descriptor set or fetch
+    // out of bounds (validation error / stray ink). Release-only: the debug
+    // build intentionally asserts on these calls, so the harness skips the
+    // case when NDEBUG is off (see main).
+#if defined(NDEBUG)
+    bool RunDrawClampRegression()
+    {
+        const uint32_t frames = ImSlugVulkanGetFramesInFlight();
+        const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
+        ImSlugGlyphInstance* slot0 = ImSlugVulkanGetInstanceData(0);
+        RegressionGlyphs glyphs = {};
+        if (slot0 == nullptr || !LayoutRegressionText("A", 32.0f, slot0, &glyphs))
+        {
+            std::printf("  draw-clamp: FAIL (glyph layout)\n");
+            return false;
+        }
+
+        Target target;
+        if (!CreateTarget(32, 32, &target))
+        {
+            std::printf("  draw-clamp: FAIL (target creation)\n");
+            return false;
+        }
+
+        VkCommandBuffer cmd = g_State.CommandBuffer;
+        vkResetCommandBuffer(cmd, 0);
+        VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &beginInfo);
+        bool ok = ImSlugVulkanUploadPools(cmd, &g_State.Pools, 0);
+        if (ok)
+            RecordDraw(cmd, &target, frames, 0, 1);  // FrameIndex out of range
+        if (ok)
+            RecordDraw(cmd, &target, 0, capacity, 1);  // FirstInstance out of range
+        if (ok)
+            RecordCopyToReadback(cmd, &target);
+        vkEndCommandBuffer(cmd);
+        ok = ok && SubmitAndWait(cmd, g_State.Fence);
+
+        bool clear = ok;
+        const unsigned char* pixels = (const unsigned char*)target.ReadbackMapped;
+        for (uint32_t i = 0; clear && i < target.Width * target.Height * 4; ++i)
+            clear = pixels[i] == 0;
+        std::printf("  %-22s %4ux%-4u %s\n", "draw-clamp no-ops", target.Width, target.Height, clear ? "ok" : "FAIL");
+        DestroyTarget(&target);
+        return clear;
+    }
+#endif  // defined(NDEBUG)
 }  // namespace
 
 int main(int argc, char** argv)
@@ -879,6 +1218,21 @@ int main(int argc, char** argv)
         return kExitSkip;
     }
 
+    // Backend contract regressions first (they warm the pools; the golden
+    // matrix below builds its own glyphs on top). Failures count like case
+    // failures and also surface through the validation-error gate.
+    int backendFailures = 0;
+    if (!RunRingSlotRegression())
+        ++backendFailures;
+    if (!RunStagingRegression())
+        ++backendFailures;
+#if defined(NDEBUG)
+    if (!RunDrawClampRegression())
+        ++backendFailures;
+#else
+    std::printf("  draw-clamp no-ops: skipped (debug asserts active)\n");
+#endif
+
     static const char* kTexts[2] = { "Hamburgefonstiv 0123456789", "@#%&gpqy{}()[]|" };
     static const float kBakeSizes[4] = { 12.0f, 16.0f, 32.0f, 64.0f };
     static const float kScales[3] = { 1.0f, 1.25f, 2.0f };
@@ -907,7 +1261,7 @@ int main(int argc, char** argv)
     cases[caseCount].Scale = 3.5f;
     ++caseCount;
 
-    int failures = 0;
+    int failures = backendFailures;
     int worstMax = 0;
     double worstMean = 0.0;
     int worstDeep = 0;

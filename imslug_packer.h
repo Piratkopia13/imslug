@@ -38,8 +38,11 @@ namespace ImSlug
     bool ImSlugPoolEnsureBandRows(ImSlugBandPool* pool, int rows);
 
     // Dirty rows: marked by the write helpers below, used by M2 uploads.
-    // ImSlugPoolClearDirtyRows resets both pools (call once per frame after
-    // the backend consumed the ranges).
+    // The per-pool variants clear one pool (a partial upload that consumed
+    // only that pool must not drop the other pool's pending rows);
+    // ImSlugPoolClearDirtyRows resets both at once.
+    void ImSlugCurvePoolClearDirtyRows(ImSlugCurvePool* pool);
+    void ImSlugBandPoolClearDirtyRows(ImSlugBandPool* pool);
     void ImSlugPoolClearDirtyRows(ImSlugPools* pools);
 
     // ---------------------------------------------------------------------

@@ -9,11 +9,11 @@
 // Vulkan device. All Vulkan objects except the device objects passed in
 // ImSlugVulkanInitInfo are owned here.
 //
-// Upload protocol (PLAN §5.3): staging buffer + vkCmdCopyBufferToImage +
-// barrier to SHADER_READ_ONLY_OPTIMAL, dirty rows only, full re-upload after
-// growth (rare; a device wait is used because the old image may still be in
-// flight). The descriptor sets point at the pool images and are rewritten only
-// when the images are (re)created.
+// Upload protocol (PLAN §5.3): one staging buffer per frame in flight +
+// vkCmdCopyBufferToImage + barrier to SHADER_READ_ONLY_OPTIMAL, dirty rows
+// only, full re-upload after growth (rare; a device wait is used because the
+// old image may still be in flight). The descriptor sets point at the pool
+// images and are rewritten only when the images are (re)created.
 
 #include "imslug_impl_vulkan.h"
 
@@ -85,7 +85,13 @@ namespace ImSlug
             PoolTexture Bands;
             bool TexturesCreated;
 
-            Buffer Staging;
+            // One staging buffer per frame in flight (B2): the CPU memcpys for
+            // frame N use slot N only, so a later frame's recording can never
+            // overwrite bytes an earlier frame's recorded copy still has to
+            // read. Recording frame N again requires its previous submission to
+            // have completed (frames-in-flight contract), so slot growth needs
+            // no device wait.
+            Buffer Staging[kMaxFramesInFlight];
             Buffer Instances;
 
             // Dynamic rendering: copy of the init info's create-info (with the
@@ -506,28 +512,30 @@ namespace ImSlug
             return range;
         }
 
-        bool EnsureStaging(VkDeviceSize bytes)
+        bool EnsureStaging(uint32_t frameIndex, VkDeviceSize bytes)
         {
-            if (g_State.Staging.Handle != VK_NULL_HANDLE && g_State.Staging.Size >= bytes)
+            Buffer& staging = g_State.Staging[frameIndex];
+            if (staging.Handle != VK_NULL_HANDLE && staging.Size >= bytes)
                 return true;
-            if (g_State.Staging.Handle != VK_NULL_HANDLE)
+            if (staging.Handle != VK_NULL_HANDLE)
             {
-                // In-flight copies may still read the old buffer; growth is rare.
-                CheckVk(vkDeviceWaitIdle(g_State.Info.Device), "vkDeviceWaitIdle");
-                DestroyBuffer(&g_State.Staging);
+                // Per-frame staging: the previous submission that used this
+                // slot has completed (frames-in-flight contract), so the old
+                // buffer is idle and no device wait is needed.
+                DestroyBuffer(&staging);
             }
             CreateBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_State.Staging);
-            return g_State.Staging.Mapped != nullptr;
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &staging);
+            return staging.Mapped != nullptr;
         }
 
-        // Stages `range` rows of `texels` (u16 components) and records the copy
-        // + the layout transitions around it.
+        // Stages `range` rows of `texels` (u16 components) into the frame's
+        // staging buffer and records the copy + the layout transitions around it.
         void RecordUpload(VkCommandBuffer cmd, PoolTexture* texture, const uint16_t* texels, const UploadRange& range,
-                          VkDeviceSize stagingOffset)
+                          VkDeviceSize stagingOffset, const Buffer& staging)
         {
             const size_t componentsPerTexel = (size_t)(texture->TexelBytes / 2);
-            memcpy((unsigned char*)g_State.Staging.Mapped + stagingOffset,
+            memcpy((unsigned char*)staging.Mapped + stagingOffset,
                    texels + (size_t)range.RowStart * (size_t)texture->Width * componentsPerTexel, (size_t)range.Bytes);
 
             // The image is either freshly created (UNDEFINED) or holds data
@@ -553,7 +561,7 @@ namespace ImSlug
             region.imageExtent.width = (uint32_t)texture->Width;
             region.imageExtent.height = (uint32_t)(range.RowEnd - range.RowStart + 1);
             region.imageExtent.depth = 1;
-            vkCmdCopyBufferToImage(cmd, g_State.Staging.Handle, texture->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+            vkCmdCopyBufferToImage(cmd, staging.Handle, texture->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                    &region);
 
             TransitionImage(cmd, texture->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -561,6 +569,41 @@ namespace ImSlug
                             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                             VK_ACCESS_SHADER_READ_BIT);
             texture->HasData = true;
+        }
+
+        // Destroys every Vulkan object the module owns. Used by Shutdown (after
+        // a device wait) and by the Init failure paths (nothing was submitted
+        // yet, so no wait is needed). Null handles are tolerated; Info.Device /
+        // Info.Allocator must be set.
+        void DestroyDeviceObjects()
+        {
+            for (uint32_t i = 0; i < g_State.PipelineCount; ++i)
+                vkDestroyPipeline(g_State.Info.Device, g_State.Pipelines[i].Pipeline, g_State.Info.Allocator);
+            if (g_State.DescriptorPool != VK_NULL_HANDLE)
+                vkDestroyDescriptorPool(g_State.Info.Device, g_State.DescriptorPool, g_State.Info.Allocator);
+            if (g_State.DescriptorSetLayout != VK_NULL_HANDLE)
+                vkDestroyDescriptorSetLayout(g_State.Info.Device, g_State.DescriptorSetLayout, g_State.Info.Allocator);
+            if (g_State.PipelineLayout != VK_NULL_HANDLE)
+                vkDestroyPipelineLayout(g_State.Info.Device, g_State.PipelineLayout, g_State.Info.Allocator);
+            if (g_State.CurveSampler != VK_NULL_HANDLE)
+                vkDestroySampler(g_State.Info.Device, g_State.CurveSampler, g_State.Info.Allocator);
+            if (g_State.BandSampler != VK_NULL_HANDLE)
+                vkDestroySampler(g_State.Info.Device, g_State.BandSampler, g_State.Info.Allocator);
+            DestroyPoolTexture(&g_State.Curves);
+            DestroyPoolTexture(&g_State.Bands);
+            for (uint32_t i = 0; i < kMaxFramesInFlight; ++i)
+                DestroyBuffer(&g_State.Staging[i]);
+            DestroyBuffer(&g_State.Instances);
+        }
+
+        // Init failure path (R2): frees anything already created and clears the
+        // state, so a failed Init leaves nothing behind and Shutdown()/a later
+        // Init() start clean.
+        bool FailInit()
+        {
+            DestroyDeviceObjects();
+            memset(&g_State, 0, sizeof(g_State));
+            return false;
         }
     }  // namespace
 
@@ -589,17 +632,17 @@ namespace ImSlug
         vkGetPhysicalDeviceProperties(initInfo->PhysicalDevice, &deviceProperties);
         g_State.MaxImageDimension = deviceProperties.limits.maxImageDimension2D;
         if (g_State.MaxImageDimension < (uint32_t)kPoolWidth)
-            return false;
+            return FailInit();
 
         // The pool formats are core Vulkan; verify the device can sample them.
         VkFormatProperties curveProperties;
         vkGetPhysicalDeviceFormatProperties(initInfo->PhysicalDevice, VK_FORMAT_R16G16B16A16_SFLOAT, &curveProperties);
         if ((curveProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
-            return false;
+            return FailInit();
         VkFormatProperties bandProperties;
         vkGetPhysicalDeviceFormatProperties(initInfo->PhysicalDevice, VK_FORMAT_R16G16_UINT, &bandProperties);
         if ((bandProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
-            return false;
+            return FailInit();
 
         // Descriptor set layout: curve (sampler2D) + band (usampler2D).
         VkDescriptorSetLayoutBinding bindings[2] = {};
@@ -673,7 +716,7 @@ namespace ImSlug
             const uint32_t colorCount = g_State.RenderingCreateInfo.colorAttachmentCount;
             IMSLUG_ASSERT(colorCount <= kMaxDynamicColorFormats);
             if (colorCount > kMaxDynamicColorFormats)
-                return false;
+                return FailInit();
             for (uint32_t i = 0; i < colorCount; ++i)
                 g_State.RenderingColorFormats[i] = initInfo->PipelineRenderingCreateInfo.pColorAttachmentFormats[i];
             g_State.RenderingCreateInfo.pColorAttachmentFormats =
@@ -685,7 +728,7 @@ namespace ImSlug
         CreateBuffer(instanceBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_State.Instances);
         if (g_State.Instances.Mapped == nullptr)
-            return false;
+            return FailInit();
 
         g_State.Initialized = true;
         return true;
@@ -697,30 +740,16 @@ namespace ImSlug
             return;
 
         CheckVk(vkDeviceWaitIdle(g_State.Info.Device), "vkDeviceWaitIdle");
-        for (uint32_t i = 0; i < g_State.PipelineCount; ++i)
-            vkDestroyPipeline(g_State.Info.Device, g_State.Pipelines[i].Pipeline, g_State.Info.Allocator);
-        if (g_State.DescriptorPool != VK_NULL_HANDLE)
-            vkDestroyDescriptorPool(g_State.Info.Device, g_State.DescriptorPool, g_State.Info.Allocator);
-        if (g_State.DescriptorSetLayout != VK_NULL_HANDLE)
-            vkDestroyDescriptorSetLayout(g_State.Info.Device, g_State.DescriptorSetLayout, g_State.Info.Allocator);
-        if (g_State.PipelineLayout != VK_NULL_HANDLE)
-            vkDestroyPipelineLayout(g_State.Info.Device, g_State.PipelineLayout, g_State.Info.Allocator);
-        if (g_State.CurveSampler != VK_NULL_HANDLE)
-            vkDestroySampler(g_State.Info.Device, g_State.CurveSampler, g_State.Info.Allocator);
-        if (g_State.BandSampler != VK_NULL_HANDLE)
-            vkDestroySampler(g_State.Info.Device, g_State.BandSampler, g_State.Info.Allocator);
-        DestroyPoolTexture(&g_State.Curves);
-        DestroyPoolTexture(&g_State.Bands);
-        DestroyBuffer(&g_State.Staging);
-        DestroyBuffer(&g_State.Instances);
+        DestroyDeviceObjects();
         memset(&g_State, 0, sizeof(g_State));
     }
 
-    bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools)
+    bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools, uint32_t frameIndex)
     {
         IMSLUG_ASSERT(g_State.Initialized);
         IMSLUG_ASSERT(cmd != VK_NULL_HANDLE);
-        if (!g_State.Initialized || pools == nullptr || cmd == VK_NULL_HANDLE)
+        IMSLUG_ASSERT(frameIndex < g_State.FramesInFlight);
+        if (!g_State.Initialized || pools == nullptr || cmd == VK_NULL_HANDLE || frameIndex >= g_State.FramesInFlight)
             return false;
 
         bool curveChanged = false;
@@ -737,27 +766,34 @@ namespace ImSlug
         {
             return false;
         }
-        if (!g_State.TexturesCreated || curveChanged || bandChanged)
+
+        // Descriptor sets are written once both views exist (and rewritten on
+        // (re)creation); a single missing pool cannot be sampled yet.
+        const bool curveReady = g_State.Curves.View != VK_NULL_HANDLE;
+        const bool bandReady = g_State.Bands.View != VK_NULL_HANDLE;
+        if (curveReady && bandReady && (!g_State.TexturesCreated || curveChanged || bandChanged))
         {
-            if (g_State.Curves.View == VK_NULL_HANDLE || g_State.Bands.View == VK_NULL_HANDLE)
-            {
-                // No glyphs built yet: nothing to sample, nothing to draw.
-                ImSlugPoolClearDirtyRows(pools);
-                return true;
-            }
             WriteDescriptorSets();
             g_State.TexturesCreated = true;
         }
 
-        const bool curveFirst = !g_State.Curves.HasData;
-        const bool bandFirst = !g_State.Bands.HasData;
-        UploadRange curveRange = ComputeUploadRange(g_State.Curves, curveFirst, pools->Curves.UsedRows,
-                                                    pools->Curves.DirtyRowMin, pools->Curves.DirtyRowMax);
-        UploadRange bandRange = ComputeUploadRange(g_State.Bands, bandFirst, pools->Bands.UsedRows,
-                                                   pools->Bands.DirtyRowMin, pools->Bands.DirtyRowMax);
+        // Per-pool ranges (R4): a pool without a view has nothing to consume and
+        // keeps its dirty rows; the other pool uploads and clears normally.
+        UploadRange curveRange = {};
+        if (curveReady)
+        {
+            curveRange = ComputeUploadRange(g_State.Curves, !g_State.Curves.HasData, pools->Curves.UsedRows,
+                                            pools->Curves.DirtyRowMin, pools->Curves.DirtyRowMax);
+        }
+        UploadRange bandRange = {};
+        if (bandReady)
+        {
+            bandRange = ComputeUploadRange(g_State.Bands, !g_State.Bands.HasData, pools->Bands.UsedRows,
+                                           pools->Bands.DirtyRowMin, pools->Bands.DirtyRowMax);
+        }
 
         const VkDeviceSize totalBytes = curveRange.Bytes + bandRange.Bytes;
-        if (totalBytes > 0 && !EnsureStaging(totalBytes))
+        if (totalBytes > 0 && !EnsureStaging(frameIndex, totalBytes))
             return false;
 
         VkDeviceSize offset = 0;
@@ -770,11 +806,17 @@ namespace ImSlug
             bandRange.Offset = offset;
 
         if (curveRange.Valid)
-            RecordUpload(cmd, &g_State.Curves, pools->Curves.Texels, curveRange, curveRange.Offset);
+        {
+            RecordUpload(cmd, &g_State.Curves, pools->Curves.Texels, curveRange, curveRange.Offset,
+                         g_State.Staging[frameIndex]);
+            ImSlugCurvePoolClearDirtyRows(&pools->Curves);
+        }
         if (bandRange.Valid)
-            RecordUpload(cmd, &g_State.Bands, pools->Bands.Texels, bandRange, bandRange.Offset);
-
-        ImSlugPoolClearDirtyRows(pools);
+        {
+            RecordUpload(cmd, &g_State.Bands, pools->Bands.Texels, bandRange, bandRange.Offset,
+                         g_State.Staging[frameIndex]);
+            ImSlugBandPoolClearDirtyRows(&pools->Bands);
+        }
         return true;
     }
 
@@ -803,19 +845,42 @@ namespace ImSlug
         IMSLUG_ASSERT(drawInfo != nullptr);
         if (!g_State.Initialized || drawInfo == nullptr || cmd == VK_NULL_HANDLE || drawInfo->InstanceCount == 0)
             return;
-        IMSLUG_ASSERT(drawInfo->MVP != nullptr);
-        IMSLUG_ASSERT(drawInfo->FrameIndex < g_State.FramesInFlight);
-        IMSLUG_ASSERT(drawInfo->FirstInstance + drawInfo->InstanceCount <= g_State.InstanceCapacity);
-        IMSLUG_ASSERT(g_State.TexturesCreated);
+
+        // Defensive clamps (R3, release-safe): never bind an unwritten
+        // descriptor set and never fetch past the instance ring.
+        if (!g_State.TexturesCreated || drawInfo->MVP == nullptr)
+        {
+            IMSLUG_ASSERT(g_State.TexturesCreated);
+            IMSLUG_ASSERT(drawInfo->MVP != nullptr);
+            return;
+        }
+        const uint32_t frameIndex = drawInfo->FrameIndex;
+        if (frameIndex >= g_State.FramesInFlight)
+        {
+            IMSLUG_ASSERT(false);
+            return;
+        }
+        uint32_t firstInstance = drawInfo->FirstInstance;
+        uint32_t instanceCount = drawInfo->InstanceCount;
+        if (firstInstance >= g_State.InstanceCapacity)
+        {
+            IMSLUG_ASSERT(false);
+            return;
+        }
+        IMSLUG_ASSERT(instanceCount <= g_State.InstanceCapacity - firstInstance);
+        if (instanceCount > g_State.InstanceCapacity - firstInstance)
+            instanceCount = g_State.InstanceCapacity - firstInstance;
 
         const VkPipeline pipeline = GetOrCreatePipeline(drawInfo->RenderPass, drawInfo->Subpass);
         if (pipeline == VK_NULL_HANDLE)
             return;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_State.PipelineLayout, 0, 1,
-                                &g_State.DescriptorSets[drawInfo->FrameIndex], 0, nullptr);
+                                &g_State.DescriptorSets[frameIndex], 0, nullptr);
 
-        // The instance ring is bound whole; batches index it with firstInstance.
+        // The instance ring is bound whole; batches index it with a
+        // slot-relative firstInstance, and the draw adds this frame's ring base
+        // (FirstInstance alone would read slot 0 for every frame).
         const VkDeviceSize vertexOffset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &g_State.Instances.Handle, &vertexOffset);
 
@@ -825,7 +890,12 @@ namespace ImSlug
         push.ViewportHeight = drawInfo->ViewportHeight;
         vkCmdPushConstants(cmd, g_State.PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
+        const uint64_t ringFirstInstance = (uint64_t)frameIndex * g_State.InstanceCapacity + (uint64_t)firstInstance;
+        IMSLUG_ASSERT(ringFirstInstance <= UINT32_MAX);
+        if (ringFirstInstance > UINT32_MAX)
+            return;
+
         vkCmdSetScissor(cmd, 0, 1, &drawInfo->Scissor);
-        vkCmdDraw(cmd, 4, drawInfo->InstanceCount, 0, drawInfo->FirstInstance);
+        vkCmdDraw(cmd, 4, instanceCount, 0, (uint32_t)ringFirstInstance);
     }
 }  // namespace ImSlug
