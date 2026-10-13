@@ -55,23 +55,26 @@ uint CalcRootCode(float y1, float y2, float y3)
 
 // Reference SolveHorizPoly(): solve for the t where the sample-relative
 // quadratic y(t) = a t^2 - 2b t + c crosses y = 0, then return the x
-// coordinates where C(t) = 0. The nearly-linear branch (|a| < 1/65536)
-// overwrites the roots like the reference (the CPU rasterizer's extra |b|
-// guard covers the exactly-degenerate case; band generation excludes
-// axis-parallel curves from the matching-axis bands, so the GPU never sees it).
+// coordinates where C(t) = 0. The nearly-linear branch (|a| < 1/65536) also
+// guards b like the CPU arbiter (imslug_refraster.cpp, Slughorn's adaptation):
+// when |b| < 1/65536 it returns t = 0 instead of the reference's c * (0.5/0)
+// inf/NaN. The guard is reachable because the packer's axis-parallel exclusion
+// runs on the fp32 outline while the GPU reads fp16 pool texels: quantization
+// can make an admitted curve all-equal on one axis. Keeping the GPU exactly on
+// the CPU side of this branch is what the goldens compare; see R1 in the M2
+// review notes.
 vec2 SolveHorizPoly(vec4 p12, vec2 p3)
 {
     vec2 a = p12.xy - p12.zw * 2.0 + p3;
     vec2 b = p12.xy - p12.zw;
     float ra = 1.0 / a.y;
-    float rb = 0.5 / b.y;
 
     float d = sqrt(max(b.y * b.y - a.y * p12.y, 0.0));
     float t1 = (b.y - d) * ra;
     float t2 = (b.y + d) * ra;
 
     if (abs(a.y) < kSolverEpsilon)
-        t1 = t2 = p12.y * rb;
+        t1 = t2 = (abs(b.y) >= kSolverEpsilon) ? p12.y * (0.5 / b.y) : 0.0;
 
     return vec2((a.x * t1 - b.x * 2.0) * t1 + p12.x, (a.x * t2 - b.x * 2.0) * t2 + p12.x);
 }
@@ -82,14 +85,13 @@ vec2 SolveVertPoly(vec4 p12, vec2 p3)
     vec2 a = p12.xy - p12.zw * 2.0 + p3;
     vec2 b = p12.xy - p12.zw;
     float ra = 1.0 / a.x;
-    float rb = 0.5 / b.x;
 
     float d = sqrt(max(b.x * b.x - a.x * p12.x, 0.0));
     float t1 = (b.x - d) * ra;
     float t2 = (b.x + d) * ra;
 
     if (abs(a.x) < kSolverEpsilon)
-        t1 = t2 = p12.x * rb;
+        t1 = t2 = (abs(b.x) >= kSolverEpsilon) ? p12.x * (0.5 / b.x) : 0.0;
 
     return vec2((a.y * t1 - b.y * 2.0) * t1 + p12.y, (a.y * t2 - b.y * 2.0) * t2 + p12.y);
 }

@@ -447,6 +447,152 @@ static void TestBandsForFont(const char* fontName)
 }
 
 // ---------------------------------------------------------------------------
+// fp16-quantized band admission (M2 review R1)
+// ---------------------------------------------------------------------------
+// Band generation evaluates the axis-parallel exclusion on the fp32 outline,
+// but the pools store binary16. A curve can therefore become all-equal on one
+// axis only after quantization while still being admitted to the matching-axis
+// bands, where the nearly-linear solver branch runs. The shader now carries the
+// CPU arbiter's |b| guard so both sides stay identical there; this scan asserts
+// the invariant ("no admitted matching-axis curve has an all-equal quantized
+// triple") and censuses the collisions from raw quads, so a font that starts
+// triggering the branch is reported with numbers.
+static void TestQuantizedBandCurves(const char* fontName)
+{
+    int fontDataSize = 0;
+    unsigned char* fontData = imslug_test::LoadFontFile(fontName, &fontDataSize);
+    TEST_CHECK(fontData != nullptr);
+    if (fontData == nullptr)
+        return;
+
+    stbtt_fontinfo info;
+    if (!stbtt_InitFont(&info, fontData, 0))
+    {
+        TEST_CHECKF(false, "%s: stbtt_InitFont failed", fontName);
+        std::free(fontData);
+        return;
+    }
+    ImSlugFont* font = ImSlugCreateFontFromMemory(fontData, fontDataSize, 0, true);
+    if (font == nullptr)
+    {
+        TEST_CHECKF(false, "%s: ImSlugCreateFontFromMemory failed", fontName);
+        std::free(fontData);
+        return;
+    }
+    ImSlugPools pools;
+    ImSlugInitPools(&pools);
+
+    long long admittedRefs = 0;
+    long long admittedViolations = 0;
+    int firstViolationGlyph = -1;
+    bool firstViolationHorizontal = false;
+
+    long long rawQuads = 0;
+    long long quantizedCollisionsX = 0;
+    long long quantizedCollisionsY = 0;
+
+    int builtGlyphs = 0;
+    for (int glyphIndex = 1; glyphIndex < info.numGlyphs; ++glyphIndex)
+    {
+        const ImSlugGlyphRecord* record = nullptr;
+        if (ImSlugGetGlyphRecordByIndex(font, &pools, glyphIndex, &record) != ImSlugBuildStatus_Ok)
+            continue;  // GlyphTooLarge etc. falls back to the stock path anyway
+        ++builtGlyphs;
+
+        // Census: quantize the raw control points; count curves that are only
+        // axis-parallel after rounding to binary16 (a collision).
+        TestQuadSet set = {};
+        if (!ExtractTestQuads(info, glyphIndex, &set))
+            break;  // out of memory - stop the scan, the build itself succeeded
+        for (int i = 0; i < set.QuadCount; ++i)
+        {
+            const ImSlugQuad& quad = set.Quads[i];
+            ++rawQuads;
+            const bool rawHorizontal = quad.Y1 == quad.Y2 && quad.Y2 == quad.Y3;
+            const bool rawVertical = quad.X1 == quad.X2 && quad.X2 == quad.X3;
+            const float qy1 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.Y1));
+            const float qy2 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.Y2));
+            const float qy3 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.Y3));
+            const float qx1 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.X1));
+            const float qx2 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.X2));
+            const float qx3 = ImSlugHalfToFloat(ImSlugFloatToHalf(quad.X3));
+            if (!rawHorizontal && qy1 == qy2 && qy2 == qy3)
+                ++quantizedCollisionsY;
+            if (!rawVertical && qx1 == qx2 && qx2 == qx3)
+                ++quantizedCollisionsX;
+        }
+        std::free(set.Quads);
+
+        if (record->CurveCount == 0)
+            continue;
+
+        // Horizontal bands: every referenced curve must not be all-equal in its
+        // stored (fp16) y triple.
+        for (int band = 0; band <= (int)record->BandMaxY; ++band)
+        {
+            const uint16_t* header = ImSlugBandTexelAt(&pools.Bands, record->BandLocX + band, record->BandLocY);
+            const int refCount = (int)header[0];
+            int listX = 0, listY = 0;
+            ImSlugCalcBandLoc(record->BandLocX, record->BandLocY, header[1], &listX, &listY);
+            for (int r = 0; r < refCount; ++r)
+            {
+                const uint16_t* ref = ImSlugBandTexelAt(&pools.Bands, listX + r, listY);
+                const uint16_t* texel = ImSlugCurveTexelAt(&pools.Curves, ref[0], ref[1]);
+                ++admittedRefs;
+                if (ImSlugHalfToFloat(texel[1]) == ImSlugHalfToFloat(texel[3]) &&
+                    ImSlugHalfToFloat(texel[3]) == ImSlugHalfToFloat(texel[5]))
+                {
+                    if (admittedViolations == 0)
+                    {
+                        firstViolationGlyph = glyphIndex;
+                        firstViolationHorizontal = true;
+                    }
+                    ++admittedViolations;
+                }
+            }
+        }
+
+        // Vertical bands: the stored x triple.
+        for (int band = 0; band <= (int)record->BandMaxX; ++band)
+        {
+            const uint16_t* header =
+                ImSlugBandTexelAt(&pools.Bands, record->BandLocX + record->BandMaxY + 1 + band, record->BandLocY);
+            const int refCount = (int)header[0];
+            int listX = 0, listY = 0;
+            ImSlugCalcBandLoc(record->BandLocX, record->BandLocY, header[1], &listX, &listY);
+            for (int r = 0; r < refCount; ++r)
+            {
+                const uint16_t* ref = ImSlugBandTexelAt(&pools.Bands, listX + r, listY);
+                const uint16_t* texel = ImSlugCurveTexelAt(&pools.Curves, ref[0], ref[1]);
+                ++admittedRefs;
+                if (ImSlugHalfToFloat(texel[0]) == ImSlugHalfToFloat(texel[2]) &&
+                    ImSlugHalfToFloat(texel[2]) == ImSlugHalfToFloat(texel[4]))
+                {
+                    if (admittedViolations == 0)
+                    {
+                        firstViolationGlyph = glyphIndex;
+                        firstViolationHorizontal = false;
+                    }
+                    ++admittedViolations;
+                }
+            }
+        }
+    }
+
+    std::printf("  %s: %d glyphs, %lld admitted refs, %lld raw quads, quantized collisions x=%lld y=%lld\n", fontName,
+                builtGlyphs, admittedRefs, rawQuads, quantizedCollisionsX, quantizedCollisionsY);
+    TEST_CHECKF(admittedViolations == 0,
+                "%s: %lld admitted matching-axis refs with an all-equal fp16 triple (first: glyph %d, %s band)",
+                fontName, admittedViolations, firstViolationGlyph,
+                firstViolationHorizontal ? "horizontal" : "vertical");
+    TEST_CHECK(admittedRefs > 0);
+
+    ImSlugDestroyPools(&pools);
+    ImSlugDestroyFont(font);
+    std::free(fontData);
+}
+
+// ---------------------------------------------------------------------------
 // Failed builds must not leak pool space and must keep the status contract
 // ---------------------------------------------------------------------------
 // Non-cached build failures (capacity limits) are retried on the next call, so
@@ -587,6 +733,8 @@ int main()
     TestExtractionForFont("Inter-Regular.ttf");
     TestBandsForFont("Roboto-Regular.ttf");
     TestBandsForFont("Inter-Regular.ttf");
+    TestQuantizedBandCurves("Roboto-Regular.ttf");
+    TestQuantizedBandCurves("Inter-Regular.ttf");
     TestDeterminism();
     TestFailedBuildDoesNotLeak();
     return imslug_test::Finish("imslug_glyphgen");

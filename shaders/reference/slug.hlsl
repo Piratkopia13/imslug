@@ -441,20 +441,25 @@ float4 main(VertexStruct vresult) : SV_Target
 //                                                                normals.
 // CalcRootCode                  CalcRootCode() in slug.frag      asuint ->
 //                                                                floatBitsToUint.
-// SolveHorizPoly/SolveVertPoly  SolveHorizPoly()/                Verbatim. The CPU
-//                               SolveVertPoly() in slug.frag     rasterizer adds a
-//                                                                |b| guard in the
-//                                                                degenerate-linear
-//                                                                branch (Slughorn
-//                                                                adaptation, see
-//                                                                imslug_refraster.cpp);
-//                                                                the GPU keeps the
-//                                                                reference form
-//                                                                because band
+// SolveHorizPoly/SolveVertPoly  SolveHorizPoly()/                Same formula; the
+//                               SolveVertPoly() in slug.frag     degenerate-linear
+//                                                                branch adds the CPU
+//                                                                arbiter's |b| >=
+//                                                                1/65536 guard
+//                                                                (Slughorn adapta-
+//                                                                tion, see
+//                                                                imslug_refraster.
+//                                                                cpp). Band
 //                                                                generation excludes
-//                                                                axis-parallel
+//                                                                axis-parallel fp32
 //                                                                curves from the
-//                                                                matching-axis bands.
+//                                                                matching-axis bands,
+//                                                                but fp16 pool
+//                                                                quantization can
+//                                                                reintroduce an all-
+//                                                                equal triple, and
+//                                                                the GPU must match
+//                                                                the CPU there.
 // CalcBandLoc                   CalcBandLoc() in slug.frag      Verbatim, kLogBand
 //                                                                TextureWidth = 12.
 // CalcCoverage                  CalcCoverage() in slug.frag      SLUG_EVENODD and
@@ -482,5 +487,9 @@ float4 main(VertexStruct vresult) : SV_Target
 //   * instance mode instead of 5 vertex streams (PLAN section 2.3/2.4);
 //   * the even-odd flag is tested as bit 28 of the packed bandMax word
 //     (== bit 12 of its high 16-bit half, reference tex.w), see D8(g);
-//   * the reference `#if SLUG_EVENODD` compile switch is always on.
+//   * the reference `#if SLUG_EVENODD` compile switch is always on;
+//   * SolveHorizPoly/SolveVertPoly add the CPU arbiter's |b| >= 1/65536 guard
+//     in the degenerate-linear branch (shared with imslug_refraster.cpp)
+//     instead of the reference's unconditional c * (0.5/b), which is inf/NaN
+//     when the curve is exactly axis-parallel after fp16 quantization (R1).
 // ============================================================================

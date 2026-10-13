@@ -18,7 +18,9 @@
 //     only when |b| >= 1/65536, otherwise return t = 0. The reference HLSL has
 //     no such guard and would produce 0/0 NaN for the exactly-linear case. That
 //     guard expression is the only code taken from Slughorn — every other
-//     function here is a port of the reference Slug pixel shader.
+//     function here is a port of the reference Slug pixel shader. The GLSL
+//     solvers carry the identical guard (M2 review R1) so the GPU matches this
+//     arbiter on its nearly-linear branch.
 //   * frac() is the IEEE definition x - floor(x).
 
 #include "imslug_refraster.h"

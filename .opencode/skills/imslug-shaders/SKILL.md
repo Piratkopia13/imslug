@@ -47,7 +47,8 @@ together with its sources (PLAN §5.8, AGENTS.md invariant 8).
   1 px dilation via MVP rows, sample coordinate re-derived through the inverse
   Jacobian), `CalcBandLoc` (log2 width 12 / 4096), band header fetch (H then V
   offsets), `CalcRootCode` equivalence classes + linear fallback when
-  `|a| < 1/65536`, `SolveHorizPoly`/`SolveVertPoly` winding accumulation with
+  `|a| < 1/65536` (with the CPU arbiter's `|b| >= 1/65536` guard, R1),
+  `SolveHorizPoly`/`SolveVertPoly` winding accumulation with
   coverage weights, `CalcCoverage` combine + even-odd flag, instance-mode VS
   (corner from `gl_VertexIndex`, normal = corner direction), ImGui-exact blend
   state, discard below `fill < 0.001`. All of these are implemented as of M2.
@@ -117,9 +118,14 @@ a premultiplied blend state.)
 * `normalize(vec2(0,0))` is undefined; the shader never sees a zero `dir`.
 * The exactly-degenerate linear solve (all control-point y equal) can produce
   `c * (0.5/0)` inf/NaN in the reference form. Band generation excludes
-  axis-parallel curves from the matching-axis bands, so the GPU never hits it;
-  the CPU rasterizer has the Slughorn |b| >= 1/65536 guard for its *unbanded*
-  path (documented in `imslug_refraster.cpp`).
+  axis-parallel *fp32* curves from the matching-axis bands, but the pools store
+  **fp16**: quantization can make an admitted curve all-equal on one axis
+  (review R1). The GLSL therefore carries the CPU arbiter's Slughorn guard in
+  the identical form (`|b| >= 1/65536 ? c * (0.5/b) : 0`, see
+  `imslug_refraster.cpp`) so GPU and CPU resolve that branch the same way; the
+  scan in `tests/test_glyphgen.cpp` reports quantized collisions per font
+  (currently 0 for Roboto and Inter, but a new font can trigger it - keep the
+  guard).
 
 ## Verification after shader changes
 
