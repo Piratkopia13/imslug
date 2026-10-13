@@ -65,8 +65,10 @@ endfunction()
 #   3. FetchContent at the pinned tag IMSLUG_IMGUI_TAG (default v1.92.9b).
 #
 # Upstream Dear ImGui ships no CMakeLists.txt, so FetchContent only populates
-# the source tree; M1+ compiles the subset we need (imgui.cpp, imgui_draw.cpp,
-# imgui_tables.cpp, imgui_widgets.cpp) from IMSLUG_IMGUI_SOURCE_DIR.
+# the source tree; we compile the subset we need (imgui.cpp, imgui_draw.cpp,
+# imgui_tables.cpp, imgui_widgets.cpp) into `imslug_imgui_lib` when we own the
+# sources. The imslug core needs Dear ImGui from M3 on (imslug.h includes
+# imgui.h and the pre-pass walks ImDrawData), so a checkout is mandatory.
 # ---------------------------------------------------------------------------
 set(IMSLUG_IMGUI_SOURCE_DIR "")
 set(IMSLUG_IMGUI_LINK_TARGET "")
@@ -100,15 +102,37 @@ else()
     endif()
 endif()
 
-add_library(imslug_imgui INTERFACE)
+# Dear ImGui as a link target: the provided package target when available, or
+# our own target compiled from the checkout with third-party warning settings.
+# IMSLUG_IMGUI_TARGET is what every imslug target links.
+set(IMSLUG_IMGUI_TARGET "")
 if(IMSLUG_IMGUI_LINK_TARGET)
-    target_link_libraries(imslug_imgui INTERFACE ${IMSLUG_IMGUI_LINK_TARGET})
-else()
-    target_include_directories(imslug_imgui SYSTEM INTERFACE
+    set(IMSLUG_IMGUI_TARGET ${IMSLUG_IMGUI_LINK_TARGET})
+elseif(IMSLUG_IMGUI_SOURCE_DIR)
+    add_library(imslug_imgui STATIC
+        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui.cpp"
+        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_draw.cpp"
+        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_tables.cpp"
+        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_widgets.cpp")
+    set_target_properties(imslug_imgui PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(imslug_imgui SYSTEM PUBLIC
         "${IMSLUG_IMGUI_SOURCE_DIR}"
         "${IMSLUG_IMGUI_SOURCE_DIR}/backends"
         "${IMSLUG_IMGUI_SOURCE_DIR}/misc/cpp")
+    if(MSVC)
+        target_compile_options(imslug_imgui PRIVATE /w)  # third-party: no warnings
+    else()
+        target_compile_options(imslug_imgui PRIVATE -w)
+    endif()
+    set(IMSLUG_IMGUI_TARGET imslug_imgui)
+else()
+    message(FATAL_ERROR
+        "imslug: Dear ImGui sources not found. Set IMSLUG_IMGUI_DIR=<checkout>, provide a find_package(imgui) "
+        "target, or allow FetchContent (network). See CMakeLists.txt.")
 endif()
+
+# Dear ImGui renderer/platform backends are built inside the examples section
+# below (they need GLFW and Vulkan headers and are only used there).
 
 # ---------------------------------------------------------------------------
 # stb (vendored, third-party) — its own target so our warning settings never
@@ -123,7 +147,8 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Core library (no backend, no ImGui linkage required yet — see PLAN §6)
+# Core library (M3: includes the ImGui-facing core + adapter; the backend
+# modules stay in backends/ — AGENTS.md invariants 4 and 7)
 # ---------------------------------------------------------------------------
 add_library(imslug STATIC
     imslug.cpp
@@ -134,7 +159,9 @@ add_library(imslug STATIC
     imslug_packer.h
     imslug_packer.cpp
     imslug_refraster.h
-    imslug_refraster.cpp)
+    imslug_refraster.cpp
+    imslug_imgui_adapter.h
+    imslug_imgui_adapter.cpp)
 set_target_properties(imslug PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 imslug_target_defaults(imslug)
 target_include_directories(imslug PUBLIC
@@ -142,6 +169,7 @@ target_include_directories(imslug PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb>"
     "$<INSTALL_INTERFACE:include>")
 target_link_libraries(imslug PRIVATE imslug_stb)
+target_link_libraries(imslug PUBLIC ${IMSLUG_IMGUI_TARGET})
 
 # ---------------------------------------------------------------------------
 # Vulkan (backend module, golden tests, example)
@@ -207,10 +235,27 @@ if(IMSLUG_BUILD_EXAMPLES)
             FetchContent_MakeAvailable(glfw)
         endif()
 
+        # Dear ImGui platform/renderer backends (third-party; examples only).
+        add_library(imslug_imgui_backends STATIC
+            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
+            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
+        set_target_properties(imslug_imgui_backends PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        target_link_libraries(imslug_imgui_backends PUBLIC ${IMSLUG_IMGUI_TARGET} glfw)
+        if(TARGET Vulkan::Vulkan)
+            target_link_libraries(imslug_imgui_backends PUBLIC Vulkan::Vulkan)
+        else()
+            target_include_directories(imslug_imgui_backends PUBLIC ${Vulkan_INCLUDE_DIRS})
+        endif()
+        if(MSVC)
+            target_compile_options(imslug_imgui_backends PRIVATE /w)
+        else()
+            target_compile_options(imslug_imgui_backends PRIVATE -w)
+        endif()
+
         add_executable(imslug_example_glfw_vulkan example/glfw_vulkan/main.cpp)
         set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_example_glfw_vulkan)
-        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw)
+        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends)
         target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
             IMSLUG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
             $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)

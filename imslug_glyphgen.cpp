@@ -651,27 +651,49 @@ namespace ImSlug
         return stbtt_FindGlyphIndex(&font->FontInfo, (int)codepoint);
     }
 
+    int ImSlugGetGlyphCount(const ImSlugFont* font)
+    {
+        IMSLUG_ASSERT(font != nullptr);
+        return font->FontInfo.numGlyphs;
+    }
+
+    bool ImSlugGetGlyphOutlineQuads(const ImSlugFont* font, int glyphIndex, ImSlugQuad* outQuads, int quadCapacity,
+                                    int* outCount)
+    {
+        IMSLUG_ASSERT(font != nullptr && outCount != nullptr);
+        *outCount = 0;
+        if (glyphIndex <= 0)
+            return false;
+
+        int required = 0;
+        if (!ImSlugExtractGlyphOutline(&font->FontInfo, glyphIndex, outQuads, quadCapacity, &required))
+        {
+            *outCount = required;
+            return false;
+        }
+        *outCount = required;
+        return true;
+    }
+
     // ---------------------------------------------------------------------
     // Glyph records
     // ---------------------------------------------------------------------
-    static ImSlugBuildStatus BuildGlyphRecordInternal(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
-                                                      ImSlugGlyphRecord* record)
+    // Shared body of the font and synthetic record builders: assigns bands and
+    // writes the curves/bands into the pools using the font's scratch buffers.
+    // `quads` come from the font's extraction or from a caller-provided
+    // synthetic outline (M3 ellipsis composite). The pools are left untouched
+    // when this returns anything but Ok (the caller rolls back on top).
+    static ImSlugBuildStatus WriteGlyphRecordToPools(ImSlugFont* font, ImSlugPools* pools, const ImSlugQuad* quads,
+                                                     int quadCount, float advanceEm, ImSlugGlyphRecord* record)
     {
-        int quadCount = 0;
-        if (!ExtractWithScratch(font, glyphIndex, &quadCount))
-            return ImSlugBuildStatus_OutOfMemory;
-
         memset(record, 0, sizeof(*record));
         record->CurveCount = (uint32_t)quadCount;
         record->Flags = ImSlugGlyphFlags_None;  // nonzero fill rule
-
-        int advance = 0, lsb = 0;
-        stbtt_GetGlyphHMetrics(&font->FontInfo, glyphIndex, &advance, &lsb);
-        record->Advance = (float)advance / (float)font->UnitsPerEm;
+        record->Advance = advanceEm;
 
         // Control-point bbox (conservative and equal to what the bands assume).
         float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
-        ControlBoundsOfQuads(font->ScratchQuads, quadCount, &minX, &minY, &maxX, &maxY);
+        ControlBoundsOfQuads(quads, quadCount, &minX, &minY, &maxX, &maxY);
         record->MinX = minX;
         record->MinY = minY;
         record->MaxX = maxX;
@@ -686,12 +708,12 @@ namespace ImSlug
         // real fill. With refCapacity = 0 the probe only fails when
         // requiredRefs > 0; the returned counts are valid either way.
         int requiredRefs = 0;
-        ImSlugAssignBands(font->ScratchQuads, quadCount, bandMaxX, bandMaxY, minX, minY, maxX, maxY, font->BandCounts,
-                          nullptr, 0, &requiredRefs);
+        ImSlugAssignBands(quads, quadCount, bandMaxX, bandMaxY, minX, minY, maxX, maxY, font->BandCounts, nullptr, 0,
+                          &requiredRefs);
         if (!EnsureArray((void**)&font->ScratchRefs, &font->ScratchRefCapacity, requiredRefs, sizeof(int)))
             return ImSlugBuildStatus_OutOfMemory;
-        if (!ImSlugAssignBands(font->ScratchQuads, quadCount, bandMaxX, bandMaxY, minX, minY, maxX, maxY,
-                               font->BandCounts, font->ScratchRefs, font->ScratchRefCapacity, &requiredRefs))
+        if (!ImSlugAssignBands(quads, quadCount, bandMaxX, bandMaxY, minX, minY, maxX, maxY, font->BandCounts,
+                               font->ScratchRefs, font->ScratchRefCapacity, &requiredRefs))
         {
             return ImSlugBuildStatus_OutOfMemory;  // capacity was grown above
         }
@@ -709,7 +731,7 @@ namespace ImSlug
         {
             int texelX = 0, texelY = 0;
             ImSlugCurveLocAt(curveBlock, i, &texelX, &texelY);
-            const ImSlugQuad& quad = font->ScratchQuads[i];
+            const ImSlugQuad& quad = quads[i];
             ImSlugWriteCurve(&pools->Curves, texelX, texelY, quad.X1, quad.Y1, quad.X2, quad.Y2, quad.X3, quad.Y3);
             font->ScratchCurveLocs[i * 2 + 0] = (uint16_t)texelX;
             font->ScratchCurveLocs[i * 2 + 1] = (uint16_t)texelY;
@@ -756,12 +778,43 @@ namespace ImSlug
         return ImSlugBuildStatus_Ok;
     }
 
+    static ImSlugBuildStatus BuildGlyphRecordInternal(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
+                                                      ImSlugGlyphRecord* record)
+    {
+        int quadCount = 0;
+        if (!ExtractWithScratch(font, glyphIndex, &quadCount))
+            return ImSlugBuildStatus_OutOfMemory;
+
+        int advance = 0, lsb = 0;
+        stbtt_GetGlyphHMetrics(&font->FontInfo, glyphIndex, &advance, &lsb);
+        const float advanceEm = (float)advance / (float)font->UnitsPerEm;
+        return WriteGlyphRecordToPools(font, pools, font->ScratchQuads, quadCount, advanceEm, record);
+    }
+
     // Builds are transactional: a failed build is retried on the next call
     // (non-cached failures), so it must leave the pools exactly as it found
     // them. Both cursors and the dirty/used bookkeeping are rolled back;
     // Texels/Height are kept (pool growth is not undone, and the garbage texels
     // written by the failed attempt are overwritten by the next successful
     // build at the same cursor).
+    static ImSlugBuildStatus RollbackOnFailure(ImSlugPools* pools, ImSlugBuildStatus status, int curveCursor,
+                                               int curveUsedRows, int curveDirtyMin, int curveDirtyMax, int bandCursor,
+                                               int bandUsedRows, int bandDirtyMin, int bandDirtyMax)
+    {
+        if (status != ImSlugBuildStatus_Ok)
+        {
+            pools->Curves.CursorTexels = curveCursor;
+            pools->Curves.UsedRows = curveUsedRows;
+            pools->Curves.DirtyRowMin = curveDirtyMin;
+            pools->Curves.DirtyRowMax = curveDirtyMax;
+            pools->Bands.CursorTexels = bandCursor;
+            pools->Bands.UsedRows = bandUsedRows;
+            pools->Bands.DirtyRowMin = bandDirtyMin;
+            pools->Bands.DirtyRowMax = bandDirtyMax;
+        }
+        return status;
+    }
+
     static ImSlugBuildStatus BuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
                                               ImSlugGlyphRecord* record)
     {
@@ -775,18 +828,32 @@ namespace ImSlug
         const int bandDirtyMax = pools->Bands.DirtyRowMax;
 
         const ImSlugBuildStatus status = BuildGlyphRecordInternal(font, pools, glyphIndex, record);
-        if (status != ImSlugBuildStatus_Ok)
-        {
-            pools->Curves.CursorTexels = curveCursor;
-            pools->Curves.UsedRows = curveUsedRows;
-            pools->Curves.DirtyRowMin = curveDirtyMin;
-            pools->Curves.DirtyRowMax = curveDirtyMax;
-            pools->Bands.CursorTexels = bandCursor;
-            pools->Bands.UsedRows = bandUsedRows;
-            pools->Bands.DirtyRowMin = bandDirtyMin;
-            pools->Bands.DirtyRowMax = bandDirtyMax;
-        }
-        return status;
+        return RollbackOnFailure(pools, status, curveCursor, curveUsedRows, curveDirtyMin, curveDirtyMax, bandCursor,
+                                 bandUsedRows, bandDirtyMin, bandDirtyMax);
+    }
+
+    // M3: same contract as BuildGlyphRecord, from quads that did not come from
+    // the font (the synthetic ellipsis). `pools` is owned by the caller; the
+    // record embeds pool locations, so it must be freed/never reused if the
+    // pools are destroyed. `font` supplies the build scratch only.
+    ImSlugBuildStatus ImSlugBuildSyntheticGlyphRecord(ImSlugFont* font, ImSlugPools* pools, const ImSlugQuad* quads,
+                                                      int quadCount, float advanceEm, ImSlugGlyphRecord* outRecord)
+    {
+        IMSLUG_ASSERT(font != nullptr && pools != nullptr && outRecord != nullptr);
+        IMSLUG_ASSERT(quadCount >= 0 && (quadCount == 0 || quads != nullptr));
+
+        const int curveCursor = pools->Curves.CursorTexels;
+        const int curveUsedRows = pools->Curves.UsedRows;
+        const int curveDirtyMin = pools->Curves.DirtyRowMin;
+        const int curveDirtyMax = pools->Curves.DirtyRowMax;
+        const int bandCursor = pools->Bands.CursorTexels;
+        const int bandUsedRows = pools->Bands.UsedRows;
+        const int bandDirtyMin = pools->Bands.DirtyRowMin;
+        const int bandDirtyMax = pools->Bands.DirtyRowMax;
+
+        const ImSlugBuildStatus status = WriteGlyphRecordToPools(font, pools, quads, quadCount, advanceEm, outRecord);
+        return RollbackOnFailure(pools, status, curveCursor, curveUsedRows, curveDirtyMin, curveDirtyMax, bandCursor,
+                                 bandUsedRows, bandDirtyMin, bandDirtyMax);
     }
 
     static ImSlugBuildStatus GetOrBuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,

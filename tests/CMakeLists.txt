@@ -73,32 +73,23 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# ImGui metric parity (M1 brief: "vs ImGui's loader in a test-only build").
-# Dear ImGui is compiled here only — never into the library or the backend.
-# Skipped when ImGui came from find_package (no source tree to compile).
+# M3: ImGui-facing tests (loader, handle encoding, pre-pass). Dear ImGui is
+# linked from the shared target; it is compiled with third-party settings.
 # ---------------------------------------------------------------------------
-if(IMSLUG_IMGUI_SOURCE_DIR)
-    add_library(imslug_imgui_testlib STATIC
-        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui.cpp"
-        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_draw.cpp"
-        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_tables.cpp"
-        "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_widgets.cpp")
-    set_target_properties(imslug_imgui_testlib PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-    target_include_directories(imslug_imgui_testlib PUBLIC "${IMSLUG_IMGUI_SOURCE_DIR}")
-    if(MSVC)
-        target_compile_options(imslug_imgui_testlib PRIVATE /w) # third-party: no warnings
-    else()
-        target_compile_options(imslug_imgui_testlib PRIVATE -w)
-    endif()
+add_executable(imslug_tests_imgui test_imslug_imgui.cpp test_util.h)
+target_link_libraries(imslug_tests_imgui PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_imgui PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_imgui)
+target_compile_definitions(imslug_tests_imgui PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_imgui COMMAND imslug_tests_imgui)
 
-    add_executable(imslug_tests_imgui_parity test_imguiparity.cpp test_util.h)
-    target_link_libraries(imslug_tests_imgui_parity PRIVATE imslug imslug_imgui_testlib)
-    set_target_properties(imslug_tests_imgui_parity PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-    imslug_target_defaults(imslug_tests_imgui_parity)
-    target_compile_definitions(imslug_tests_imgui_parity PRIVATE
-        IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
-        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-    add_test(NAME imslug_metrics_imgui_parity COMMAND imslug_tests_imgui_parity)
-else()
-    message(STATUS "imslug tests: ImGui metric-parity test skipped (no ImGui source tree)")
-endif()
+add_executable(imslug_tests_imgui_parity test_imguiparity.cpp test_util.h)
+target_link_libraries(imslug_tests_imgui_parity PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_imgui_parity PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_imgui_parity)
+target_compile_definitions(imslug_tests_imgui_parity PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_metrics_imgui_parity COMMAND imslug_tests_imgui_parity)

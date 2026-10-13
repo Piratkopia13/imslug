@@ -98,6 +98,26 @@ namespace ImSlug
     // 0 = not found (stbtt_FindGlyphIndex semantics).
     int ImSlugGetGlyphIndex(const ImSlugFont* font, unsigned int codepoint);
 
+    // Number of glyphs in the font (stbtt_fontinfo::numGlyphs). M3 uses it to
+    // size per-bake slot tables.
+    int ImSlugGetGlyphCount(const ImSlugFont* font);
+
+    // Copies the em-space outline quads of one glyph into a caller buffer
+    // (double-call pattern: returns false and sets *outCount to the required
+    // capacity when the buffer is too small). Same extraction as the record
+    // path, so the bbox matches. Fails for glyphIndex <= 0.
+    bool ImSlugGetGlyphOutlineQuads(const ImSlugFont* font, int glyphIndex, ImSlugQuad* outQuads, int quadCapacity,
+                                    int* outCount);
+
+    // M3: build a glyph record from em-space quads that do not come from the
+    // font (the composite ellipsis is three translated dot outlines). The pools
+    // receive the curves/bands exactly like a font glyph; a failed build is
+    // transactional (the pools are rolled back) and the caller's record is left
+    // untouched. `advanceEm` is the em-space advance (1.0 = em); `font` is any
+    // font of the same source and only supplies the build scratch.
+    ImSlugBuildStatus ImSlugBuildSyntheticGlyphRecord(ImSlugFont* font, ImSlugPools* pools, const ImSlugQuad* quads,
+                                                      int quadCount, float advanceEm, ImSlugGlyphRecord* outRecord);
+
     // Lazily build (once per glyph index) and cache the glyph record, filling
     // the pools. The returned record points into the font's cache and stays
     // valid until the font is destroyed. Records embed pool locations: if the

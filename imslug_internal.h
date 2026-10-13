@@ -211,6 +211,101 @@ namespace ImSlug
                                   float g, float b, float a, ImSlugGlyphInstance* outInstance);
 
     // ---------------------------------------------------------------------
+    // Glyph handle (M3): the ImDrawVert UV payload that identifies a baked
+    // glyph in the draw data.
+    // ---------------------------------------------------------------------
+    // One baked glyph (per font source, glyph index and bake size) owns a slot;
+    // the slot maps to an ImSlugGlyphSlab carrying the size-independent record
+    // plus the baked pixel metrics the UV fractions were encoded against. The
+    // pre-pass decodes every vertex with ImSlugAdapterDecodeVertex (the
+    // ImGui-facing adapter owns the encoding) and rebuilds the placement from
+    // the four corner fractions, so no per-frame handle map is needed and atlas
+    // repacking/growth cannot invalidate a handle.
+    //
+    // Encoding (adapter, imslug_imgui_adapter.cpp):
+    //   U = kUvMagicU + 2*slot + kUvFracBase + fracX*kUvFracScale
+    //   V = kUvMagicV + 2*slot + kUvFracBase + fracY*kUvFracScale
+    // where fracX/fracY are the corner positions inside the baked glyph's pixel
+    // box [X0..X1]x[Y0..Y1] (fracY grows downward, like ImGui's V0/V1). The
+    // whole payload is affine, so ImGui's fine-clip linear interpolation of
+    // clipped corners lands inside the same slot cell and decodes to the exact
+    // fraction of the clip edge. Anything outside the cell (or out of the magic
+    // ranges) is not Slug geometry.
+    static const float kUvMagicU = 1.5f;  // clear of atlas UVs ([0,1]) and of V
+    static const float kUvMagicV = 2.5f;
+    static const float kUvCellSpan = 2.0f;       // slot pitch; one slot owns [0,1] frac
+    static const float kUvFracBase = 0.25f;      // frac offset inside the cell
+    static const float kUvFracScale = 0.5f;      // frac -> cell scale (0.25 .. 0.75)
+    static const float kUvFracTolerance = 0.5f;  // accepted cell overhang, in frac units
+    static const int kMaxGlyphSlabs = 65536;     // 2*slot + frac stays float-exact
+
+    struct ImSlugGlyphSlab
+    {
+        const ImSlugGlyphRecord* Record;  // may be null while unused/being freed
+        const void* Bake;                 // ImFontBaked* the slab belongs to (lifetime key)
+        float X0, Y0, X1, Y1;             // baked pixel box (== ImFontGlyph box)
+        float Ascent;                     // baked ascent (ImFontBaked::Ascent): Y0..Y1 are
+                                          // line-top relative, em is baseline relative
+        float PixelsPerEm;                // baked pixels per em (uniform x/y)
+        uint32_t Slot;                    // UV slot id (this slab's index)
+        bool Alive;
+    };
+
+    // ---------------------------------------------------------------------
+    // Backend render interface (M3): registered by a backend module (e.g.
+    // ImSlug_ImplVulkan_Init) so the core can write instances and the draw
+    // callback can record draws without knowing the backend.
+    // ---------------------------------------------------------------------
+    // One Slug draw batch: a maximal run of text glyphs in a single ImDrawCmd,
+    // with instances parked in the backend's per-frame ring. Batches live in
+    // the core's per-frame arena; ImSlug::DrawCallback receives one through
+    // ImDrawCmd::UserCallbackData.
+    static const uint32_t kBatchMagic = 0x494d5342u;  // 'IMSB'
+
+    struct ImSlugBatch
+    {
+        uint32_t Magic;          // kBatchMagic
+        uint32_t FrameIndex;     // backend ring slot the instances live in
+        uint32_t FirstInstance;  // slot-relative first instance
+        uint32_t InstanceCount;
+        float ClipMinX, ClipMinY, ClipMaxX, ClipMaxY;  // ImGui display coordinates
+    };
+
+    struct ImSlugRenderIO
+    {
+        const char* Name;  // for diagnostics; never null
+        // The ring slot the backend is currently filling (advances once per
+        // frame, before the pre-pass).
+        uint32_t (*GetFrameIndex)();
+        // Reserves `count` contiguous instance records for the current frame.
+        // Returns null (leaving *outFirstInstance untouched) when the frame's
+        // instance capacity is exhausted; the pre-pass then drops the run.
+        ImSlugGlyphInstance* (*ReserveInstances)(uint32_t count, uint32_t* outFirstInstance);
+        // Records the batch's draw into the backend's active command buffer.
+        void (*DrawBatch)(const ImSlugBatch* batch);
+    };
+
+    // Installs the render interface used by PreprocessDrawData/DrawCallback.
+    // Null unregisters. One backend per process (last registration wins).
+    void ImSlugSetRenderIO(const ImSlugRenderIO* renderIO);
+
+    // ---------------------------------------------------------------------
+    // Glyph slab registry (core-owned; the ImGui-facing adapter allocates)
+    // ---------------------------------------------------------------------
+    // Null when ImSlug::Init was not called or the cap is exhausted. `bake` is
+    // the ImFontBaked the slab belongs to: ImSlugFreeGlyphSlabsForBake releases
+    // every slab of one bake (the glyph records of a discarded bake die with it).
+    ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
+                                          float ascent, float pixelsPerEm, const void* bake, uint32_t* outSlot);
+    void ImSlugFreeGlyphSlab(uint32_t slot);
+    void ImSlugFreeGlyphSlabsForBake(const void* bake);
+    const ImSlugGlyphSlab* ImSlugGetGlyphSlab(uint32_t slot);
+
+    // The process-wide pools glyph records are built into (owned by Init).
+    // Null before Init / after Shutdown.
+    ImSlugPools* ImSlugGetPools();
+
+    // ---------------------------------------------------------------------
     // Build status (capacity guards feed the graceful fallback of PLAN R11)
     // ---------------------------------------------------------------------
     enum ImSlugBuildStatus
