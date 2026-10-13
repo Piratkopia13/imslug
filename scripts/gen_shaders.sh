@@ -3,14 +3,14 @@
 # imslug - scripts/gen_shaders.sh
 #
 # Compile shaders/vulkan/*.{vert,frag,comp} to SPIR-V and update the committed
-# header shaders/imslug_shaders_vulkan.h. Authoritative shader sources arrive
-# in M2; with no sources present this succeeds trivially.
+# header shaders/imslug_shaders_vulkan.h (M2). The no-sources branch only
+# matters on a stripped tree that removed the shader sources.
 #
 #   scripts/gen_shaders.sh           regenerate the header
 #   scripts/gen_shaders.sh --check   compile into a temp file and diff against
 #                                    the committed header (non-zero if stale)
 #
-# Requirements (once shader sources exist):
+# Requirements:
 #   * glslangValidator - GLSLANG_VALIDATOR, or $VULKAN_SDK/bin, or PATH;
 #   * python 3         - $PYTHON, or python3/python on PATH;
 # Invocation per source:
@@ -57,9 +57,9 @@ done
 
 if [ "$have_sources" = 0 ]; then
     if [ "$CHECK" = 1 ]; then
-        echo "[gen_shaders] no shader sources yet (M2) - --check passes trivially."
+        echo "[gen_shaders] no shader sources found - --check passes trivially."
     else
-        echo "[gen_shaders] no shader sources yet (M2) - nothing to generate."
+        echo "[gen_shaders] no shader sources found - nothing to generate."
     fi
     exit 0
 fi

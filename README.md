@@ -10,9 +10,10 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M0
-> (build/test/doc scaffolding only). The core glyph pipeline lands in M1, the
-> standalone Vulkan renderer in M2, and the ImGui integration in M3.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M2
+> (standalone Vulkan renderer: shaders, rendering core, golden-image tests and a
+> GLFW example, all validated against the CPU reference). The ImGui integration
+> (M3) is next; until then there is no drop-in backend to build against.
 
 ## Requirements
 

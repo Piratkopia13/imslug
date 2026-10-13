@@ -23,10 +23,10 @@ imslug_target_defaults(imslug_header_cxx11)
 add_test(NAME imslug_header_cxx11 COMMAND imslug_header_cxx11)
 
 # ---------------------------------------------------------------------------
-# M1 suites. Each target gets the test-font directory as a compile definition
-# so the tests do not depend on the ctest working directory.
+# CPU-only suites. Each target gets the test-font directory as a compile
+# definition so the tests do not depend on the ctest working directory.
 # ---------------------------------------------------------------------------
-function(imslug_add_m1_test target source test_name)
+function(imslug_add_cpu_test target source test_name)
     add_executable(${target} ${source} test_util.h)
     target_link_libraries(${target} PRIVATE imslug)
     set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -37,12 +37,12 @@ function(imslug_add_m1_test target source test_name)
     add_test(NAME ${test_name} COMMAND ${target})
 endfunction()
 
-imslug_add_m1_test(imslug_tests_glyphgen test_glyphgen.cpp imslug_glyphgen)
-imslug_add_m1_test(imslug_tests_packer test_packer.cpp imslug_packer)
-imslug_add_m1_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
-imslug_add_m1_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
+imslug_add_cpu_test(imslug_tests_glyphgen test_glyphgen.cpp imslug_glyphgen)
+imslug_add_cpu_test(imslug_tests_packer test_packer.cpp imslug_packer)
+imslug_add_cpu_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
+imslug_add_cpu_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
 # M2: the frozen glyph-instance record + placement mapping (no GPU needed).
-imslug_add_m1_test(imslug_tests_instance test_instance.cpp imslug_instance)
+imslug_add_cpu_test(imslug_tests_instance test_instance.cpp imslug_instance)
 
 # ---------------------------------------------------------------------------
 # M2 golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so

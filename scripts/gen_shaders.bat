@@ -4,14 +4,14 @@ rem ===========================================================================
 rem imslug - scripts\gen_shaders.bat
 rem
 rem Compile shaders\vulkan\*.{vert,frag,comp} to SPIR-V and update the committed
-rem header shaders\imslug_shaders_vulkan.h. Authoritative shader sources arrive
-rem in M2; with no sources present this succeeds trivially.
+rem header shaders\imslug_shaders_vulkan.h (M2). The no-sources branch only
+rem matters on a stripped tree that removed the shader sources.
 rem
 rem   scripts\gen_shaders.bat           regenerate the header
 rem   scripts\gen_shaders.bat --check   compile into a temp file and diff against
 rem                                     the committed header (non-zero if stale)
 rem
-rem Requirements (once shader sources exist):
+rem Requirements:
 rem   * glslangValidator - GLSLANG_VALIDATOR, or %VULKAN_SDK%\Bin, or PATH;
 rem   * python 3         - PYTHON, or PATH;
 rem Invocation per source:
@@ -115,9 +115,9 @@ goto :fail
 
 :nothing
 if "%CHECK%"=="1" (
-    echo [gen_shaders] no shader sources yet ^(M2^) - --check passes trivially.
+    echo [gen_shaders] no shader sources found - --check passes trivially.
 ) else (
-    echo [gen_shaders] no shader sources yet ^(M2^) - nothing to generate.
+    echo [gen_shaders] no shader sources found - nothing to generate.
 )
 popd
 exit /b 0

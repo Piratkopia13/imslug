@@ -17,7 +17,7 @@ project(imslug
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (placeholder until M3)" ON)
+option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (M2 renderer core; reused by the M3 ImGui adapter)" ON)
 option(IMSLUG_BUILD_TESTS    "Build unit tests and enable ctest" ON)
 option(IMSLUG_BUILD_EXAMPLES "Build the example applications (M2+)" OFF)
 option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen, M7)" OFF)
