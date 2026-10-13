@@ -29,7 +29,8 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 * Work queue/status: `.agent-docs/PLAN.md` §7. Decisions log: §11.
 * Your brief: the **lowest-numbered** file in `.agent-docs/milestones/` whose
   `Status:` line is not `done` (the initial commit shipped M0 = repo bootstrap;
-  M1 and M2 are done, so M3 = ImGui integration is next), unless the owner
+  M1 (glyph pipeline), M2 (standalone Vulkan renderer) and M3 (ImGui
+  integration) are done, so M4 = hardening/perf is next), unless the owner
   assigned you a specific milestone. Read **only** that brief — never the whole
   plan.
 * `.agent-docs/` is gitignored transient material: never `git add -f` it, never
@@ -62,13 +63,19 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   cmd.exe splits `-Dvar=value` arguments).
 * `IMSLUG_BUILD_EXAMPLES=ON` (configure option) builds the GLFW+Vulkan example
   (`build/imslug_example_glfw_vulkan.exe`; GLFW is fetched at a pinned tag or
-  taken from `IMSLUG_GLFW_DIR`).
+  taken from `IMSLUG_GLFW_DIR`). It is an ImGui app with a scene switcher
+  (keys 1–5: demo, widgets/plots/tables, clipping torture, mixed fonts, runtime
+  `FontScaleDpi`) and `--screenshot <file.ppm> [scene] [dpi_scale]` for
+  deterministic offscreen captures.
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/golden`, `/bench`, `/check-docs`, `/plan-next`,
   `/update-plan`.
-* Golden images compare GPU output against the M1 CPU reference in a headless
-  offscreen pass (`tests/golden/`, PPMs in `<build>/golden/`); they skip with
-  exit 77 when no Vulkan device is available.
+* Golden images run in a headless offscreen pass (`tests/golden/`, PPMs in
+  `<build>/golden/`) and skip with exit 77 when no Vulkan device is available:
+  the M2 tests compare GPU output against the M1 CPU reference; the M3 test
+  (`imslug_imgui_golden`, both render paths) renders one ImGui scene with a Slug
+  font and with the atlas font and compares them (layout within 1 px, AA
+  perceptual).
 * If a workflow is missing a script, add one under `scripts/` (and a
   `.opencode/commands/` entry) instead of inventing ad-hoc commands.
 

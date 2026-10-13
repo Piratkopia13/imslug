@@ -10,9 +10,11 @@ Two layers:
 * **M2 (implemented)** - `backends/imslug_impl_vulkan.*`: the standalone,
   ImGui-free rendering core (pool textures, uploads, instance ring, pipelines,
   draw). This is the contract below; it is frozen for M3 to build on.
-* **M3 (planned, adapter)** - `ImSlug_ImplVulkan_*` on top of the core, mapping
-  `ImGui_ImplVulkan_InitInfo`/`ImDrawData` onto it. The callback protocol at the
-  end of this file still applies when that adapter lands.
+* **M3 (implemented)** - the `ImSlug_ImplVulkan_*` adapter in the same file
+  (bottom section): bridges `ImGui_ImplVulkan_InitInfo`/`ImDrawData` onto the
+  M2 core + the core's `ImSlugRenderIO` callback interface. The M2 section stays
+  ImGui-agnostic; only the adapter block includes imgui/imgui_impl_vulkan
+  headers.
 
 Vulkan code lives in `backends/` only; the core stays backend-independent.
 
@@ -188,36 +190,96 @@ screen-space corner diagonals. `ImSlugBuildGlyphInstance()` fills one record;
   case (out-of-range `FrameIndex`/`FirstInstance` must leave the target clear).
   They run in both the render-pass and dynamic-rendering invocations.
 
+### M3 golden test (`imslug_imgui_golden`, both render paths)
+
+`tests/golden/test_imgui_golden_vulkan.cpp` renders one fixed ImGui scene twice
+(headless offscreen, 1024x640): with a Slug font and with the same font through
+ImGui's own stb loader (atlas path). Everything except the font is identical in
+both variants. Measured on the RTX 5080 (render pass and dynamic rendering give
+the same numbers):
+
+* mean channel difference 1.241 LSB (budget 8), 0.36% of pixels above 64 LSB
+  (budget 2%) - the AA differences live on glyph edges only;
+* **zero** ink pixels without a matching ink pixel within 1 px in either
+  direction (layout exactness: catches shifted, missing or wrongly scaled
+  glyphs);
+* validation clean (0 messages) in both paths.
+
+Test-side pitfalls that produced VUIDs before they were fixed (the *adapter* was
+clean throughout): the render pass must own its attachment layout
+(`initialLayout` UNDEFINED, `finalLayout`, no extra barriers) while the
+dynamic-rendering path needs its own UNDEFINED -> COLOR_ATTACHMENT ->
+TRANSFER_SRC barriers, and `PipelineRenderingCreateInfo.pColorAttachmentFormats`
+must point at storage that outlives the whole module lifetime (a block-scoped
+format array is a use-after-scope crash).
+
 ## Example app
 
-`example/glfw_vulkan/main.cpp` (option `IMSLUG_BUILD_EXAMPLES=ON`): GLFW window
-+ swapchain, validation layers on by default (`IMSLUG_VALIDATION=0` disables,
-`IMSLUG_VALIDATION_VERBOSE=1` adds info messages), keyboard size/zoom control,
-`--screenshot <file.ppm> <px_size> <scale>` readback mode. It prints the
-validation message/error counts on exit. The frame loop cycles over
-`ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and null-checks the ring
-slot pointer - a 2-image swapchain must not touch ring slot 2 (review B3).
+`example/glfw_vulkan/main.cpp` (option `IMSLUG_BUILD_EXAMPLES=ON`): a GLFW window
++ swapchain rendering an ordinary ImGui app (stock GLFW+Vulkan backends, imslug
+for the registered font), validation layers on by default
+(`IMSLUG_VALIDATION=0` disables, `IMSLUG_VALIDATION_VERBOSE=1` adds info
+messages). Scene switcher (keys 1-5 / the radio buttons): demo window,
+widgets/plots/tables, clipping torture, mixed Slug+atlas fonts, runtime
+`style.FontScaleDpi`. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
+offscreen frame and prints the validation message/error counts on exit. The
+frame loop cycles over `ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and
+null-checks the ring slot pointer - a 2-image swapchain must not touch ring
+slot 2 (review B3).
 
-## M3 callback protocol (planned; unchanged)
+## M3 adapter (implemented) - callback protocol
 
-1. `ImDrawCmd::UserCallback` is dispatched **before** the backend sets scissor
-   and texture state. The callback must set its **own dynamic scissor** from
-   `pcmd->ClipRect`, converted with `DisplayPos`/`FramebufferScale`.
-2. Immediately after every Slug callback command, inject a
+Public API (declared in `backends/imslug_impl_vulkan.h`, implemented at the
+bottom of `backends/imslug_impl_vulkan.cpp`; requires `ImSlug::Init()` and a
+renderer with `ImGuiBackendFlags_RendererHasTextures`):
+
+```c
+bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo*);  // maps PipelineInfoMain
+void ImSlug_ImplVulkan_Shutdown();
+void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd);        // per frame, outside the render pass
+void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline mainPipeline = VK_NULL_HANDLE);
+```
+
+1. `UploadPools` advances the frames-in-flight slot, resets the instance
+   allocation cursor and records the dirty-row copies with
+   `ImSlugVulkanUploadPools` - it **must** happen before the render pass
+   (transfer commands are illegal inside one) and exactly once per frame: a
+   second call in the same ImGui frame asserts in debug (it would skip an
+   instance-ring slot and overwrite the staging buffer of a frame still in
+   flight). `RenderDrawData` asserts in debug when `UploadPools` never ran
+   (release: stale pools, glyphs may be empty).
+2. `RenderDrawData` stores the draw-data display pos/scale + framebuffer size,
+   calls the core pre-pass (rewriting Slug text runs into callbacks) and then
+   hands the data to `ImGui_ImplVulkan_RenderDrawData`; all non-text geometry
+   goes through the stock path, including the stock scissor/texture setup.
+3. `ImDrawCmd::UserCallback` is dispatched **before** the backend sets scissor
+   and texture state, so each Slug callback computes its **own dynamic scissor**
+   from the batch's clip rect (already display coordinates, intersected with the
+   command's own clip rect), converted with `DisplayPos`/`FramebufferScale` and
+   clamped exactly like the stock backend.
+4. Immediately after every Slug callback command the pre-pass injects a
    `GetPlatformIO().DrawCallback_ResetRenderState` command, so the stock backend
    re-establishes pipeline/descriptors/vertex buffers (R5 - never skip it, never
-   move it).
-3. Record draws directly into the active command buffer from
+   move it). Without that hook (or `RendererHasTextures`) the pre-pass refuses to
+   rewrite anything: a debug assert + a one-time stderr warning.
+5. Draws are recorded into the active command buffer from
    `GetPlatformIO().Renderer_RenderState` (`ImGui_ImplVulkan_RenderState`:
-   CommandBuffer / Pipeline / PipelineLayout), published for the duration of
-   `ImGui_ImplVulkan_RenderDrawData`.
-4. One draw = `ImSlugVulkanDraw` with the frame index, current render pass
-   (`VK_NULL_HANDLE` under dynamic rendering), the batch's slot-relative
-   `FirstInstance`/`InstanceCount`, the projection (screen px -> clip), the
-   framebuffer size and the clip-rect scissor. The M3 pre-pass also calls
-   `ImSlugVulkanUploadPools(cmd, pools, frameIndex)` once per frame before the
-   draws (the frame index must be the current ring slot).
-5. The pre-pass rewrites only `CmdBuffer` (scratch vector): geometry triangles
+   CommandBuffer/Pipeline/PipelineLayout), published for the duration of
+   `ImGui_ImplVulkan_RenderDrawData`. One batch = one `ImSlugVulkanDraw` with the
+   frame index, the main render pass (`VK_NULL_HANDLE` under dynamic rendering),
+   the batch's slot-relative `FirstInstance`/`InstanceCount`, a Y-down ortho MVP
+   for the framebuffer, the framebuffer size and the batch scissor.
+6. Instances live in the M2 ring: the adapter tracks the per-frame allocation
+   cursor (`ReserveInstances`); exhaustion drops the overflowing run with a
+   debug assert and `Statistics::DroppedRuns`.
+7. Render pass: the pipeline mirrors `PipelineInfoMain.RenderPass/Subpass`, so
+   multi-viewport render passes must be *compatible* with it (same
+   formats/samples; the helper-created viewport passes are). Dynamic rendering
+   needs `PipelineInfoMain.PipelineRenderingCreateInfo` with the color format
+   array alive for the whole module lifetime (the adapter copies the struct but
+   not the array - a block-scoped format array is a real crash, see the M3
+   notes).
+8. The pre-pass rewrites only `CmdBuffer` (scratch vector): geometry triangles
    keep exact order/offsets, each maximal text run becomes a callback command
    with `ElemCount = 0` and `ClipRect`/`TexRef` copied from the original; the
    vertex/index buffers are never mutated.

@@ -925,6 +925,7 @@ namespace ImSlug
     // after every Slug run (R5).
     namespace
     {
+
         struct ImGuiVulkanState
         {
             bool Initialized;
@@ -933,10 +934,10 @@ namespace ImSlug
             uint32_t Subpass;
 
             // Per-frame slot and the instance allocation cursor inside it.
-            uint32_t FrameIndex;
-            uint32_t FrameCounter;
-            uint32_t InstanceCursor;
-            bool PoolsUploaded;
+            uint32_t FrameIndex;      // ring slot for the current frame
+            uint32_t FrameCounter;    // advanced by UploadPools (one per frame)
+            int UploadFrameCount;     // ImGui::GetFrameCount() of the last upload (-1 = none)
+            uint32_t InstanceCursor;  // per-frame instance allocation cursor
 
             // Per RenderDrawData call (callbacks run inside the stock backend's
             // render loop, which republishes CommandBuffer + framebuffer size).
@@ -1061,6 +1062,7 @@ namespace ImSlug
 
         g_ImGuiVulkan = ImGuiVulkanState();
         g_ImGuiVulkan.Initialized = true;
+        g_ImGuiVulkan.UploadFrameCount = -1;
         g_ImGuiVulkan.DynamicRendering = initInfo->UseDynamicRendering;
         g_ImGuiVulkan.RenderPass = initInfo->PipelineInfoMain.RenderPass;
         g_ImGuiVulkan.Subpass = initInfo->PipelineInfoMain.Subpass;
@@ -1081,13 +1083,18 @@ namespace ImSlug
     {
         if (!g_ImGuiVulkan.Initialized || cmd == VK_NULL_HANDLE)
             return;
-        IMSLUG_ASSERT(!g_ImGuiVulkan.PoolsUploaded && "imslug: UploadPools already called this frame");
+        // One upload per frame (a second call would skip an instance-ring slot
+        // and overwrite staging of a frame still in flight). ImGui's frame
+        // count is the only per-frame signal available outside the frame cycle.
+        const int frameCount = ImGui::GetFrameCount();
+        IMSLUG_ASSERT(g_ImGuiVulkan.UploadFrameCount != frameCount &&
+                      "imslug: ImSlug_ImplVulkan_UploadPools called twice in one frame");
+        g_ImGuiVulkan.UploadFrameCount = frameCount;
 
         const uint32_t framesInFlight = ImSlugVulkanGetFramesInFlight();
         g_ImGuiVulkan.FrameIndex = framesInFlight != 0 ? (g_ImGuiVulkan.FrameCounter % framesInFlight) : 0;
         g_ImGuiVulkan.FrameCounter++;
         g_ImGuiVulkan.InstanceCursor = 0;
-        g_ImGuiVulkan.PoolsUploaded = true;
 
         ImSlugPools* pools = ImSlugGetPools();
         if (pools != nullptr)
@@ -1102,7 +1109,7 @@ namespace ImSlug
             ImGui_ImplVulkan_RenderDrawData(drawData, cmd, mainPipeline);
             return;
         }
-        IMSLUG_ASSERT(g_ImGuiVulkan.PoolsUploaded &&
+        IMSLUG_ASSERT(g_ImGuiVulkan.UploadFrameCount >= 0 &&
                       "imslug: call ImSlug_ImplVulkan_UploadPools() before rendering (see imslug_impl_vulkan.h)");
 
         g_ImGuiVulkan.FramebufferWidth = (uint32_t)(drawData->DisplaySize.x * drawData->FramebufferScale.x);

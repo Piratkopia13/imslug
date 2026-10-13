@@ -1,6 +1,6 @@
 ---
 name: imslug glyph format
-description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer caps, the frozen M1 core API and how to run the reference/packing tests. Load when editing the generator, packer, glyph records, or the CPU reference rasterizer (M1+).
+description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer caps, the frozen core API, the M3 glyph handle encoding/slab registry and how to run the reference/packing tests. Load when editing the generator, packer, glyph records, the CPU reference rasterizer or the handle encoder/decoder (M1+).
 ---
 
 # imslug glyph data format
@@ -213,6 +213,49 @@ Pools expose `Curves.Texels` (RGBA16F, `4*u16` per texel), `Bands.Texels`
 the M2 uploads. Records point into the font's cache and stay valid until the
 font is destroyed (they are rebuilt if a different `ImSlugPools` is passed).
 The pipeline is single-threaded; build scratch buffers live inside `ImSlugFont`.
+
+## M3: glyph handle encoding and slabs (the UV payload)
+
+One baked glyph (per font source, glyph index and *bake size*) owns a **slot**;
+the slot indexes `ImSlugGlyphSlab` (core registry, `imslug.cpp`):
+
+```c
+struct ImSlugGlyphSlab {
+    const ImSlugGlyphRecord* Record;  // outlines/bands, size-independent
+    const void* Bake;                 // ImFontBaked* lifetime key (frees the slab)
+    float X0, Y0, X1, Y1;             // baked pixel box == ImFontGlyph box (Y down,
+                                      // line-top relative: Y0..Y1 include the ascent)
+    float Ascent;                     // ImFontBaked::Ascent (line top -> baseline)
+    float PixelsPerEm;                // baked pixels per em
+    uint32_t Slot; bool Alive;
+};
+```
+
+The ImGui adapter (`imslug_imgui_adapter.cpp`) bakes the `ImFontGlyph` UVs as
+
+```
+U = 1.5 + 2*slot + 0.25 + 0.5*fracX      fracX = (cornerX - X0) / (X1 - X0)
+V = 2.5 + 2*slot + 0.25 + 0.5*fracY      fracY = (cornerY - Y0) / (Y1 - Y0)
+```
+
+* both axes carry the slot (an axis swap or a mixed pair cannot decode);
+  frac 0 is the box's left/top corner, frac 1 the right/bottom one;
+* the magic values are clear of atlas UVs (which live in `[0,1]`) and the
+  0.25..0.75 inner band leaves room for float rounding of fine-clipped values;
+* the encoding is **affine**, so ImGui's fine-clip interpolation of a clipped
+  corner stays inside the slot cell and decodes to the exact fraction of the
+  cut edge - no per-frame glyph map, and atlas repacking/growth cannot
+  invalidate a handle (the decode never touches the atlas);
+* slot ids are stable for the process lifetime and released when their
+  `ImFontBaked` is discarded (`ImSlugFreeGlyphSlabsForBake`), capped by
+  `Config::MaxGlyphSlabs` (default 65536).
+
+The adapter decodes a vertex with `ImSlugAdapterDecodeVertex(u, v, &decoded)`
+(slot + both fractions, or "not Slug geometry"). The pre-pass rebuilds the
+placement from the four corner fractions with a fitted affine map per axis, then
+evaluates it at the record's em bbox corners; `Ascent` bridges ImGui's
+line-top Y and em's baseline Y. The sanity slack is ~1 px because `X0..Y1` are
+the *integer* (floor/ceil) box around the exact control-point bbox.
 
 ## Budgets (typical Latin UI font, ~2000 glyphs)
 

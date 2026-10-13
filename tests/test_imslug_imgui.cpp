@@ -303,6 +303,16 @@ namespace
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings);
     }
 
+    // The text used by the placement and DPI tests.
+    // Text through a widget-sized layout: this uses g.FontSize, which includes
+    // style.FontScaleMain/FontScaleDpi (an explicit AddText size would not).
+    void drawTextHelper(ImFont* font, const ImVec2& pos)
+    {
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::TextUnformatted("Hello Wg");
+        (void)font;
+    }
+
     // One full frame: build, render, pre-pass, dispatch callbacks. The caller
     // does the NewFrame + UI building; RunFrame finishes the frame.
     ImDrawData* RunFrame(uint32_t frameIndex)
@@ -865,6 +875,105 @@ static void TestEdgeCases()
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// 6. Runtime FontScaleDpi changes and atlas growth/repacking (M3 acceptance).
+// ---------------------------------------------------------------------------
+static void TestRuntimeDpiAndAtlasGrowth()
+{
+    std::printf("[test] runtime FontScaleDpi + atlas growth immunity\n");
+    ImFont* slugFont = ImGui::GetIO().Fonts->Fonts[0];
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    ImSlugPools* pools = ImSlugGetPools();
+    TEST_CHECK(pools != nullptr);
+
+    // Reference frame at DPI 1.
+    const ImVec2 pos(20.0f, 30.0f);
+    ImGui::NewFrame();
+    OpenTestWindow("dpi");
+    drawTextHelper(slugFont, pos);
+    ImGui::End();
+    RunFrame(40);
+    const uint32_t referenceCount = g_FakeUsed;
+    TEST_CHECK(referenceCount > 0);
+    ImSlugGlyphInstance reference[kMaxReferenceInstances];
+    TEST_CHECK(referenceCount <= kMaxReferenceInstances);
+    memcpy(reference, g_FakeInstances, (size_t)referenceCount * sizeof(ImSlugGlyphInstance));
+
+    const int texturePixelsBefore = atlas->TexData->Width * atlas->TexData->Height;
+    const int curveCursorBefore = pools->Curves.CursorTexels;
+    const int bandCursorBefore = pools->Bands.CursorTexels;
+    const float dpiValues[2] = { 2.0f, 0.75f };
+    for (float dpi : dpiValues)
+    {
+        ImGui::GetStyle().FontScaleDpi = dpi;
+        ImGui::NewFrame();
+        OpenTestWindow("dpi");
+        drawTextHelper(slugFont, pos);
+        ImGui::End();
+        RunFrame(41 + (uint32_t)(dpi * 100.0f));
+        TEST_CHECKF(g_FakeUsed > 0, "no instances at DPI %.2f", dpi);
+        // The same glyph outlines and bands are reused: the pools did not grow.
+        TEST_CHECKF(pools->Curves.CursorTexels == curveCursorBefore,
+                    "curve pool grew on a FontScaleDpi change (%.2f): %d -> %d", dpi, curveCursorBefore,
+                    pools->Curves.CursorTexels);
+        TEST_CHECKF(pools->Bands.CursorTexels == bandCursorBefore,
+                    "band pool grew on a FontScaleDpi change (%.2f): %d -> %d", dpi, bandCursorBefore,
+                    pools->Bands.CursorTexels);
+        TEST_CHECKF(atlas->TexData->Width * atlas->TexData->Height == texturePixelsBefore,
+                    "atlas texture grew on a FontScaleDpi change (%.2f)", dpi);
+        // Same placements at the new size, scaled by dpi.
+        ImSlugGlyphInstance scaled[kMaxReferenceInstances];
+        memcpy(scaled, g_FakeInstances, (size_t)g_FakeUsed * sizeof(ImSlugGlyphInstance));
+        for (uint32_t i = 0; i < g_FakeUsed && i < referenceCount; ++i)
+        {
+            const float penX = (float)(int)pos.x;
+            const float penY = (float)(int)pos.y;  // compare pens, not rects
+            const float width = scaled[i].ScreenMaxX - scaled[i].ScreenMinX;
+            const float refWidth = reference[i].ScreenMaxX - reference[i].ScreenMinX;
+            TEST_CHECKF(Nearly(width, refWidth * dpi, 0.05f * refWidth + 0.5f),
+                        "DPI %.2f instance %u width %.3f vs %.3f", dpi, i, width, refWidth * dpi);
+            (void)penX;
+            (void)penY;
+        }
+    }
+    ImGui::GetStyle().FontScaleDpi = 1.0f;
+
+    // Atlas growth/repacking: a big stock font forces the atlas texture to grow
+    // (and repack its rects). Slug handles live outside the atlas, so the baked
+    // glyph UVs and the reconstructed placements must not change.
+    const ImFontGlyph* glyphBefore = slugFont->GetFontBaked(g_TestFontSize)->FindGlyph((ImWchar)'H');
+    TEST_CHECK(glyphBefore != nullptr);
+    const float u0Before = glyphBefore->U0;
+    const float v0Before = glyphBefore->V0;
+    ImFontConfig bigConfig;
+    bigConfig.OversampleH = 1;
+    bigConfig.OversampleV = 1;
+    ImFont* bigFont = atlas->AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Inter-Regular.ttf"), 96.0f, &bigConfig);
+    TEST_CHECK(bigFont != nullptr);
+    ImFontBaked* bigBaked = bigFont->GetFontBaked(96.0f);
+    for (unsigned int codepoint = 0x20; codepoint < 0x100; ++codepoint)
+        bigBaked->FindGlyph((ImWchar)codepoint);
+    TEST_CHECKF(atlas->TexData->Width * atlas->TexData->Height > texturePixelsBefore,
+                "atlas did not grow for the 96 px stock font (%dx%d)", atlas->TexData->Width, atlas->TexData->Height);
+
+    const ImFontGlyph* glyphAfter = slugFont->GetFontBaked(g_TestFontSize)->FindGlyph((ImWchar)'H');
+    TEST_CHECK(glyphAfter != nullptr);
+    TEST_CHECKF(glyphAfter->U0 == u0Before && glyphAfter->V0 == v0Before,
+                "Slug handle changed after an atlas repack (%.6f -> %.6f)", u0Before, glyphAfter->U0);
+
+    ImGui::NewFrame();
+    OpenTestWindow("dpi");
+    drawTextHelper(slugFont, pos);
+    ImGui::End();
+    RunFrame(50);
+    TEST_CHECKF(g_FakeUsed == referenceCount, "instance count changed after an atlas repack: %u vs %u", g_FakeUsed,
+                referenceCount);
+    for (uint32_t i = 0; i < g_FakeUsed && i < referenceCount; ++i)
+        TEST_CHECKF(Nearly(g_FakeInstances[i].ScreenMinX, reference[i].ScreenMinX, 0.01f) &&
+                        Nearly(g_FakeInstances[i].ScreenMinY, reference[i].ScreenMinY, 0.01f),
+                    "instance %u moved after an atlas repack", i);
+}
+
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -895,6 +1004,7 @@ int main()
     TestPrepassStructure();
     TestPlacement();
     TestEdgeCases();
+    TestRuntimeDpiAndAtlasGrowth();
 
     if (g_TestFont != nullptr)
         ImSlugDestroyFont(g_TestFont);

@@ -10,10 +10,10 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M2
-> (standalone Vulkan renderer: shaders, rendering core, golden-image tests and a
-> GLFW example, all validated against the CPU reference). The ImGui integration
-> (M3) is next; until then there is no drop-in backend to build against.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M3
+> (ImGui integration: ordinary ImGui text renders through Slug for registered
+> fonts, with the stock `imgui_impl_vulkan` backend unchanged). The API, data
+> formats and handle encoding are still moving; M4 hardens and tunes.
 
 ## Requirements
 
@@ -39,6 +39,29 @@ humans, CI and the `.opencode/commands`:
 | Docs-hygiene check | `scripts\check_docs.bat` | `scripts/check_docs.sh` |
 
 Agents should start with [`AGENTS.md`](AGENTS.md).
+
+## Integration (M3)
+
+```cpp
+ImGui_ImplVulkan_Init(&init_info);       // stock backend, unchanged
+ImSlug::Init();                          // imslug core (fonts go through it)
+ImSlug_ImplVulkan_Init(&init_info);      // imslug Vulkan module
+ImFont* font = ImSlug::AddFontFromFileTTF("fonts/Inter.ttf", 18.0f);
+io.FontDefault = font;                   // or use it per window/font stack
+
+// Per frame, before the render pass:
+ImSlug_ImplVulkan_UploadPools(cmd);      // dirty glyph-pool rows only
+// Inside the render pass, instead of ImGui_ImplVulkan_RenderDrawData:
+ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
+```
+
+Registered fonts render through Slug at any size/DPI without atlas bitmaps;
+every other font, shape and texture keeps going through ImGui's own path.
+The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
+`build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
+window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts
+and a runtime `style.FontScaleDpi` slider, plus
+`--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
 
 ## Credits
 
