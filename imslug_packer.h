@@ -89,10 +89,20 @@ namespace ImSlug
     // Lay out and reserve a glyph's band block. refCounts has HeaderCount
     // entries (horizontal bands first, then vertical) and outListOffsets gets
     // one u16 offset per band (relative to glyphLoc; equal to the cursor for
-    // empty lists). Fails with false when the block cannot be represented
-    // (u16 offsets) or the pool would exceed the 16-bit height.
-    bool ImSlugAllocBandBlock(ImSlugBandPool* pool, int bandMaxX, int bandMaxY, const int* refCounts,
-                              ImSlugBandBlock* outBlock, uint16_t* outListOffsets);
+    // empty lists). Returns:
+    //   Ok            - the block is reserved; outBlock and outListOffsets are
+    //                   filled and the pool cursor advanced;
+    //   GlyphTooLarge - the block cannot be represented in the band format: a
+    //                   reference list longer than kPoolWidth (the shader reads
+    //                   lists contiguously in x, so a list never straddles a
+    //                   row) or a padded total > kGlyphMaxBlockTexels (u16
+    //                   offsets). Definitive: the glyph falls back to stock
+    //                   ImGui and must not be retried;
+    //   BandPoolLimit - the pool would exceed the 16-bit height (or its row
+    //                   growth failed); retryable.
+    // On failure the pool cursor is unchanged (nothing is reserved).
+    ImSlugBuildStatus ImSlugAllocBandBlock(ImSlugBandPool* pool, int bandMaxX, int bandMaxY, const int* refCounts,
+                                           ImSlugBandBlock* outBlock, uint16_t* outListOffsets);
 
     // CalcBandLoc(glyphLoc, offset) — reference pixel shader:
     //   x = (glyphLocX + offset) & (kPoolWidth - 1)

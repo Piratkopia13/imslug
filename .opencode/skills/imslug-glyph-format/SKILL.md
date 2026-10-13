@@ -57,6 +57,12 @@ with 'g' (descender) in `tests/test_glyphgen.cpp`.**
   straddle and returns one u16 `listOffset` per band; `CalcBandLoc` is only
   needed to resolve the list *start*:
   `CalcBandLoc(loc, off) = ((loc.x + off) & 4095, loc.y + ((loc.x + off) >> 12))`.
+  A list longer than `kPoolWidth` can never satisfy the rule (padding only moves
+  it to a row start), so the allocator **refuses** it and returns
+  `ImSlugBuildStatus_GlyphTooLarge`; the caller must not retry it. The allocator
+  returns `Ok` / `GlyphTooLarge` (unrepresentable: list > 4096, or padded total
+  > `kGlyphMaxBlockTexels`) / `BandPoolLimit` (16-bit height or row growth), and
+  leaves the pool cursor untouched on failure.
 * Each band's reference list is sorted **descending by max x** (horizontal
   bands) / **max y** (vertical bands) - insertion sort, stable, by the max of
   the three control points, so the shader early-outs
@@ -99,7 +105,13 @@ shader masks `bandMax.y &= 0x00FF` and tests bit 12. The CPU record uses
    asserts + returned `ImSlugBuildStatus` (`CurvePoolLimit`, `BandPoolLimit`,
    `GlyphTooLarge`, `OutOfMemory`) for the graceful fallback; dirty-row tracking
    (`DirtyRowMin/Max`) + `UsedRows` high-water mark for M2 uploads. Never write
-   outside the pool.
+   outside the pool. A **failed glyph build is transactional**: the curve/band
+   cursors and dirty/used bookkeeping are rolled back, so non-cached failures
+   (`CurvePoolLimit`, `BandPoolLimit`, `OutOfMemory`) can be retried on the next
+   call without consuming pool space, and `Ok` always means a valid stable
+   record pointer. `GlyphTooLarge` is classified from the allocator's real
+   padded total (row padding included) and is definitive (cached; fall back to
+   stock ImGui).
 7. Deterministic: same font in -> same bytes out (tests compare two builds).
    The ref list order is stable insertion sort; curves are laid out in
    extraction order; band layout is a linear allocator.
@@ -121,9 +133,14 @@ Mirrored in `imslug_glyphgen.cpp` with the config Slug fonts use:
   defaults), `AdvanceX` still set. Missing codepoints: the metrics API returns
   false; ImGui's atlas-level fallback handles the substitution (same as the
   stock loader returning false per source).
+* `ImSlugGlyphMetrics.MinX/MinY/MaxX/MaxY` carry the em-space control-point bbox
+  (size-independent, exactly the glyph record's values — both go through the
+  same extraction and bounds helper); space has all four zero. The metrics query
+  returns false if its extraction scratch cannot be allocated.
 * `tests/test_imguiparity.cpp` compiles Dear ImGui into a test-only target and
   asserts **exact equality** for every glyph/size pair; `tests/test_metrics.cpp`
-  re-derives the formulas from stbtt independently.
+  re-derives the formulas from stbtt independently and pins the bbox against the
+  record.
 
 ## CPU reference rasterizer (the arbiter)
 
@@ -132,18 +149,25 @@ Mirrored in `imslug_glyphgen.cpp` with the config Slug fonts use:
 `1/65536` nearly-linear branch, CalcBandLoc, CalcCoverage
 `max(|xcov*xwgt + ycov*ywgt| / max(xwgt + ywgt, eps), min(|xcov|, |ycov|))` then
 saturate (nonzero) or even-odd wrap). Deviations: the exactly-degenerate linear
-solve uses Slughorn's guard (no 0/0 NaN); `frac()` is IEEE `x - floor(x)`.
+solve uses the guard expression adapted from Slughorn (MIT, license in NOTICE
+§4; no other Slughorn code is used — everything else is a port of the reference
+shader); `frac()` is IEEE `x - floor(x)`.
 `fwidth` is CPU-impossible, so `pixelsPerEm` is a parameter. Banded and
 unbanded (`ImSlugRasterSampleUnbanded`) must agree; banding is only an
-acceleration structure.
+acceleration structure. `ImSlugRasterGlyphRect` fills `width*height` floats,
+row 0 = top row, pixel centers, `(centerX0, centerY0)` = em coord of pixel
+(0,0)'s center, emY decreasing by `1/pixelsPerEm` per row (pinned by
+`tests/test_refraster.cpp`).
 
 ## Tests to run after generator edits
 
 * `scripts/test.*` - suites: `imslug_glyphgen` (extraction, contours, line
-  encoding, cubic bound, band superset/sort/axis-parallel, determinism),
-  `imslug_packer` (fp16, doubling, pair rows, band row padding, guards, dirty
-  rows), `imslug_metrics` (stbtt re-derivation), `imslug_refraster` (math pins +
-  the stbtt coverage gate + banded/unbanded + convergence),
+  encoding, cubic bound, band superset/sort/axis-parallel, determinism,
+  failed-build rollback/retry), `imslug_packer` (fp16, doubling, pair rows, band
+  row padding, list row rule, padded-total classification, guards, dirty rows),
+  `imslug_metrics` (stbtt re-derivation, record/metrics bbox parity),
+  `imslug_refraster` (math pins + the stbtt coverage gate + banded/unbanded +
+  convergence + `ImSlugRasterGlyphRect` convention),
   `imslug_metrics_imgui_parity` (test-only ImGui build, exact equality).
 * Coverage gate (`g`, `A`, `W`, `é` at 16/32/64 px, both test fonts): deep
   pixels (3x3 stbtt neighbourhood saturated) must match within 0.05; aggregate

@@ -14,7 +14,8 @@
 //
 // Deviations from the HLSL, both deliberate and documented in the .cpp:
 //   * the degenerate linear solve avoids the division the shader would turn
-//     into inf/NaN (Slughorn's guard; numerically identical elsewhere);
+//     into inf/NaN (that guard expression is adapted from Slughorn, MIT; the
+//     rest of this file is a port of the reference shader — NOTICE section 4);
 //   * frac() is the IEEE frac (x - floor(x)).
 
 #pragma once

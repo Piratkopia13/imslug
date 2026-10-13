@@ -63,6 +63,9 @@ namespace ImSlug
     // Mirrors ImGui's stb loader with OversampleH/V=1, RasterizerDensity=1,
     // ExtraSizeScale=1, GlyphOffset=0 — the configuration Slug fonts use (no
     // atlas rasterization). Pixels are Y-down from the text base position.
+    // MinX..MaxY are the em-space control-point bbox of the extracted outline
+    // (the same values as the glyph record's, size-independent); the query
+    // returns false for missing glyphs and for scratch allocation failure.
     struct ImSlugGlyphMetrics
     {
         float AdvanceX;                // pixels
@@ -94,10 +97,6 @@ namespace ImSlug
 
     // 0 = not found (stbtt_FindGlyphIndex semantics).
     int ImSlugGetGlyphIndex(const ImSlugFont* font, unsigned int codepoint);
-
-    // Em-space control-point bbox by glyph index; false when out of range.
-    bool ImSlugGetGlyphBounds(const ImSlugFont* font, int glyphIndex, float* outMinX, float* outMinY, float* outMaxX,
-                              float* outMaxY);
 
     // Lazily build (once per glyph index) and cache the glyph record, filling
     // the pools. The returned record points into the font's cache and stays

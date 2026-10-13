@@ -460,6 +460,76 @@ static void TestInteriorExterior()
 }
 
 // ---------------------------------------------------------------------------
+// ImSlugRasterGlyphRect convention (the frozen API M2 depends on)
+// ---------------------------------------------------------------------------
+// Row 0 is the top row; (centerX0, centerY0) is the em coordinate of pixel
+// (0,0)'s center; x increases by 1/ppe per column and y decreases by 1/ppe per
+// row (em space is Y up). 'I' is a plain rectangle in Roboto, so a single
+// column through the stem pins the mapping and the orientation.
+static void TestGlyphRectConvention()
+{
+    TestFont font;
+    TEST_CHECK(OpenTestFont("Roboto-Regular.ttf", &font));
+    ImSlugPools pools;
+    ImSlugInitPools(&pools);
+
+    const ImSlugGlyphRecord* record = nullptr;
+    TEST_CHECK(ImSlugGetGlyphRecord(font.Font, &pools, 'I', &record) == ImSlugBuildStatus_Ok);
+
+    const float ppe = 64.0f;
+    const float inverse = 1.0f / ppe;
+    const float centerX0 = 0.5f * (record->MinX + record->MaxX);  // stem center
+    const float centerY0 = record->MaxY + 2.0f * inverse;         // two pixels above the cap
+    const int width = 3;
+    const int height = (int)((centerY0 - record->MinY) / inverse) + 3;  // through the baseline + margin
+    TEST_CHECK(height > 0 && height <= 200);
+    float coverage[3 * 200];
+    ImSlugRasterGlyphRect(&pools, record, centerX0, centerY0, ppe, coverage, width, height);
+
+    // Every pixel is the sample at (centerX0 + x/ppe, centerY0 - y/ppe).
+    float worst = 0.0f;
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            const float expected = ImSlugRasterSample(&pools, record, centerX0 + (float)x * inverse,
+                                                      centerY0 - (float)y * inverse, ppe, ppe);
+            const float delta = std::fabs(coverage[y * width + x] - expected);
+            if (delta > worst)
+                worst = delta;
+        }
+    }
+    TEST_CHECKF(worst <= 1e-6f, "rect mapping differs from direct samples by %.8f", (double)worst);
+
+    // Orientation: the top row is above the glyph (empty), the stem center is
+    // saturated, and the last row is below the baseline (empty). A flipped em-Y
+    // mapping would report zero coverage for the whole column.
+    const int stemRow = (int)((centerY0 - 0.5f * (record->MinY + record->MaxY)) / inverse);
+    TEST_CHECK(stemRow > 0 && stemRow < height - 1);
+    TEST_CHECKF(coverage[stemRow * width + 1] > 0.99f, "stem center coverage %.4f",
+                (double)coverage[stemRow * width + 1]);
+    TEST_CHECK(coverage[0 * width + 1] == 0.0f);
+    TEST_CHECK(coverage[(height - 1) * width + 1] == 0.0f);
+
+    // The first covered row is where the sample drops just below the cap
+    // height: emY(row) = centerY0 - row/ppe ~= record->MaxY (within the 1 px
+    // sampler ramp).
+    int firstCovered = -1;
+    for (int y = 0; y < height && firstCovered < 0; ++y)
+    {
+        if (coverage[y * width + 1] > 0.0f)
+            firstCovered = y;
+    }
+    TEST_CHECK(firstCovered > 0);
+    const float firstEmY = centerY0 - (float)firstCovered * inverse;
+    TEST_CHECKF(firstEmY <= record->MaxY + 1.5f * inverse && firstEmY >= record->MaxY - 1.5f * inverse,
+                "first covered row at emY %.4f (cap height %.4f)", (double)firstEmY, (double)record->MaxY);
+
+    ImSlugDestroyPools(&pools);
+    CloseTestFont(&font);
+}
+
+// ---------------------------------------------------------------------------
 int main()
 {
     std::printf("imslug_refraster: shader math + stbtt coverage gate (deep pixels <= %.2f, aggregate per size)\n",
@@ -468,6 +538,7 @@ int main()
     TestSolvers();
     TestCoverage();
     TestInteriorExterior();
+    TestGlyphRectConvention();
     TestBandedVsUnbanded("Roboto-Regular.ttf");
     TestBandedVsUnbanded("Inter-Regular.ttf");
     TestRasterGateForFont("Roboto-Regular.ttf");

@@ -12,9 +12,13 @@
 // result), the u16 offsets and the row-wrap addressing.
 //
 // Deviations (both documented, numerically equivalent elsewhere):
-//   * SolveHorizPoly/SolveVertPoly use Slughorn's guard for the exactly
-//     degenerate linear case (b == 0), where the HLSL would divide by zero and
-//     produce NaN. Slughorn (MIT) render.hpp _solveHorizPoly — see NOTICE.
+//   * SolveHorizPoly/SolveVertPoly use the degenerate-linear guard adapted from
+//     Slughorn's render.hpp _solveHorizPoly/_solveVertPoly (MIT; license text
+//     in NOTICE section 4): when the quadratic coefficient is ~0, divide by b
+//     only when |b| >= 1/65536, otherwise return t = 0. The reference HLSL has
+//     no such guard and would produce 0/0 NaN for the exactly-linear case. That
+//     guard expression is the only code taken from Slughorn — every other
+//     function here is a port of the reference Slug pixel shader.
 //   * frac() is the IEEE definition x - floor(x).
 
 #include "imslug_refraster.h"

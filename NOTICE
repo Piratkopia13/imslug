@@ -338,8 +338,9 @@ SOFTWARE.
 
 The projects below are not part of imslug. They are credited because they were
 studied as references and informed this project's design (PLAN §1.3/§1.5).
-Unless a license text is quoted above, no code is copied from them; ideas,
-layouts and format decisions are cross-checked against them.
+Except for the Slughorn guard expression noted below (whose MIT license text is
+quoted here), no code is copied from them; ideas, layouts and format decisions
+are cross-checked against them.
 
 * DearWidgets — Soufiane Khiat (CC0-1.0):
   https://github.com/soufianekhiat/DearWidgets
@@ -348,7 +349,34 @@ layouts and format decisions are cross-checked against them.
 * Slughorn — AlphaPixel (MIT):
   https://github.com/AlphaPixel/slughorn
   Slug data generation and CPU reference rasterizer; cross-check for the curve
-  and band data format (its own '.slugb' container is not used).
+  and band data format (its own '.slugb' container is not used). The only code
+  taken from Slughorn is the degenerate-linear guard expression in the root
+  solvers of imslug_refraster.cpp (render.hpp _solveHorizPoly/_solveVertPoly:
+  divide by b only when |b| >= 1/65536, otherwise return t = 0). Everything else
+  in that file is a port of the reference Slug pixel shader, not Slughorn code.
+  MIT license text, as required by the MIT terms:
+
+  MIT License
+
+  Copyright (c) 2026 AlphaPixel LLC
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
 * Sluggish — mightycow (Unlicense / public domain):
   https://github.com/mightycow/Sluggish
   Minimal TTF-to-data generator plus GL renderer; instancing layout ideas.

@@ -5,8 +5,8 @@
 //   * must not use the C++ standard library (no <string>, no <vector>, ...);
 //   * implementation is C++17 and uses no exceptions.
 //
-// The C API mirror arrives in M6; the glyph pipeline and ImGui integration
-// arrive in M1/M3 (see .agent-docs/milestones/).
+// The C API mirror arrives in M6; the glyph pipeline landed in M1 and the
+// ImGui integration arrives in M3 (see .agent-docs/milestones/).
 
 #pragma once
 

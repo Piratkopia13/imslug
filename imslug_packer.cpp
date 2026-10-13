@@ -273,21 +273,22 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Band pool
     // ---------------------------------------------------------------------
-    bool ImSlugAllocBandBlock(ImSlugBandPool* pool, int bandMaxX, int bandMaxY, const int* refCounts,
-                              ImSlugBandBlock* outBlock, uint16_t* outListOffsets)
+    ImSlugBuildStatus ImSlugAllocBandBlock(ImSlugBandPool* pool, int bandMaxX, int bandMaxY, const int* refCounts,
+                                           ImSlugBandBlock* outBlock, uint16_t* outListOffsets)
     {
         IMSLUG_ASSERT(pool != NULL && outBlock != NULL && refCounts != NULL && outListOffsets != NULL);
-        if (bandMaxX < 0 || bandMaxY < 0)
-            return false;
-        if (bandMaxX >= kMaxBandCountPerAxis || bandMaxY >= kMaxBandCountPerAxis)
-            return false;
+        IMSLUG_ASSERT(bandMaxX >= 0 && bandMaxX < kMaxBandCountPerAxis);
+        IMSLUG_ASSERT(bandMaxY >= 0 && bandMaxY < kMaxBandCountPerAxis);
+        if (bandMaxX < 0 || bandMaxX >= kMaxBandCountPerAxis || bandMaxY < 0 || bandMaxY >= kMaxBandCountPerAxis)
+            return ImSlugBuildStatus_GlyphTooLarge;  // caller bug (asserted); unrepresentable in Release
 
         const int headerCount = bandMaxY + 1 + bandMaxX + 1;
         int refCount = 0;
         for (int i = 0; i < headerCount; ++i)
         {
+            IMSLUG_ASSERT(refCounts[i] >= 0);
             if (refCounts[i] < 0)
-                return false;
+                return ImSlugBuildStatus_GlyphTooLarge;
             refCount += refCounts[i];
         }
 
@@ -302,6 +303,11 @@ namespace ImSlug
         for (int i = 0; i < headerCount; ++i)
         {
             const int listLength = refCounts[i];
+            // A list longer than a whole row can never satisfy the contiguous-x
+            // rule (padding only moves it to a row start); the block is
+            // unrepresentable, so refuse it instead of wrapping silently.
+            if (listLength > kPoolWidth)
+                return ImSlugBuildStatus_GlyphTooLarge;
             if (listLength > 0 && ((cursor & (kPoolWidth - 1)) + listLength > kPoolWidth))
                 cursor = ((cursor >> kPoolWidthLog2) + 1) << kPoolWidthLog2;
             outListOffsets[i] = (uint16_t)(cursor - (glyphLocY * kPoolWidth + glyphLocX));
@@ -310,12 +316,12 @@ namespace ImSlug
 
         const int totalTexels = cursor - (glyphLocY * kPoolWidth + glyphLocX);
         if (totalTexels > kGlyphMaxBlockTexels)
-            return false;  // band offsets are stored as u16 relative to glyphLoc
+            return ImSlugBuildStatus_GlyphTooLarge;  // band offsets are stored as u16 relative to glyphLoc
         const int lastRow = (cursor - 1) / kPoolWidth;
         if (lastRow >= kPoolMaxHeight)
-            return false;
+            return ImSlugBuildStatus_BandPoolLimit;
         if (!ImSlugPoolEnsureBandRows(pool, lastRow + 1))
-            return false;
+            return ImSlugBuildStatus_BandPoolLimit;
 
         outBlock->X = glyphLocX;
         outBlock->Y = glyphLocY;
@@ -323,7 +329,7 @@ namespace ImSlug
         outBlock->RefCount = refCount;
         outBlock->TotalTexels = totalTexels;
         pool->CursorTexels = cursor;
-        return true;
+        return ImSlugBuildStatus_Ok;
     }
 
     void ImSlugCalcBandLoc(int glyphLocX, int glyphLocY, uint32_t offset, int* outX, int* outY)

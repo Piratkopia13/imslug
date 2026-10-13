@@ -168,7 +168,8 @@ static void TestBandBlocks()
 
     ImSlugBandBlock block;
     uint16_t listOffsets[2 * kMaxBandCountPerAxis];
-    TEST_CHECK(ImSlugAllocBandBlock(&pools.Bands, bandMaxX, bandMaxY, refCounts, &block, listOffsets));
+    TEST_CHECK(ImSlugAllocBandBlock(&pools.Bands, bandMaxX, bandMaxY, refCounts, &block, listOffsets) ==
+               ImSlugBuildStatus_Ok);
     TEST_CHECK(block.HeaderCount == headerCount);
     TEST_CHECK(block.RefCount == totalRefs);
     TEST_CHECK(block.X + headerCount <= kPoolWidth);  // header run inside one row
@@ -237,7 +238,8 @@ static void TestBandBlocks()
     int smallCounts[4] = { 3, 2, 0, 4 };
     ImSlugBandBlock wrappedBlock;
     uint16_t wrappedOffsets[4];
-    TEST_CHECK(ImSlugAllocBandBlock(&wrapped.Bands, 1, 1, smallCounts, &wrappedBlock, wrappedOffsets));
+    TEST_CHECK(ImSlugAllocBandBlock(&wrapped.Bands, 1, 1, smallCounts, &wrappedBlock, wrappedOffsets) ==
+               ImSlugBuildStatus_Ok);
     TEST_CHECK(wrappedBlock.X == kPoolWidth - 5 && wrappedBlock.Y == 0);
     // List 0 (3 entries) does not fit the 1 texel left in row 0 (x = 4095), so
     // it is padded to row 1: offset 5 = (kPoolWidth + 0) - (kPoolWidth - 5).
@@ -265,11 +267,14 @@ static void TestBandBlocks()
     int headerWrapCounts[10] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
     ImSlugBandBlock headerWrapBlock;
     uint16_t headerWrapOffsets[10];
-    TEST_CHECK(ImSlugAllocBandBlock(&headerWrap.Bands, 3, 3, headerWrapCounts, &headerWrapBlock, headerWrapOffsets));
+    TEST_CHECK(ImSlugAllocBandBlock(&headerWrap.Bands, 3, 3, headerWrapCounts, &headerWrapBlock, headerWrapOffsets) ==
+               ImSlugBuildStatus_Ok);
     TEST_CHECK(headerWrapBlock.X == 0 && headerWrapBlock.Y == 1);
     ImSlugDestroyPools(&headerWrap);
 
     // Capacity guard: a block that cannot be addressed with u16 offsets.
+    // (Raw HeaderCount + RefCount is 70010 > 65535 here; the padded total is
+    // larger still, so this is a definitive GlyphTooLarge, not a pool limit.)
     ImSlugPools huge;
     ImSlugInitPools(&huge);
     int hugeCounts[10];
@@ -277,7 +282,8 @@ static void TestBandBlocks()
         hugeCounts[i] = 7000;  // 70000 refs > 65535 - 10
     ImSlugBandBlock hugeBlock;
     uint16_t hugeOffsets[10];
-    TEST_CHECK(!ImSlugAllocBandBlock(&huge.Bands, 3, 3, hugeCounts, &hugeBlock, hugeOffsets));
+    TEST_CHECK(ImSlugAllocBandBlock(&huge.Bands, 3, 3, hugeCounts, &hugeBlock, hugeOffsets) ==
+               ImSlugBuildStatus_GlyphTooLarge);
     TEST_CHECK(huge.Bands.Texels == nullptr);  // nothing was allocated
     ImSlugDestroyPools(&huge);
 
@@ -291,7 +297,66 @@ static void TestBandBlocks()
     fakeBand.DirtyRowMin = 1;
     fakeBand.DirtyRowMax = 0;
     int fakeCounts[10] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-    TEST_CHECK(!ImSlugAllocBandBlock(&fakeBand, 3, 3, fakeCounts, &hugeBlock, hugeOffsets));
+    TEST_CHECK(ImSlugAllocBandBlock(&fakeBand, 3, 3, fakeCounts, &hugeBlock, hugeOffsets) ==
+               ImSlugBuildStatus_BandPoolLimit);
+
+    ImSlugDestroyPools(&pools);
+}
+
+// ---------------------------------------------------------------------------
+// A reference list must fit in one pool row (the shader reads it contiguously
+// in x); a list longer than kPoolWidth is unrepresentable and must be refused
+// as GlyphTooLarge instead of silently straddling rows.
+static void TestBandBlockListRowRule()
+{
+    ImSlugPools pools;
+    ImSlugInitPools(&pools);
+    ImSlugBandBlock block;
+    uint16_t offsets[2 * kMaxBandCountPerAxis];
+
+    int tooLongCounts[2] = { kPoolWidth + 1, 0 };
+    TEST_CHECK(ImSlugAllocBandBlock(&pools.Bands, 0, 0, tooLongCounts, &block, offsets) ==
+               ImSlugBuildStatus_GlyphTooLarge);
+    TEST_CHECK(pools.Bands.CursorTexels == 0);  // nothing was reserved
+
+    // A list of exactly kPoolWidth is fine: the allocator pads it to a fresh
+    // row so it fits exactly.
+    int fullRowCounts[2] = { kPoolWidth, 0 };
+    TEST_CHECK(ImSlugAllocBandBlock(&pools.Bands, 0, 0, fullRowCounts, &block, offsets) == ImSlugBuildStatus_Ok);
+    TEST_CHECK(block.HeaderCount == 2 && block.RefCount == kPoolWidth);
+    int listX = 0, listY = 0;
+    ImSlugCalcBandLoc(block.X, block.Y, offsets[0], &listX, &listY);
+    TEST_CHECK(listX == 0 && listY == 1);  // headers row 0, the full list row 1
+    TEST_CHECK(pools.Bands.CursorTexels == 2 * kPoolWidth);
+
+    ImSlugDestroyPools(&pools);
+}
+
+// ---------------------------------------------------------------------------
+// Classification must use the allocator's real padded total: row padding can
+// push a block past kGlyphMaxBlockTexels even though HeaderCount + RefCount
+// fits, which the old caller-side check misreported as a retryable pool limit.
+static void TestBandBlockPaddingOverflow()
+{
+    ImSlugPools pools;
+    ImSlugInitPools(&pools);
+
+    const int bandMaxY = 20;  // 21 horizontal bands + 1 vertical -> 22 headers
+    int refCounts[22];
+    int rawTotal = 0;
+    for (int i = 0; i < 21; ++i)
+    {
+        refCounts[i] = 3000;  // ends before the row end, so the next list pads
+        rawTotal += refCounts[i];
+    }
+    refCounts[21] = 0;
+    TEST_CHECK(rawTotal + 22 <= kGlyphMaxBlockTexels);  // the old classification's input says "pool limit"
+
+    ImSlugBandBlock block;
+    uint16_t offsets[2 * kMaxBandCountPerAxis];
+    TEST_CHECK(ImSlugAllocBandBlock(&pools.Bands, 0, bandMaxY, refCounts, &block, offsets) ==
+               ImSlugBuildStatus_GlyphTooLarge);
+    TEST_CHECK(pools.Bands.CursorTexels == 0);  // nothing was reserved
 
     ImSlugDestroyPools(&pools);
 }
@@ -319,6 +384,8 @@ int main()
     TestPoolGrowth();
     TestCurveBlocks();
     TestBandBlocks();
+    TestBandBlockListRowRule();
+    TestBandBlockPaddingOverflow();
     TestBandMaxWord();
     return imslug_test::Finish("imslug_packer");
 }

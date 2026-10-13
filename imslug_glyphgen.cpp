@@ -238,6 +238,39 @@ namespace ImSlug
         return bounds;
     }
 
+    // Aggregate control-point bbox of a quad run; all-zero for an empty run.
+    // The single source for both the glyph record bbox and the metrics API's
+    // em-space MinX..MaxY, so the two can never drift apart.
+    static void ControlBoundsOfQuads(const ImSlugQuad* quads, int quadCount, float* outMinX, float* outMinY,
+                                     float* outMaxX, float* outMaxY)
+    {
+        float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+        if (quadCount > 0)
+        {
+            ImSlugQuadBounds bounds = ImSlugQuadControlBounds(quads[0]);
+            minX = bounds.MinX;
+            minY = bounds.MinY;
+            maxX = bounds.MaxX;
+            maxY = bounds.MaxY;
+            for (int i = 1; i < quadCount; ++i)
+            {
+                bounds = ImSlugQuadControlBounds(quads[i]);
+                if (bounds.MinX < minX)
+                    minX = bounds.MinX;
+                if (bounds.MinY < minY)
+                    minY = bounds.MinY;
+                if (bounds.MaxX > maxX)
+                    maxX = bounds.MaxX;
+                if (bounds.MaxY > maxY)
+                    maxY = bounds.MaxY;
+            }
+        }
+        *outMinX = minX;
+        *outMinY = minY;
+        *outMaxX = maxX;
+        *outMaxY = maxY;
+    }
+
     // Exactly axis-parallel curves can never cross a ray of the matching axis
     // (PLAN §2.2 rule 2); they are excluded from those bands.
     static bool IsHorizontalCurve(const ImSlugQuad& quad)
@@ -397,8 +430,10 @@ namespace ImSlug
         int UnitsPerEm;
 
         // Build scratch (grow-only; the font is single-threaded like ImGui).
-        ImSlugQuad* ScratchQuads;
-        int ScratchQuadCapacity;
+        // Mutable so const queries (metrics) can reuse the extraction path and
+        // therefore report exactly the record's geometry.
+        mutable ImSlugQuad* ScratchQuads;
+        mutable int ScratchQuadCapacity;
         int BandCounts[2 * kMaxBandCountPerAxis];
         int* ScratchRefs;
         int ScratchRefCapacity;
@@ -476,6 +511,33 @@ namespace ImSlug
         DestroyFont(font);
     }
 
+    // Extract a glyph's outline into the font's grow-only scratch buffer.
+    // const (the scratch members are mutable): the metrics query reuses the
+    // exact same extraction the glyph record is built from.
+    static bool ExtractWithScratch(const ImSlugFont* font, int glyphIndex, int* outQuadCount)
+    {
+        int required = 0;
+        if (ImSlugExtractGlyphOutline(&font->FontInfo, glyphIndex, font->ScratchQuads, font->ScratchQuadCapacity,
+                                      &required))
+        {
+            *outQuadCount = required;
+            return true;
+        }
+        if (required <= 0 ||
+            !EnsureArray((void**)&font->ScratchQuads, &font->ScratchQuadCapacity, required, sizeof(ImSlugQuad)))
+        {
+            return false;
+        }
+        int quadCount = 0;
+        if (!ImSlugExtractGlyphOutline(&font->FontInfo, glyphIndex, font->ScratchQuads, font->ScratchQuadCapacity,
+                                       &quadCount))
+        {
+            return false;
+        }
+        *outQuadCount = quadCount;
+        return true;
+    }
+
     // ---------------------------------------------------------------------
     // Metrics (Dear ImGui v1.92.9b, imgui_draw.cpp, stb loader)
     // ---------------------------------------------------------------------
@@ -534,6 +596,16 @@ namespace ImSlug
         if (glyphIndex <= 0)
             return false;  // no .notdef metrics (ImGui's loader returns false there)
 
+        // Em-space control-point bbox, from the same extraction the glyph
+        // record is built from (size-independent, so it does not depend on the
+        // bake size). Scratch allocation failure fails the whole query, like a
+        // record build failure.
+        int quadCount = 0;
+        if (!ExtractWithScratch(font, glyphIndex, &quadCount))
+            return false;
+        ControlBoundsOfQuads(font->ScratchQuads, quadCount, &outMetrics->MinX, &outMetrics->MinY, &outMetrics->MaxX,
+                             &outMetrics->MaxY);
+
         const float scale = ScaleForPixelHeight1(font) * bakeSizePixels;
 
         int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -582,32 +654,8 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Glyph records
     // ---------------------------------------------------------------------
-    static bool ExtractWithScratch(ImSlugFont* font, int glyphIndex, int* outQuadCount)
-    {
-        int required = 0;
-        if (ImSlugExtractGlyphOutline(&font->FontInfo, glyphIndex, font->ScratchQuads, font->ScratchQuadCapacity,
-                                      &required))
-        {
-            *outQuadCount = required;
-            return true;
-        }
-        if (required <= 0 ||
-            !EnsureArray((void**)&font->ScratchQuads, &font->ScratchQuadCapacity, required, sizeof(ImSlugQuad)))
-        {
-            return false;
-        }
-        int quadCount = 0;
-        if (!ImSlugExtractGlyphOutline(&font->FontInfo, glyphIndex, font->ScratchQuads, font->ScratchQuadCapacity,
-                                       &quadCount))
-        {
-            return false;
-        }
-        *outQuadCount = quadCount;
-        return true;
-    }
-
-    static ImSlugBuildStatus BuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
-                                              ImSlugGlyphRecord* record)
+    static ImSlugBuildStatus BuildGlyphRecordInternal(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
+                                                      ImSlugGlyphRecord* record)
     {
         int quadCount = 0;
         if (!ExtractWithScratch(font, glyphIndex, &quadCount))
@@ -623,26 +671,7 @@ namespace ImSlug
 
         // Control-point bbox (conservative and equal to what the bands assume).
         float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
-        if (quadCount > 0)
-        {
-            ImSlugQuadBounds bounds = ImSlugQuadControlBounds(font->ScratchQuads[0]);
-            minX = bounds.MinX;
-            minY = bounds.MinY;
-            maxX = bounds.MaxX;
-            maxY = bounds.MaxY;
-            for (int i = 1; i < quadCount; ++i)
-            {
-                bounds = ImSlugQuadControlBounds(font->ScratchQuads[i]);
-                if (bounds.MinX < minX)
-                    minX = bounds.MinX;
-                if (bounds.MinY < minY)
-                    minY = bounds.MinY;
-                if (bounds.MaxX > maxX)
-                    maxX = bounds.MaxX;
-                if (bounds.MaxY > maxY)
-                    maxY = bounds.MaxY;
-            }
-        }
+        ControlBoundsOfQuads(font->ScratchQuads, quadCount, &minX, &minY, &maxX, &maxY);
         record->MinX = minX;
         record->MinY = minY;
         record->MaxX = maxX;
@@ -687,15 +716,15 @@ namespace ImSlug
         }
 
         // Band pool: headers + reference lists (the allocator inserts row
-        // padding wherever a list would straddle a row).
-        const int headerCount = bandMaxY + 1 + bandMaxX + 1;
+        // padding wherever a list would straddle a row). Its status is already
+        // classified against the real padded total: GlyphTooLarge is
+        // definitive (fall back to stock ImGui), BandPoolLimit is retryable.
         uint16_t listOffsets[2 * kMaxBandCountPerAxis];
         ImSlugBandBlock bandBlock;
-        if (!ImSlugAllocBandBlock(&pools->Bands, bandMaxX, bandMaxY, font->BandCounts, &bandBlock, listOffsets))
-        {
-            return (headerCount + requiredRefs > kGlyphMaxBlockTexels) ? ImSlugBuildStatus_GlyphTooLarge
-                                                                       : ImSlugBuildStatus_BandPoolLimit;
-        }
+        const ImSlugBuildStatus bandStatus =
+            ImSlugAllocBandBlock(&pools->Bands, bandMaxX, bandMaxY, font->BandCounts, &bandBlock, listOffsets);
+        if (bandStatus != ImSlugBuildStatus_Ok)
+            return bandStatus;
 
         int refCursor = 0;
         for (int band = 0; band <= bandMaxY + bandMaxX + 1; ++band)
@@ -727,6 +756,39 @@ namespace ImSlug
         return ImSlugBuildStatus_Ok;
     }
 
+    // Builds are transactional: a failed build is retried on the next call
+    // (non-cached failures), so it must leave the pools exactly as it found
+    // them. Both cursors and the dirty/used bookkeeping are rolled back;
+    // Texels/Height are kept (pool growth is not undone, and the garbage texels
+    // written by the failed attempt are overwritten by the next successful
+    // build at the same cursor).
+    static ImSlugBuildStatus BuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
+                                              ImSlugGlyphRecord* record)
+    {
+        const int curveCursor = pools->Curves.CursorTexels;
+        const int curveUsedRows = pools->Curves.UsedRows;
+        const int curveDirtyMin = pools->Curves.DirtyRowMin;
+        const int curveDirtyMax = pools->Curves.DirtyRowMax;
+        const int bandCursor = pools->Bands.CursorTexels;
+        const int bandUsedRows = pools->Bands.UsedRows;
+        const int bandDirtyMin = pools->Bands.DirtyRowMin;
+        const int bandDirtyMax = pools->Bands.DirtyRowMax;
+
+        const ImSlugBuildStatus status = BuildGlyphRecordInternal(font, pools, glyphIndex, record);
+        if (status != ImSlugBuildStatus_Ok)
+        {
+            pools->Curves.CursorTexels = curveCursor;
+            pools->Curves.UsedRows = curveUsedRows;
+            pools->Curves.DirtyRowMin = curveDirtyMin;
+            pools->Curves.DirtyRowMax = curveDirtyMax;
+            pools->Bands.CursorTexels = bandCursor;
+            pools->Bands.UsedRows = bandUsedRows;
+            pools->Bands.DirtyRowMin = bandDirtyMin;
+            pools->Bands.DirtyRowMax = bandDirtyMax;
+        }
+        return status;
+    }
+
     static ImSlugBuildStatus GetOrBuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
                                                    const ImSlugGlyphRecord** outRecord)
     {
@@ -746,31 +808,38 @@ namespace ImSlug
             }
         }
 
+        // Reserve the cache entry *before* building: "Ok implies a valid stable
+        // record pointer" must hold unconditionally, so a successful build must
+        // never fail to publish. Allocation failures here return OutOfMemory
+        // with the pools untouched, and are retried on the next call.
+        if (!EnsureArray((void**)&font->Cache, &font->CacheCapacity, font->CacheCount + 1,
+                         sizeof(ImSlugGlyphCacheEntry*)))
+            return ImSlugBuildStatus_OutOfMemory;
+        ImSlugGlyphCacheEntry* entry = (ImSlugGlyphCacheEntry*)malloc(sizeof(ImSlugGlyphCacheEntry));
+        if (entry == nullptr)
+            return ImSlugBuildStatus_OutOfMemory;
+
         ImSlugGlyphRecord record;
         const ImSlugBuildStatus status = BuildGlyphRecord(font, pools, glyphIndex, &record);
 
-        // Cache successes and definitive "not found"; transient capacity or
-        // allocation failures are retried on the next call.
+        // Cache successes and definitive failures ("not found" / too large);
+        // transient capacity or allocation failures are retried on the next
+        // call (BuildGlyphRecord rolled the pools back).
         const bool cacheable = (status == ImSlugBuildStatus_Ok || status == ImSlugBuildStatus_GlyphNotFound ||
                                 status == ImSlugBuildStatus_GlyphTooLarge);
-        if (cacheable)
+        if (!cacheable)
         {
-            if (!EnsureArray((void**)&font->Cache, &font->CacheCapacity, font->CacheCount + 1,
-                             sizeof(ImSlugGlyphCacheEntry*)))
-            {
-                return status == ImSlugBuildStatus_Ok ? status : ImSlugBuildStatus_OutOfMemory;
-            }
-            ImSlugGlyphCacheEntry* entry = (ImSlugGlyphCacheEntry*)malloc(sizeof(ImSlugGlyphCacheEntry));
-            if (entry == nullptr)
-                return status == ImSlugBuildStatus_Ok ? status : ImSlugBuildStatus_OutOfMemory;
-            entry->GlyphIndex = glyphIndex;
-            entry->Status = status;
-            entry->OwnerPools = pools;
-            entry->Record = record;
-            font->Cache[font->CacheCount++] = entry;
-            if (status == ImSlugBuildStatus_Ok)
-                *outRecord = &entry->Record;
+            free(entry);
+            return status;
         }
+
+        entry->GlyphIndex = glyphIndex;
+        entry->Status = status;
+        entry->OwnerPools = pools;
+        entry->Record = record;
+        font->Cache[font->CacheCount++] = entry;
+        if (status == ImSlugBuildStatus_Ok)
+            *outRecord = &entry->Record;  // guaranteed: the entry was reserved above
         return status;
     }
 

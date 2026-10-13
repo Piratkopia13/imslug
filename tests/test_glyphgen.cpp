@@ -332,6 +332,7 @@ static void TestBandsForFont(const char* fontName)
         const ImSlugGlyphRecord* record = nullptr;
         const ImSlugBuildStatus status = ImSlugGetGlyphRecord(font, &pools, codepoint, &record);
         TEST_CHECKF(status == ImSlugBuildStatus_Ok, "build U+%04X failed (%d)", codepoint, (int)status);
+        TEST_CHECK(record != nullptr);  // the status contract: Ok implies a valid record
         if (status != ImSlugBuildStatus_Ok)
             continue;
 
@@ -446,6 +447,78 @@ static void TestBandsForFont(const char* fontName)
 }
 
 // ---------------------------------------------------------------------------
+// Failed builds must not leak pool space and must keep the status contract
+// ---------------------------------------------------------------------------
+// Non-cached build failures (capacity limits) are retried on the next call, so
+// a failed attempt has to leave the pools exactly as it found them; otherwise
+// repeated calls would consume the pools forever. The band pool is forced to
+// fail by pointing its cursor past the 16-bit height limit: the allocator
+// refuses before touching Texels (the fake cursor is never dereferenced), and
+// the curve block allocated before it must be rolled back.
+//
+// The OOM branches (realloc/malloc failures) have no fault injection in the M1
+// core, so they are not exercised directly; instead GetOrBuildGlyphRecord
+// reserves the cache entry *before* building, so a successful build always has
+// a slot to publish into and "Ok implies a non-null record" holds
+// unconditionally (asserted below for the normal path and after retries).
+static void TestFailedBuildDoesNotLeak()
+{
+    int fontDataSize = 0;
+    unsigned char* fontData = imslug_test::LoadFontFile("Roboto-Regular.ttf", &fontDataSize);
+    TEST_CHECK(fontData != nullptr);
+    if (fontData == nullptr)
+        return;
+
+    ImSlugFont* font = ImSlugCreateFontFromMemory(fontData, fontDataSize, 0, true);
+    TEST_CHECK(font != nullptr);
+
+    // Reference build in a clean pool set: the build after the failures must
+    // land exactly where this one did.
+    ImSlugPools reference;
+    ImSlugInitPools(&reference);
+    const ImSlugGlyphRecord* referenceRecord = nullptr;
+    TEST_CHECK(ImSlugGetGlyphRecord(font, &reference, 'A', &referenceRecord) == ImSlugBuildStatus_Ok);
+    TEST_CHECK(referenceRecord != nullptr);
+
+    ImSlugPools pools;
+    ImSlugInitPools(&pools);
+    const int failedBandCursor = (kPoolMaxHeight + 1) * kPoolWidth;
+    pools.Bands.CursorTexels = failedBandCursor;
+
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const ImSlugGlyphRecord* record = nullptr;
+        const ImSlugBuildStatus status = ImSlugGetGlyphRecord(font, &pools, 'A', &record);
+        TEST_CHECKF(status == ImSlugBuildStatus_BandPoolLimit, "attempt %d: status %d (expected BandPoolLimit)",
+                    attempt, (int)status);
+        TEST_CHECK(record == nullptr);               // Ok must never be reported with a null record
+        TEST_CHECK(pools.Curves.CursorTexels == 0);  // curve block rolled back
+        TEST_CHECK(pools.Bands.CursorTexels == failedBandCursor);
+    }
+
+    // Repairing the pool state lets the same font build the glyph, and the
+    // result is byte-identical to the reference build: no half-consumed state.
+    pools.Bands.CursorTexels = 0;
+    const ImSlugGlyphRecord* record = nullptr;
+    TEST_CHECK(ImSlugGetGlyphRecord(font, &pools, 'A', &record) == ImSlugBuildStatus_Ok);
+    TEST_CHECK(record != nullptr);
+    TEST_CHECK(pools.Curves.CursorTexels == reference.Curves.CursorTexels);
+    TEST_CHECK(pools.Bands.CursorTexels == reference.Bands.CursorTexels);
+    TEST_CHECK(std::memcmp(record, referenceRecord, sizeof(*record)) == 0);
+
+    // The cached re-request returns the same stable pointer and touches nothing.
+    const ImSlugGlyphRecord* cached = nullptr;
+    TEST_CHECK(ImSlugGetGlyphRecord(font, &pools, 'A', &cached) == ImSlugBuildStatus_Ok);
+    TEST_CHECK(cached == record);
+    TEST_CHECK(pools.Curves.CursorTexels == reference.Curves.CursorTexels);
+
+    ImSlugDestroyPools(&pools);
+    ImSlugDestroyPools(&reference);
+    ImSlugDestroyFont(font);
+    std::free(fontData);
+}
+
+// ---------------------------------------------------------------------------
 // Determinism
 // ---------------------------------------------------------------------------
 static void TestDeterminism()
@@ -515,5 +588,6 @@ int main()
     TestBandsForFont("Roboto-Regular.ttf");
     TestBandsForFont("Inter-Regular.ttf");
     TestDeterminism();
+    TestFailedBuildDoesNotLeak();
     return imslug_test::Finish("imslug_glyphgen");
 }

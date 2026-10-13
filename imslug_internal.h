@@ -43,8 +43,12 @@
 //     170a13f0fe3ad7562877eb89c4afcd36b89bdbce is the math and addressing
 //     contract mirrored by imslug_refraster.cpp.
 //   * Slughorn (MIT): https://github.com/AlphaPixel/slughorn — render.hpp blob
-//     1b87727ce5f68b8b3c2c383ce0991fec9652b3ad is the CPU cross-check for the
-//     same math (and the degenerate-division guard in the root solver).
+//     1b87727ce5f68b8b3c2c383ce0991fec9652b3ad was the CPU cross-check for the
+//     same math. The *only* code adapted from Slughorn is the degenerate-linear
+//     guard expression in the root solvers (render.hpp _solveHorizPoly /
+//     _solveVertPoly: divide by b only when |b| >= 1/65536, else t = 0), used
+//     where the reference HLSL would divide by zero; its MIT license text is
+//     quoted in NOTICE section 4. No other Slughorn code is copied.
 //   * Dear ImGui v1.92.9b (imgui_draw.cpp) — the metrics formulas mirrored by
 //     imslug_glyphgen.cpp (comments cite the exact lines).
 
@@ -171,8 +175,11 @@ namespace ImSlug
         ImSlugBuildStatus_GlyphNotFound,  // codepoint resolves to .notdef (index 0)
         ImSlugBuildStatus_OutOfMemory,
         ImSlugBuildStatus_CurvePoolLimit,  // 16-bit texel y / pool height reached
-        ImSlugBuildStatus_BandPoolLimit,
-        ImSlugBuildStatus_GlyphTooLarge,  // band block > 65535 texels (u16 offsets)
+        ImSlugBuildStatus_BandPoolLimit,   // pool height reached or row growth failed
+        ImSlugBuildStatus_GlyphTooLarge,   // band block not representable: a ref
+                                           // list longer than one row, or a
+                                           // padded block > 65535 texels (u16
+                                           // offsets) -- definitive fallback
     };
 }  // namespace ImSlug
 

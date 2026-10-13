@@ -143,7 +143,7 @@ static void TestRecordConsistency(const char* fontName)
     stbtt_InitFont(&info, fontData, 0);
     const int unitsPerEm = (info.data[info.head + 18] << 8) | info.data[info.head + 19];
 
-    const unsigned int codepoints[4] = { 'g', 'A', 'W', 0xE9 };
+    const unsigned int codepoints[5] = { ' ', 'g', 'A', 'W', 0xE9 };
     for (unsigned int codepoint : codepoints)
     {
         const ImSlugGlyphRecord* record = nullptr;
@@ -152,6 +152,28 @@ static void TestRecordConsistency(const char* fontName)
         TEST_CHECK(ImSlugGetGlyphMetrics(font, codepoint, 32.0f, &metrics));
         TEST_CHECKF(ExactOrClose(record->Advance, metrics.AdvanceEm), "%s U+%04X: record advance %.8f vs %.8f",
                     fontName, codepoint, (double)record->Advance, (double)metrics.AdvanceEm);
+
+        // The metrics em bbox is the same control-point bbox as the record's
+        // (both come from the extracted quads) and does not depend on the bake
+        // size. Exact equality: the two go through the same extraction and the
+        // same bounds helper.
+        TEST_CHECKF(metrics.MinX == record->MinX && metrics.MinY == record->MinY && metrics.MaxX == record->MaxX &&
+                        metrics.MaxY == record->MaxY,
+                    "%s U+%04X: metrics bbox [%.5f %.5f %.5f %.5f] vs record [%.5f %.5f %.5f %.5f]", fontName,
+                    codepoint, (double)metrics.MinX, (double)metrics.MinY, (double)metrics.MaxX, (double)metrics.MaxY,
+                    (double)record->MinX, (double)record->MinY, (double)record->MaxX, (double)record->MaxY);
+        ImSlugGlyphMetrics metrics64;
+        TEST_CHECK(ImSlugGetGlyphMetrics(font, codepoint, 64.0f, &metrics64));
+        TEST_CHECK(metrics64.MinX == metrics.MinX && metrics64.MinY == metrics.MinY && metrics64.MaxX == metrics.MaxX &&
+                   metrics64.MaxY == metrics.MaxY);
+        ImSlugGlyphMetrics byIndex;
+        TEST_CHECK(ImSlugGetGlyphMetricsByIndex(font, stbtt_FindGlyphIndex(&info, (int)codepoint), 32.0f, &byIndex));
+        TEST_CHECK(byIndex.MinX == metrics.MinX && byIndex.MaxX == metrics.MaxX);
+
+        if (codepoint == ' ')
+            TEST_CHECK(metrics.MinX == 0.0f && metrics.MinY == 0.0f && metrics.MaxX == 0.0f && metrics.MaxY == 0.0f);
+        if (codepoint == 'g')
+            TEST_CHECK(metrics.MinY < -0.01f);  // descender is below the baseline (em Y up)
 
         int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
         stbtt_GetGlyphBox(&info, stbtt_FindGlyphIndex(&info, (int)codepoint), &x0, &y0, &x1, &y1);
