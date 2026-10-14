@@ -1338,6 +1338,200 @@ static void TestPrepassIdempotence()
     }
 }
 
+static void TestColorFonts()
+{
+    std::printf("[test] color fonts (COLR v1): Colored flag, layer instances, layout parity\n");
+
+#ifdef IMSLUG_EMOJI_TEST_FONT
+    int emojiSize = 0;
+    unsigned char* emojiData = imslug_test::LoadFile(IMSLUG_EMOJI_TEST_FONT, &emojiSize);
+    if (emojiData == nullptr)
+    {
+        std::printf("  [color] emoji font not present - skipping (fetch with scripts/fetch_emoji_font.*)\n");
+        return;
+    }
+
+    // TestGracefulFallbacks leaves the core initialized with a tiny slab cap
+    // (and earlier fonts' slabs are gone); restore the default configuration so
+    // this test does not depend on the order. The atlas keeps its fonts, but
+    // they are no longer used by later tests.
+    ImSlug::Shutdown();
+    TEST_CHECKF(ImSlug::Init(), "core re-init failed");
+    ImSlugSetRenderIO(&g_FakeIO);
+
+    // An independent ground-truth font (its own pools/records) for the layer
+    // counts, paint records and metrics the pre-pass must reproduce.
+    ImSlugFont* groundTruth = ImSlugCreateFontFromMemory(emojiData, emojiSize, 0, true);
+    TEST_CHECK(groundTruth != nullptr);
+
+    ImFont* emojiFont = ImSlug::AddFontFromMemoryTTF(emojiData, emojiSize, 32.0f);
+    TEST_CHECK(emojiFont != nullptr);
+    if (emojiFont == nullptr || groundTruth == nullptr)
+    {
+        std::free(emojiData);
+        return;
+    }
+
+    const float size = 32.0f;
+    ImFontBaked* baked = emojiFont->GetFontBaked(size);
+    TEST_CHECK(baked != nullptr);
+    const ImFontGlyph* face = baked->FindGlyph((ImWchar)0x2764);  // BMP emoji (ImGui Wchar is 16-bit by default)
+    const ImFontGlyph* space = baked->FindGlyph((ImWchar)0x20);
+    TEST_CHECK(face != nullptr && space != nullptr);
+    if (face == nullptr || space == nullptr)
+    {
+        std::free(emojiData);
+        return;
+    }
+
+    // 1) The Colored flag drives ImGui's tint handling: a COLR glyph is marked
+    //    Colored (RenderText then forces RGB=255 and keeps the alpha), a
+    //    non-color glyph is not.
+    TEST_CHECK(face->Colored);
+    TEST_CHECK(face->Visible);
+    TEST_CHECK(!space->Colored);
+    TEST_CHECK(!space->Visible);
+
+    // 2) Layout parity with the monochrome path: the advances and the metrics
+    //    box come from the same ImGui-parity code path (empty base glyphs get
+    //    the synthesized layer-union box; hmtx advances are untouched). Compare
+    //    against an independent extraction of the same font.
+    const int glyphIndex = ImSlugGetGlyphIndex(groundTruth, 0x2764u);
+    ImSlugGlyphMetrics metrics;
+    TEST_CHECK(glyphIndex > 0 && ImSlugGetGlyphMetricsByIndex(groundTruth, glyphIndex, size, &metrics));
+    TEST_CHECKF(face->AdvanceX == metrics.AdvanceX, "advance %.4f vs %.4f", face->AdvanceX, metrics.AdvanceX);
+    TEST_CHECKF(face->X1 > face->X0 && face->Y1 > face->Y0, "box (%.2f %.2f %.2f %.2f)", face->X0, face->Y0, face->X1,
+                face->Y1);
+    ImSlugPools* pools = ImSlugGetPools();
+    const ImSlugColorGlyph* colorGlyph = nullptr;
+    TEST_CHECK(ImSlugGetColorGlyph(groundTruth, pools, glyphIndex, &colorGlyph) == ImSlugBuildStatus_Ok);
+    TEST_CHECK(colorGlyph != nullptr && colorGlyph->LayerCount > 0);
+    if (colorGlyph != nullptr)
+    {
+        // Noto's base glyf outline is empty, so the box is the documented
+        // synthesis of the layer union (floor/ceil + rounded ascent); the
+        // ImFontGlyph must match it exactly.
+        ImSlugFontMetrics fontMetrics;
+        ImSlugGetFontMetrics(groundTruth, size, &fontMetrics);
+        const float ppem = fontMetrics.PixelsPerEm;
+        const float ascentRounded = std::floor(fontMetrics.Ascent + 0.5f);
+        const float expectedX0 = std::floor(colorGlyph->MinX * ppem);
+        const float expectedX1 = std::ceil(colorGlyph->MaxX * ppem);
+        const float expectedY0 = std::floor(-colorGlyph->MaxY * ppem) + ascentRounded;
+        const float expectedY1 = std::ceil(-colorGlyph->MinY * ppem) + ascentRounded;
+        TEST_CHECKF(face->X0 == expectedX0 && face->X1 == expectedX1 && face->Y0 == expectedY0 &&
+                        face->Y1 == expectedY1,
+                    "box (%.1f %.1f %.1f %.1f) vs synthesized (%.1f %.1f %.1f %.1f)", face->X0, face->Y0, face->X1,
+                    face->Y1, expectedX0, expectedY0, expectedX1, expectedY1);
+    }
+
+    // 3) Pre-pass: one instance per color layer, placement matching the text
+    //    layout (the pen the mono path would use), paint indices valid, and the
+    //    tint reduced to the alpha (ImGui already forced the RGB to white).
+    ImGui::NewFrame();
+    OpenTestWindow("color-fonts");
+    const ImVec2 textPos(20.0f, 40.0f);
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    // A deliberately red, half-transparent tint: the layer colors must ignore
+    // the RGB and only take the alpha.
+    list->AddText(emojiFont, size, textPos, IM_COL32(255, 0, 0, 128), "\xE2\x9D\xA4");
+    ImGui::End();
+    ImGui::Render();
+    ImDrawData* drawData = ImGui::GetDrawData();
+
+    ResetFake();
+    ImSlug::PreprocessDrawData(drawData);
+    DispatchSlugCallbacks(drawData);
+
+    uint32_t expectedLayers = 0;
+    for (int i = 0; i < colorGlyph->LayerCount; ++i)
+    {
+        if (colorGlyph->Layers[i].Record != nullptr)
+            expectedLayers++;
+    }
+    TEST_CHECKF(g_FakeLastBatch.InstanceCount == expectedLayers, "instances %u vs expected layers %u",
+                g_FakeLastBatch.InstanceCount, expectedLayers);
+    TEST_CHECK(g_FakeDrawCalls == 1);
+
+    const float scale = size / baked->Size;
+    const float penX = (float)(int)textPos.x;
+    const float penY = (float)(int)textPos.y + baked->Ascent * scale;
+    ImSlugFontMetrics fontMetrics;
+    ImSlugGetFontMetrics(groundTruth, size, &fontMetrics);
+    const float ppemBase = fontMetrics.PixelsPerEm * scale;
+    int checkedLayers = 0;
+    for (uint32_t i = 0; i < g_FakeLastBatch.InstanceCount; ++i)
+    {
+        const ImSlugGlyphInstance& instance = g_FakeInstances[g_FakeLastBatch.FirstInstance + i];
+        TEST_CHECK(instance.PaintIndex != kNoPaintIndex);
+        // Color = (1,1,1, tint alpha): the layer color is authoritative.
+        TEST_CHECK(instance.ColorR == 1.0f && instance.ColorG == 1.0f && instance.ColorB == 1.0f);
+        TEST_CHECKF(Nearly(instance.ColorA, 128.0f / 255.0f, 0.001f), "tint alpha %.4f", instance.ColorA);
+
+        // The instance's placement must be the layer's record bbox at the text
+        // pen (the same placement the monochrome path uses for its own record).
+        const ImSlugColorLayer& layer = colorGlyph->Layers[checkedLayers];
+        if (layer.Record == nullptr)
+            continue;
+        const float expectedMinX = penX + ppemBase * (layer.OffsetXEm + layer.Record->MinX * layer.ScaleX);
+        const float expectedMaxX = penX + ppemBase * (layer.OffsetXEm + layer.Record->MaxX * layer.ScaleX);
+        const float expectedMinY = penY - ppemBase * (layer.OffsetYEm + layer.Record->MaxY * layer.ScaleY);
+        const float expectedMaxY = penY - ppemBase * (layer.OffsetYEm + layer.Record->MinY * layer.ScaleY);
+        TEST_CHECKF(Nearly(instance.ScreenMinX, expectedMinX, 0.75f), "layer %d ScreenMinX %.4f vs %.4f", checkedLayers,
+                    instance.ScreenMinX, expectedMinX);
+        TEST_CHECKF(Nearly(instance.ScreenMaxX, expectedMaxX, 0.75f), "layer %d ScreenMaxX %.4f vs %.4f", checkedLayers,
+                    instance.ScreenMaxX, expectedMaxX);
+        TEST_CHECKF(Nearly(instance.ScreenMinY, expectedMinY, 0.75f), "layer %d ScreenMinY %.4f vs %.4f", checkedLayers,
+                    instance.ScreenMinY, expectedMinY);
+        TEST_CHECKF(Nearly(instance.ScreenMaxY, expectedMaxY, 0.75f), "layer %d ScreenMaxY %.4f vs %.4f", checkedLayers,
+                    instance.ScreenMaxY, expectedMaxY);
+        ++checkedLayers;
+    }
+    TEST_CHECK(checkedLayers == (int)expectedLayers);
+
+    // 4) Text layout (CalcTextSize) is the sum of the advances: identical with
+    //    and without the color path (the color path never touches metrics).
+    const char* emojiText = "\xE2\x9D\xA4\xE2\x98\x80";
+    const ImVec2 measured = emojiFont->CalcTextSizeA(size, FLT_MAX, 0.0f, emojiText);
+    float expectedWidth = 0.0f;
+    for (const char* p = emojiText; *p != '\0';)
+    {
+        unsigned int codepoint = (unsigned char)*p++;
+        if (codepoint >= 0x80)
+        {
+            if ((codepoint & 0xE0) == 0xC0)
+                codepoint = ((codepoint & 0x1F) << 6) | ((unsigned char)*p++ & 0x3F);
+            else if ((codepoint & 0xF0) == 0xE0)
+            {
+                codepoint = ((codepoint & 0x0F) << 12) | (((unsigned char)*p++ & 0x3F) << 6);
+                codepoint |= ((unsigned char)*p++ & 0x3F);
+            }
+            else
+            {
+                codepoint = ((codepoint & 0x07) << 18) | (((unsigned char)*p++ & 0x3F) << 12);
+                codepoint |= (((unsigned char)*p++ & 0x3F) << 6) | ((unsigned char)*p++ & 0x3F);
+            }
+        }
+        const ImFontGlyph* glyph = baked->FindGlyph((ImWchar)codepoint);
+        if (glyph != nullptr)
+            expectedWidth += glyph->AdvanceX * scale;
+    }
+    TEST_CHECKF(Nearly(measured.x, expectedWidth, 0.01f), "CalcTextSize %.4f vs advance sum %.4f", measured.x,
+                expectedWidth);
+
+    std::printf("  [color] U+2764: %d layers, %u instances, tint alpha kept\n", colorGlyph->LayerCount,
+                g_FakeLastBatch.InstanceCount);
+
+    // Leave the atlas clean for the other tests. Note: AddFontFromMemoryTTF
+    // transfers ownership of the buffer to the atlas, so it must not be freed
+    // here (the atlas frees it with its fonts).
+    ImGui::GetIO().Fonts->RemoveFont(emojiFont);
+    ImSlugDestroyFont(groundTruth);
+#else
+    std::printf("  [color] IMSLUG_EMOJI_TEST_FONT not defined - skipping\n");
+#endif
+}
+
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1373,6 +1567,7 @@ int main()
     TestBakeLifetime();
     TestPrepassIdempotence();
     TestGracefulFallbacks();
+    TestColorFonts();
 
     if (g_TestFont != nullptr)
         ImSlugDestroyFont(g_TestFont);

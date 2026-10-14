@@ -1088,6 +1088,15 @@ namespace
 
         ImSlugPools pools;
         ImSlugInitPools(&pools);
+        // The adapter's color path needs the base glyph record to build (it is
+        // the monochrome fallback); Noto's base glyphs have empty glyf outlines,
+        // so the record is a valid zero-curve record.
+        const ImSlugGlyphRecord* baseRecord = nullptr;
+        const ImSlugBuildStatus baseStatus = ImSlugGetGlyphRecord(font, &pools, 0x1F600u, &baseRecord);
+        TEST_CHECKF(baseStatus == ImSlugBuildStatus_Ok && baseRecord != nullptr, "base record status %d",
+                    (int)baseStatus);
+        if (baseRecord != nullptr)
+            TEST_CHECK(baseRecord->CurveCount == 0);
         const ImSlugColorGlyph* colorGlyph = nullptr;
         const ImSlugBuildStatus status = ImSlugGetColorGlyph(font, &pools, grinning, &colorGlyph);
         TEST_CHECK(status == ImSlugBuildStatus_Ok && colorGlyph != nullptr);

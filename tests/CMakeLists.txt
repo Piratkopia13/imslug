@@ -141,6 +141,7 @@ set_target_properties(imslug_tests_imgui PROPERTIES CXX_STANDARD 17 CXX_STANDARD
 imslug_target_defaults(imslug_tests_imgui)
 target_compile_definitions(imslug_tests_imgui PRIVATE
     IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/emoji/NotoColorEmoji-Regular.ttf"
     $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 add_test(NAME imslug_imgui COMMAND imslug_tests_imgui)
 
