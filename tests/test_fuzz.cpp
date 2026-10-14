@@ -21,7 +21,11 @@
 // The two passes (reconstruction on/off) run the same deterministic case
 // sequence, so the fallback is fuzzed exactly as hard as the primary path.
 // `--iterations N` (default 3000), `--seed S`, `--only N --verbose` (single
-// case diagnostics).
+// case diagnostics), `IMSLUG_FUZZ_DUMP=<case>` (dump one case of a full run,
+// for order-dependent failures). The CI profile is 100000 cases
+// (IMSLUG_FUZZ_ITERATIONS); every profile then runs the fast "high-slot"
+// phase: ~4300 live slabs warm the encoded-UV quantization regime and re-run
+// the cases that once failed there (see below).
 //
 // Bugs this harness found and now pins (seeded cases in parentheses):
 //   * `kPlacementSlack` was 1.05 px but ImGui's integer glyph box can exceed
@@ -29,7 +33,16 @@
 //     glyphs were dropped by the placement sanity check (cases 135, 213, 337);
 //   * a triangle with only some corners decoding as handles was left in the
 //     geometry stream (atlas-garbage UVs) by degenerate fine clips; it is now
-//     dropped with its quad tail (structure violations before the fix).
+//     dropped with its quad tail (structure violations before the fix);
+//   * high slab ids (thousands of bakes, ~2 ulp of the encoded UV per fraction
+//     step) made sub-pixel slivers regress: a collapsed corner-fraction span
+//     (all four samples bitwise equal) dropped the glyph, and sliver-scale
+//     spans made the fitted affine map up to 3.2 px off. Fixed by routing
+//     sliver-scale spans to the single-corner sample + baked ppem (kSpanReliable
+//     0.02 -> 0.1; measured sliver max 2.71 px -> 0.31 px at 100k cases) and by
+//     accepting a collapsed span on an axis whose quad still has extent
+//     (cases 20033, 45549, 47496, 66672, 86675, 94792 - kept as the high-slot
+//     regression phase, no warm-up dependency on the long profile).
 //
 // Deliberate exclusion: window clipping (the draw list is the background list,
 // whose clip covers every fuzz position; M3's suite owns window-edge clipping).
@@ -614,10 +627,17 @@ namespace
     // float rounding of ImGui's interpolation and the conditioning of the
     // remaining fraction span, so the bound loosens as the visible fraction
     // shrinks. A "sliver" is a few pixels of a glyph at a clip edge.
+    //
+    // The sliver bound is 1.0 px against a measured 0.31 px max (100k cases,
+    // 2026-10-14) after the M4 fix that switches sliver-scale fraction spans to
+    // the single-corner sample + baked ppem: before it the fitted map amplified
+    // the encoded-UV quantization (2.71 px measured, and reconstruction could
+    // drop the glyph outright). Keep the headroom: the class boundary sits at
+    // the reliable-span threshold, where the fitted path still contributes.
     const double kBoundSpanUnclipped = 0.02;
     const double kBoundSpanMild = 0.1;
     const double kBoundSpanModerate = 0.5;
-    const double kBoundSpanSliver = 3.0;
+    const double kBoundSpanSliver = 1.0;
 
     struct Stats
     {
@@ -1171,6 +1191,61 @@ namespace
                             expected[g].PixelsPerEm * expected[g].Scale);
         }
     }
+    // ---------------------------------------------------------------------
+    // Targeted high-slot regression (M4)
+    // ---------------------------------------------------------------------
+    // The random sequence reaches high slab ids (thousands of bakes) only after
+    // tens of thousands of cases; there the encoded-UV ulp exceeds the fine-clip
+    // offset of sub-pixel slivers. M4 found two failure classes in that regime:
+    // a fully collapsed corner-fraction span dropped the glyph (the fit returned
+    // "all samples equal"), and a sliver-scale span made the fitted placement up
+    // to 3.2 px off (case numbers below). This phase warms the slab registry to
+    // that regime (~4300 live slabs) and re-runs exactly those cases through the
+    // normal checks - a fast regression that does not depend on the long
+    // profile's iteration count.
+    void RunHighSlotRegression(const char* fontPath, const unsigned char* fontData, int fontDataSize, uint64_t seed)
+    {
+        std::printf("[high-slot] targeted regression (slab ids > ~4000)\n");
+        if (!SetupPass(/*reconstruction=*/true, fontPath))
+            return;
+        ImSlugDestroyFont(g_TestFont);
+        g_TestFont = ImSlugCreateFontFromMemory(fontData, fontDataSize, 0, true);
+        if (g_TestFont == nullptr)
+            return;
+        ResetStats();
+
+        // 45 integer sizes x ~95 visible Latin glyphs: ~4300 live slabs. The
+        // frames are throwaway (no checks); only the slab registry state
+        // matters. AddText bakes the glyphs (allocating the slabs), so the
+        // pre-pass is not needed here.
+        char glyphs[128];
+        int at = 0;
+        for (unsigned int codepoint = 0x20; codepoint <= 0x7E; ++codepoint)
+            at += ImTextCharToUtf8(glyphs + at, codepoint);
+        glyphs[at] = '\0';
+        for (int size = 6; size <= 50; ++size)
+        {
+            ImGui::NewFrame();
+            ImGui::GetBackgroundDrawList()->AddText(g_SlugFont, (float)size, ImVec2(4.0f, 4.0f),
+                                                    IM_COL32(255, 255, 255, 255), glyphs);
+            ImGui::Render();
+        }
+        Statistics warmStats;
+        ImSlug::GetStatistics(&warmStats);
+        std::printf("  warm-up: %u live slabs\n", warmStats.GlyphSlabs);
+
+        const long long cases[] = { 20033, 45549, 47496, 66672, 86675, 94792 };
+        for (long long caseIndex : cases)
+        {
+            Rng caseRng;
+            caseRng.State = seed + (uint64_t)caseIndex * 0xD1342543DE82EF95ull;
+            Case testCase;
+            GenerateCase(caseRng, &testCase);
+            ResetFake();
+            RunCase(testCase, /*reconstructionOn=*/true, (uint32_t)caseIndex + 2000000u, (int)caseIndex);
+        }
+        PrintStats("high-slot regression");
+    }
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1182,6 +1257,8 @@ int main(int argc, char** argv)
     uint64_t seed = 0x9E3779B97F4A7C15ull;
     long long onlyCase = -1;
     int passStart = 0;
+    const char* dumpEnv = getenv("IMSLUG_FUZZ_DUMP");
+    const long long dumpCase = dumpEnv != nullptr ? strtoll(dumpEnv, nullptr, 10) : -1;
     for (int i = 1; i < argc; ++i)
     {
         if (strcmp(argv[i], "--iterations") == 0 && i + 1 < argc)
@@ -1226,16 +1303,28 @@ int main(int argc, char** argv)
             ResetFake();
             // Dump before the case runs: RunCase captures the draw-list clip.
             RunCase(testCase, reconstruction, (uint32_t)(iteration + pass * 1000000), (int)iteration);
-            if (g_Verbose)
+            // IMSLUG_FUZZ_DUMP=<case>: dump one case of a full run (state after
+            // the whole sequence, for reproducing order-dependent failures).
+            if (g_Verbose || iteration == dumpCase)
             {
+                std::printf("=== case %lld (reconstruction=%d) ===\n", iteration, reconstruction ? 1 : 0);
                 DumpCase(testCase);
                 DumpDrawData();
                 DumpInstances();
                 DumpExpected(testCase);
+                Statistics liveStats;
+                ImSlug::GetStatistics(&liveStats);
+                std::printf("  statistics: slabs %u, batches %u, instances %u, dropped %u, bounds mismatches %u\n",
+                            liveStats.GlyphSlabs, liveStats.LiveBatches, liveStats.Instances, liveStats.DroppedRuns,
+                            liveStats.BoundsMismatches);
             }
         }
         PrintStats(reconstruction ? "reconstruction" : "fallback (R3)");
     }
+
+    // Targeted high-slot regression (fast; skipped in the --only debug mode).
+    if (onlyCase < 0)
+        RunHighSlotRegression(IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf"), fontData, fontDataSize, seed);
 
     ImSlugDestroyFont(g_TestFont);
     g_TestFont = nullptr;

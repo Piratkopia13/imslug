@@ -80,7 +80,16 @@ namespace ImSlug
         // a garbage filter, not a correctness gate: the fuzz harness bounds the
         // real placement error separately.
         static const float kFracOpenEpsilon = 1e-3f;  // 0/1 exactness margin
-        static const float kSpanReliable = 0.02f;     // use the fitted slope below this
+        // A fraction span below this is dominated by the float quantization of
+        // the decoded (fine-clipped) fractions: the encoded UV ulp is ~0.002
+        // frac units at slot ids of a few thousand, so a fitted slope through
+        // such samples can be ~10 % off and amplifies the whole placement. The
+        // sliver path therefore uses the single-corner sample for the pen and
+        // the glyph's baked ppem for the scale (the drawn size differs from the
+        // bake size only by ImGui's integer rounding, <= ~1.5 %). Slivers are
+        // common in real UIs (text cut by a clip edge); the M4 fuzz measured
+        // the fix: sliver pen error max 2.71 px -> 0.31 px at 100k cases.
+        static const float kSpanReliable = 0.1f;      // use the fitted slope at/above this
         static const float kPlacementSlack = 1.6f;    // px; see the note above kFracOpenEpsilon
         static const float kClipEdgeEpsilon = 0.01f;  // px, same-fine-clip comparison
 
@@ -291,17 +300,38 @@ namespace ImSlug
 
             float originX = 0.0f, slopeX = 0.0f, spanX = 0.0f;
             float originY = 0.0f, slopeY = 0.0f, spanY = 0.0f;
-            if (!FitAxis(fracX, screenX, 4, &originX, &slopeX, &spanX))
-                return false;
-            if (!FitAxis(fracY, screenY, 4, &originY, &slopeY, &spanY))
+            // A fully collapsed fraction span (all four decoded fractions
+            // bitwise equal) is not an error by itself: ImGui's fine-clip
+            // interpolation of a sub-pixel sliver rounds to the corner value
+            // when the encoded UV ulp exceeds the interpolated offset (large
+            // slot ids). The axis then falls back to the single-corner sample
+            // below, exactly like a tiny-but-nonzero span. Two cases still
+            // reject the glyph:
+            //   * a collapsed *quad* on that axis (ImGui's fine clip produced a
+            //     zero/inverted extent there): nothing visible was drawn;
+            //   * a collapsed span on *both* axes (no scale source at all).
+            const bool fitX = FitAxis(fracX, screenX, 4, &originX, &slopeX, &spanX);
+            const bool fitY = FitAxis(fracY, screenY, 4, &originY, &slopeY, &spanY);
+            const bool extentX = quadMaxX > quadMinX;
+            const bool extentY = quadMaxY > quadMinY;
+            if ((!fitX && !fitY) || (!fitX && !extentX) || (!fitY && !extentY))
                 return false;
 
             // Pixels per em from the more reliable axis (uniform text scale), then
             // the pen per axis: the fitted map when the axis has span, or a single
             // sample when the glyph was squeezed into a fraction sliver.
+            const bool useFitX = fitX && (!fitY || spanX >= spanY);
+            const float bestSpan = useFitX ? spanX : spanY;
             const float ppemFromX = slopeX * slab->PixelsPerEm / boxW;
             const float ppemFromY = slopeY * slab->PixelsPerEm / boxH;
-            const float pixelsPerEm = (spanX >= spanY) ? ppemFromX : ppemFromY;
+            // A sliver-scale span (below kSpanReliable) is dominated by the float
+            // quantization of the decoded fractions: the fitted slope can be off
+            // by ~10 %, which then scales the whole placement. The baked ppem is
+            // the better estimate there - the drawn size differs from the bake
+            // size only by ImGui's integer rounding of the bake size (<= ~1.5 %,
+            // ImGui::GetRoundedFontSize), and the single-sample pen below then
+            // maps the corner exactly.
+            const float pixelsPerEm = bestSpan >= kSpanReliable ? (useFitX ? ppemFromX : ppemFromY) : slab->PixelsPerEm;
             if (!(pixelsPerEm > 0.0f) || !isfinite(pixelsPerEm))
                 return false;
 
@@ -312,11 +342,11 @@ namespace ImSlug
             const float fracAtEmXZero = -slab->X0 / boxW;
             const float fracAtEmYZero = (slab->Ascent - slab->Y0) / boxH;
             float penX, penY;
-            if (spanX >= kSpanReliable)
+            if (fitX && spanX >= kSpanReliable)
                 penX = originX + slopeX * fracAtEmXZero;
             else
                 penX = pos[0].x - ((slab->X0 + fracX[0] * boxW) / ppemBaked) * pixelsPerEm;
-            if (spanY >= kSpanReliable)
+            if (fitY && spanY >= kSpanReliable)
                 penY = originY + slopeY * fracAtEmYZero;
             else
             {

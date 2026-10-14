@@ -638,6 +638,10 @@ namespace
             g_Gpu.ValidationErrors++;
             std::printf("  [vulkan error] %s\n", data->pMessage);
         }
+        else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+        {
+            std::printf("  [vulkan warning] %s\n", data->pMessage);
+        }
         g_Gpu.ValidationMessages++;
         return VK_FALSE;
     }
