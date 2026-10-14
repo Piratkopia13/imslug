@@ -22,6 +22,7 @@
 
 #include "imslug_imgui_adapter.h"
 #include "imslug_internal.h"
+#include "imslug_packed.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1116,6 +1117,11 @@ namespace ImSlug
     bool IsRegistered(const ImFont* font)
     {
         return font != nullptr && ImSlugAdapterIsFontRegistered(font);
+    }
+
+    bool IsPackedFontData(const void* data, int dataSize)
+    {
+        return ImSlugPackedIsContainer(data, dataSize);
     }
 
     void GetStatistics(Statistics* out)

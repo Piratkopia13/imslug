@@ -21,7 +21,8 @@ option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (M2 renderer core;
 option(IMSLUG_BUILD_TESTS    "Build unit tests and enable ctest" ON)
 option(IMSLUG_BUILD_EXAMPLES "Build the example applications (M2+)" OFF)
 option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c; M6: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
-option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen, M7)" OFF)
+option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen, M7)" ON)
+option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; M7: OFF = packed .imslug assets only)" ON)
 
 set(IMSLUG_IMGUI_DIR "" CACHE PATH
     "Use an existing Dear ImGui checkout instead of fetching it (-DIMSLUG_IMGUI_DIR=...)")
@@ -137,28 +138,38 @@ endif()
 
 # ---------------------------------------------------------------------------
 # stb (vendored, third-party) — its own target so our warning settings never
-# apply to third-party code (AGENTS.md invariant 2; M1 brief).
+# apply to third-party code (AGENTS.md invariant 2; M1 brief). The no-parser
+# build (IMSLUG_TTF_PARSER=OFF, M7) excludes it entirely.
 # ---------------------------------------------------------------------------
-add_library(imslug_stb STATIC imslug_stb.cpp)
-target_include_directories(imslug_stb PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb")
-if(MSVC)
-    target_compile_options(imslug_stb PRIVATE /w)
-else()
-    target_compile_options(imslug_stb PRIVATE -w)
+if(IMSLUG_TTF_PARSER)
+    add_library(imslug_stb STATIC imslug_stb.cpp)
+    target_include_directories(imslug_stb PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb")
+    if(MSVC)
+        target_compile_options(imslug_stb PRIVATE /w)
+    else()
+        target_compile_options(imslug_stb PRIVATE -w)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # Core library (M3: includes the ImGui-facing core + adapter; the backend
 # modules stay in backends/ — AGENTS.md invariants 4 and 7)
+#
+# M7: imslug_font.cpp (font-kind dispatch + shared record builder) and
+# imslug_packed.cpp (the `.imslug` container v1 loader) are always compiled;
+# imslug_glyphgen.cpp (the stb_truetype outline path) only with the parser.
 # ---------------------------------------------------------------------------
-add_library(imslug STATIC
+set(IMSLUG_CORE_SOURCES
     imslug.cpp
     imslug.h
     imslug_c.cpp
     imslug_c.h
     imslug_internal.h
+    imslug_font.h
+    imslug_font.cpp
+    imslug_packed.h
+    imslug_packed.cpp
     imslug_glyphgen.h
-    imslug_glyphgen.cpp
     imslug_packer.h
     imslug_packer.cpp
     imslug_refraster.h
@@ -167,13 +178,23 @@ add_library(imslug STATIC
     imslug_colr.cpp
     imslug_imgui_adapter.h
     imslug_imgui_adapter.cpp)
+if(IMSLUG_TTF_PARSER)
+    list(APPEND IMSLUG_CORE_SOURCES imslug_glyphgen.cpp)
+endif()
+
+add_library(imslug STATIC ${IMSLUG_CORE_SOURCES})
 set_target_properties(imslug PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 imslug_target_defaults(imslug)
 target_include_directories(imslug PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb>"
     "$<INSTALL_INTERFACE:include>")
-target_link_libraries(imslug PRIVATE imslug_stb)
+if(IMSLUG_TTF_PARSER)
+    target_link_libraries(imslug PRIVATE imslug_stb)
+else()
+    target_compile_definitions(imslug PUBLIC IMSLUG_NO_STBTT=1)
+    message(STATUS "imslug: TTF parser disabled (IMSLUG_TTF_PARSER=OFF) - packed .imslug assets only")
+endif()
 target_link_libraries(imslug PUBLIC ${IMSLUG_IMGUI_TARGET})
 
 # ---------------------------------------------------------------------------
@@ -283,18 +304,51 @@ if(IMSLUG_BUILD_EXAMPLES)
         set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_example_glfw_vulkan)
         target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
+        # M7: the default Slug font is the TTF when the parser is built in and
+        # the committed packed asset otherwise (the no-parser demo runs entirely
+        # from baked data; the stock atlas font still uses ImGui's own parser).
+        if(IMSLUG_TTF_PARSER)
+            set(IMSLUG_EXAMPLE_FONT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf")
+        else()
+            set(IMSLUG_EXAMPLE_FONT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug")
+        endif()
         target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
-            IMSLUG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+            IMSLUG_EXAMPLE_FONT_PATH="${IMSLUG_EXAMPLE_FONT_PATH}"
+            IMSLUG_EXAMPLE_STOCK_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+            IMSLUG_PACKED_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug"
             IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
             IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
             $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
     endif()
 endif()
 
-if(IMSLUG_BUILD_TOOLS)
-    add_library(imslug_gen INTERFACE)
-    target_link_libraries(imslug_gen INTERFACE imslug)
-    message(STATUS "imslug: imslug_gen placeholder target (offline tool lands in M7)")
+# ---------------------------------------------------------------------------
+# Offline tools (M7): the `.imslug` asset writer + the imslug_gen CLI.
+# The writer consumes the same runtime core code as the renderer (font handle,
+# band construction, packer), so generated assets cannot diverge from runtime
+# generation. It needs the TTF parser; a no-parser build has no generator.
+# ---------------------------------------------------------------------------
+if(IMSLUG_TTF_PARSER)
+    # The writer is a small static library so tests (the round-trip suite) can
+    # generate assets in-process; the CLI is a thin argument/file wrapper.
+    add_library(imslug_gen_core STATIC
+        tools/imslug_gen/imslug_gen_writer.h
+        tools/imslug_gen/imslug_gen_writer.cpp)
+    set_target_properties(imslug_gen_core PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_gen_core)
+    target_link_libraries(imslug_gen_core PUBLIC imslug)
+
+    if(IMSLUG_BUILD_TOOLS)
+        add_executable(imslug_gen tools/imslug_gen/imslug_gen_main.cpp)
+        set_target_properties(imslug_gen PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        imslug_target_defaults(imslug_gen)
+        target_link_libraries(imslug_gen PRIVATE imslug_gen_core)
+        target_compile_definitions(imslug_gen PRIVATE
+            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        message(STATUS "imslug: imslug_gen offline tool enabled")
+    endif()
+else()
+    message(STATUS "imslug: imslug_gen skipped (IMSLUG_TTF_PARSER=OFF)")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -305,35 +359,39 @@ endif()
 # Linux; `imslug_c_example` in ctest; `--vulkan` in the lavapipe golden job.
 # ---------------------------------------------------------------------------
 if(IMSLUG_BUILD_C_EXAMPLE)
-    add_executable(imslug_example_c
-        example/c/main.c
-        example/c/imgui_c_shim.h
-        example/c/imgui_c_shim.cpp)
-    set_target_properties(imslug_example_c PROPERTIES
-        C_STANDARD 11
-        C_STANDARD_REQUIRED ON
-        CXX_STANDARD 17
-        CXX_STANDARD_REQUIRED ON)
-    if(MSVC)
-        target_compile_options(imslug_example_c PRIVATE /W4)
-        target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c- /permissive->)
+    if(NOT IMSLUG_TTF_PARSER)
+        message(STATUS "imslug: C example skipped (IMSLUG_TTF_PARSER=OFF; it registers a TTF font)")
     else()
-        target_compile_options(imslug_example_c PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-    endif()
-    target_link_libraries(imslug_example_c PRIVATE imslug)
-    target_compile_definitions(imslug_example_c PRIVATE
-        IMSLUG_C_EXAMPLE_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
-        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
-    if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
-        target_link_libraries(imslug_example_c PRIVATE imslug_vulkan)
-        target_compile_definitions(imslug_example_c PRIVATE IMSLUG_C_EXAMPLE_VULKAN=1)
-    endif()
-    add_test(NAME imslug_c_example COMMAND imslug_example_c)
-    if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
-        # Full offscreen frame; skips (77) without a usable Vulkan device.
-        add_test(NAME imslug_c_example_vulkan COMMAND imslug_example_c --vulkan)
-        set_tests_properties(imslug_c_example_vulkan PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(imslug_example_c
+            example/c/main.c
+            example/c/imgui_c_shim.h
+            example/c/imgui_c_shim.cpp)
+        set_target_properties(imslug_example_c PROPERTIES
+            C_STANDARD 11
+            C_STANDARD_REQUIRED ON
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON)
+        if(MSVC)
+            target_compile_options(imslug_example_c PRIVATE /W4)
+            target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c- /permissive->)
+        else()
+            target_compile_options(imslug_example_c PRIVATE -Wall -Wextra -Wpedantic)
+            target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+        endif()
+        target_link_libraries(imslug_example_c PRIVATE imslug)
+        target_compile_definitions(imslug_example_c PRIVATE
+            IMSLUG_C_EXAMPLE_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+            target_link_libraries(imslug_example_c PRIVATE imslug_vulkan)
+            target_compile_definitions(imslug_example_c PRIVATE IMSLUG_C_EXAMPLE_VULKAN=1)
+        endif()
+        add_test(NAME imslug_c_example COMMAND imslug_example_c)
+        if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+            # Full offscreen frame; skips (77) without a usable Vulkan device.
+            add_test(NAME imslug_c_example_vulkan COMMAND imslug_example_c --vulkan)
+            set_tests_properties(imslug_c_example_vulkan PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
     endif()
 endif()
 

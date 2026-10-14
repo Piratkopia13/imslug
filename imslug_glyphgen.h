@@ -19,12 +19,14 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Outline extraction (stbtt -> em-space quadratics)
     // ---------------------------------------------------------------------
+#if !defined(IMSLUG_NO_STBTT)
     // Contour order is preserved; lines become {p1,p3,p3}; both control-point
     // runs are converted; degenerate segments (all three points equal) are
     // dropped. Returns false and sets *quadCount to the required capacity when
     // the buffer is too small (never writes past quadCapacity).
     bool ImSlugExtractGlyphOutline(const stbtt_fontinfo* font, int glyphIndex, ImSlugQuad* quads, int quadCapacity,
                                    int* quadCount);
+#endif
 
     // Cubic -> two quadratics: controls at 3/4 respectively 1/4, which is the
     // standard approximation (exact endpoints, C1 junction for a uniform
@@ -33,27 +35,11 @@ namespace ImSlug
     int ImSlugConvertCubicToQuadratics(const ImSlugCubic* cubic, ImSlugQuad outQuads[2]);
 
     // ---------------------------------------------------------------------
-    // Band construction
+    // Band construction: moved to imslug_packer.h in M7 (the pure quad/band
+    // helpers must work without an outline parser). Declarations:
+    //   ImSlugCalcBandCount, ImSlugQuadControlBounds, ImSlugControlBoundsOfQuads,
+    //   ImSlugAssignBands.
     // ---------------------------------------------------------------------
-    // Band count per axis: clamp(ceil(sqrt(2 * curveCount)), 4, 32) — PLAN §4.2.
-    // The single tuning point for M4; every user of band counts calls it.
-    int ImSlugCalcBandCount(int curveCount);
-
-    ImSlugQuadBounds ImSlugQuadControlBounds(const ImSlugQuad& quad);
-
-    // Assign curves to bands (pure, deterministic; used by the builder and by
-    // unit tests).
-    //   counts: bandMaxY+1 horizontal counts then bandMaxX+1 vertical counts
-    //           (zeroed by this call);
-    //   refs:   flattened curve indices in band order; per band sorted
-    //           descending by max x (horizontal) / max y (vertical), stable;
-    //   returns false and sets *requiredRefs when refCapacity is too small.
-    // Membership rule: a curve belongs to a band when its control-point bbox,
-    // inflated by kBandOverlapEpsilon on both ends, overlaps the band's em
-    // range. Exactly axis-parallel curves are excluded from the matching-axis
-    // bands (PLAN §2.2 rules 1-3).
-    bool ImSlugAssignBands(const ImSlugQuad* quads, int quadCount, int bandMaxX, int bandMaxY, float minX, float minY,
-                           float maxX, float maxY, int* counts, int* refs, int refCapacity, int* requiredRefs);
 
     // ---------------------------------------------------------------------
     // Font
@@ -82,6 +68,19 @@ namespace ImSlug
         float PixelsPerEm;            // pixels per em at the bake size
         float ScaleForPixelHeight;    // font units -> pixels at the bake size
         float Ascent, Descent;        // pixels (ImGui parity: ceil / floor)
+    };
+
+    // M7: raw per-glyph source metrics. The packed-asset writer stores these so
+    // the loader can reproduce the TTF metrics (and the glyph boxes) at any
+    // bake size without a parser: `Box*` is the glyf box exactly as
+    // stbtt_GetGlyphBox reports it in font units (all zero when the glyph has
+    // no glyf data, which the metrics path treats as invisible), `AdvanceFu`
+    // the hmtx advance. Both font kinds implement the query (a packed font
+    // reads its stored values back).
+    struct ImSlugGlyphSourceMetrics
+    {
+        int AdvanceFu;
+        int BoxX0, BoxY0, BoxX1, BoxY1;
     };
 
     // Copies the font bytes unless copyData is false (then the caller keeps the
@@ -114,6 +113,10 @@ namespace ImSlug
     // path, so the bbox matches. Fails for glyphIndex <= 0.
     bool ImSlugGetGlyphOutlineQuads(const ImSlugFont* font, int glyphIndex, ImSlugQuad* outQuads, int quadCapacity,
                                     int* outCount);
+
+    // Raw source metrics of one glyph (M7; see ImSlugGlyphSourceMetrics).
+    // Fails for glyphIndex <= 0.
+    bool ImSlugGetGlyphSourceMetrics(const ImSlugFont* font, int glyphIndex, ImSlugGlyphSourceMetrics* outMetrics);
 
     // M3: build a glyph record from em-space quads that do not come from the
     // font (the composite ellipsis is three translated dot outlines). The pools

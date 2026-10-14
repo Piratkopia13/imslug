@@ -5,17 +5,19 @@
 // An ordinary Dear ImGui application: the stock GLFW+Vulkan backends render
 // everything, imslug renders the text of the registered fonts through Slug.
 // The scene switcher exercises the M3 acceptance scenes (demo, widgets/plots/
-// tables, clipping torture, mixed fonts, runtime FontScaleDpi) and the M4
-// stress scenes (5k glyphs, the fetched CJK subset). Vulkan validation layers
-// are enabled by default (set IMSLUG_VALIDATION=0 to disable); every message is
-// printed and the error count is reported on exit.
+// tables, clipping torture, mixed fonts, runtime FontScaleDpi), the M4 stress
+// scenes (5k glyphs, the fetched CJK subset), the M5 color-emoji scene and the
+// M7 packed-asset scene (a pre-baked .imslug container). Vulkan validation
+// layers are enabled by default (set IMSLUG_VALIDATION=0 to disable); every
+// message is printed and the error count is reported on exit.
 //
 // Usage:
 //   imslug_example_glfw_vulkan [--font <path>] [--size <px>]
 //                              [--overlay <none|bounds|grid|refs>]
 //                              [--screenshot <file.ppm> [scene] [dpi_scale]]
 // Keys:
-//   1 .. 7   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk)
+//   1 .. 9   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk /
+//            emoji / packed)
 //   + / -    base font size +-1 px (12 .. 48)
 //   F1/F2/F3 debug overlay: glyph bounds / band grid / reference-walk heat
 //   0        reset fonts/DPI to the defaults    Esc     quit
@@ -50,7 +52,21 @@ namespace
     const int kDefaultSize = 17;
     const int kMinSize = 12;
     const int kMaxSize = 48;
-    const int kSceneCount = 8;
+    const int kSceneCount = 9;
+
+    // Sniffs the first bytes of a file for the `.imslug` container magic; the
+    // stock ImGui loader cannot parse a packed asset, so the mixed-font scene
+    // falls back to the built-in TTF when the Slug font is packed.
+    bool IsPackedAssetFile(const char* path)
+    {
+        FILE* file = fopen(path, "rb");
+        if (file == nullptr)
+            return false;
+        char magic[8] = {};
+        const size_t read = fread(magic, 1, sizeof(magic), file);
+        fclose(file);
+        return read == sizeof(magic) && memcmp(magic, "IMSLUG", 6) == 0;
+    }
 
     struct App
     {
@@ -87,12 +103,14 @@ namespace
 
         // ImGui + imslug
         VkDescriptorPool ImGuiDescriptorPool;
-        ImFont* SlugFont;   // rendered by Slug
-        ImFont* StockFont;  // rendered through the atlas (mixed-font scene)
-        ImFont* CjkFont;    // fetched CJK subset (M4 stress scene; may stay null)
-        ImFont* EmojiFont;  // fetched Noto Color Emoji (M5 scene; may stay null)
+        ImFont* SlugFont;    // rendered by Slug
+        ImFont* StockFont;   // rendered through the atlas (mixed-font scene)
+        ImFont* CjkFont;     // fetched CJK subset (M4 stress scene; may stay null)
+        ImFont* EmojiFont;   // fetched Noto Color Emoji (M5 scene; may stay null)
+        ImFont* PackedFont;  // M7: pre-baked .imslug asset (packed scene; may stay null)
         bool CjkAttempted;
         bool EmojiAttempted;
+        bool PackedAttempted;
         float EmojiSize;  // M5 scene: emoji text size (12..96 px)
         float EmojiZoom;  // M5 scene: single-glyph zoom (32..220 px)
         bool ImGuiInitialized;
@@ -898,6 +916,57 @@ namespace
         ImGui::End();
     }
 
+    // M7 packed-asset scene: text rendered from a pre-baked `.imslug` container
+    // (glyph records + curve/band texels; no outline parsing). The asset is the
+    // committed test asset (tests/assets/Roboto-ASCII.imslug); the scene loads
+    // it as a second Slug font, so the shared pools and the auto-detecting
+    // loader are both exercised. In a no-parser build this is also the default
+    // font source.
+    void ScenePacked()
+    {
+        ImGui::SetNextWindowSize(ImVec2(900.0f, 560.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("packed asset (.imslug, M7)");
+        if (g_App.PackedFont == nullptr && !g_App.PackedAttempted)
+        {
+            g_App.PackedAttempted = true;
+            FILE* assetFile = fopen(IMSLUG_PACKED_TEST_ASSET, "rb");
+            if (assetFile != nullptr)
+            {
+                fclose(assetFile);
+                // The same entry point as a TTF: the loader auto-detects the
+                // container by content.
+                g_App.PackedFont = ImSlug::AddFontFromFileTTF(IMSLUG_PACKED_TEST_ASSET, 20.0f);
+            }
+        }
+        if (g_App.PackedFont == nullptr)
+        {
+            ImGui::TextWrapped("The packed test asset is missing (%s). Generate it with scripts/gen_asset.* "
+                               "(see tests/assets/PROVENANCE.txt), then restart or reselect this scene.",
+                               IMSLUG_PACKED_TEST_ASSET);
+        }
+        else
+        {
+            ImGui::TextWrapped("This text is rendered from tests/assets/Roboto-ASCII.imslug - an .imslug "
+                               "container v1 asset: glyph records, curve texels and band texels copied into the "
+                               "shared pools without any outline parsing. ImSlug::AddFontFromFileTTF "
+                               "auto-detects the format by content, so no app code changes between TTF and "
+                               "packed fonts.");
+            ImGui::Separator();
+            ImGui::PushFont(g_App.PackedFont, 20.0f);
+            ImGui::TextUnformatted("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+            ImGui::TextUnformatted("abcdefghijklmnopqrstuvwxyz");
+            ImGui::TextUnformatted("0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+            ImGui::TextUnformatted("The quick brown fox jumps over the lazy dog.");
+            ImGui::PopFont();
+            ImGui::Separator();
+            Statistics stats;
+            ImSlug::GetStatistics(&stats);
+            ImGui::Text("this frame: %u instances, %u runs, %u live slabs", stats.Instances, stats.LiveBatches,
+                        stats.GlyphSlabs);
+        }
+        ImGui::End();
+    }
+
     // M4 debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
     // Returns the new state so a caller can react (keys and checkboxes share it).
     bool ToggleDebugOverlay(uint32_t flag)
@@ -914,9 +983,11 @@ namespace
 
     void DrawSceneSwitcher()
     {
-        const char* sceneNames[kSceneCount] = { "demo window",          "widgets / plots / tables", "clipping torture",
-                                                "mixed fonts",          "runtime FontScaleDpi",     "5k glyph stress",
-                                                "CJK (fetched subset)", "color emoji (COLR v1)" };
+        const char* sceneNames[kSceneCount] = { "demo window",           "widgets / plots / tables",
+                                                "clipping torture",      "mixed fonts",
+                                                "runtime FontScaleDpi",  "5k glyph stress",
+                                                "CJK (fetched subset)",  "color emoji (COLR v1)",
+                                                "packed asset (.imslug)" };
         ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
         ImGui::Begin("imslug example " IMSLUG_VERSION, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
@@ -981,8 +1052,11 @@ namespace
         case 6:
             SceneCjk();
             break;
-        default:
+        case 7:
             SceneEmoji();
+            break;
+        default:
+            ScenePacked();
             break;
         }
     }
@@ -1014,12 +1088,16 @@ namespace
             g_App.ShouldClose = true;
             return;
         }
-        // A stock font for the mixed-font scene: the same file through ImGui's
-        // own stb loader (Oversample 1 keeps the metrics identical).
+        // A stock font for the mixed-font scene: through ImGui's own stb loader
+        // (Oversample 1 keeps the metrics identical). A packed `.imslug` asset
+        // cannot go through the stock loader, so that case falls back to the
+        // built-in TTF (and in a no-parser build the stock path is still
+        // ImGui's own parser, which imslug does not remove).
+        const char* stockPath = IsPackedAssetFile(fontPath) ? IMSLUG_EXAMPLE_STOCK_FONT : fontPath;
         ImFontConfig stockConfig;
         stockConfig.OversampleH = 1;
         stockConfig.OversampleV = 1;
-        g_App.StockFont = io.Fonts->AddFontFromFileTTF(fontPath, (float)g_App.BaseSize, &stockConfig);
+        g_App.StockFont = io.Fonts->AddFontFromFileTTF(stockPath, (float)g_App.BaseSize, &stockConfig);
         io.FontDefault = g_App.SlugFont;
         g_App.FontsDirty = false;
         printf("[imslug] fonts: Slug + atlas at %d px (font: %s)\n", g_App.BaseSize, fontPath);

@@ -33,8 +33,10 @@
 
 #include "imgui_internal.h"
 #include "imslug_internal.h"
+#include "imslug_packed.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -98,8 +100,32 @@ namespace ImSlug
             // We own our own copy of the bytes: ImGui's copy belongs to the atlas
             // and may be freed or kept referenced differently (AddFontFromMemoryTTF
             // with FontDataOwnedByAtlas = false keeps the caller's pointer).
-            ImSlugFont* font = ImSlugCreateFontFromMemory(src->FontData, src->FontDataSize, src->FontNo,
-                                                          /*copyData=*/true);
+            //
+            // M7: the font kind is auto-detected by content, not by extension:
+            // data starting with the `.imslug` magic is a packed asset and is
+            // loaded without any outline parsing; anything else goes through
+            // the stb_truetype path (when this build has one).
+            ImSlugFont* font = nullptr;
+            if (ImSlugPackedIsContainer(src->FontData, src->FontDataSize))
+            {
+                char error[256];
+                if (!ImSlugValidatePackedMemory(src->FontData, src->FontDataSize, nullptr, error, (int)sizeof(error)))
+                    fprintf(stderr, "[imslug] invalid .imslug asset: %s\n", error);
+                font = ImSlugCreateFontFromPackedMemory(src->FontData, src->FontDataSize);
+            }
+#if !defined(IMSLUG_NO_STBTT)
+            else
+            {
+                font = ImSlugCreateFontFromMemory(src->FontData, src->FontDataSize, src->FontNo, /*copyData=*/true);
+            }
+#else
+            else
+            {
+                fprintf(stderr, "[imslug] this build has no TTF parser (IMSLUG_TTF_PARSER=OFF); only packed .imslug "
+                                "assets can be loaded\n");
+                return false;
+            }
+#endif
             if (font == nullptr)
                 return false;
 

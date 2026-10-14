@@ -67,6 +67,12 @@ namespace ImSlug
     void ImSlugWriteCurve(ImSlugCurvePool* pool, int texelX, int texelY, float x1, float y1, float x2, float y2,
                           float x3, float y3);
 
+    // Copies one curve's two texels (8 halves) verbatim into the pool at
+    // (texelX, texelY); marks the touched rows dirty and updates UsedRows.
+    // Used by the packed loader (M7) so the copied pool bytes are exactly the
+    // asset's (no float round trip).
+    void ImSlugCurveWriteTexelRaw(ImSlugCurvePool* pool, int texelX, int texelY, const uint16_t source[8]);
+
     // Read texel (x, y); returns a pointer to 4 halves. Out-of-bounds is a bug
     // (IMSLUG_ASSERT); never call it for coordinates outside the pool.
     const uint16_t* ImSlugCurveTexelAt(const ImSlugCurvePool* pool, int x, int y);
@@ -136,6 +142,35 @@ namespace ImSlug
     //               diagram, confirmed against the reference PS)
     // Bits 24..27 and 29..31 are zero. Input flags are ImSlugGlyphFlags.
     uint32_t ImSlugPackBandMaxWord(int bandMaxX, int bandMaxY, uint32_t glyphFlags);
+
+    // ---------------------------------------------------------------------
+    // Band construction (pure quad helpers; moved here in M7 so the packed
+    // loader and the synthetic builder work without an outline parser)
+    // ---------------------------------------------------------------------
+    // Band count per axis: clamp(ceil(2*sqrt(curveCount)), 4, 32) — the M4
+    // default (PLAN §11 D13). The single tuning point; every user of band
+    // counts calls it.
+    int ImSlugCalcBandCount(int curveCount);
+
+    ImSlugQuadBounds ImSlugQuadControlBounds(const ImSlugQuad& quad);
+
+    // Aggregate control-point bbox of a quad run; all-zero for an empty run.
+    void ImSlugControlBoundsOfQuads(const ImSlugQuad* quads, int quadCount, float* outMinX, float* outMinY,
+                                    float* outMaxX, float* outMaxY);
+
+    // Assign curves to bands (pure, deterministic; used by the record builders
+    // and by unit tests).
+    //   counts: bandMaxY+1 horizontal counts then bandMaxX+1 vertical counts
+    //           (zeroed by this call);
+    //   refs:   flattened curve indices in band order; per band sorted
+    //           descending by max x (horizontal) / max y (vertical), stable;
+    //   returns false and sets *requiredRefs when refCapacity is too small.
+    // Membership rule: a curve belongs to a band when its control-point bbox,
+    // inflated by kBandOverlapEpsilon on both ends, overlaps the band's em
+    // range. Exactly axis-parallel curves are excluded from the matching-axis
+    // bands (PLAN §2.2 rules 1-3).
+    bool ImSlugAssignBands(const ImSlugQuad* quads, int quadCount, int bandMaxX, int bandMaxY, float minX, float minY,
+                           float maxX, float maxY, int* counts, int* refs, int refCapacity, int* requiredRefs);
 
     // ---------------------------------------------------------------------
     // M5 paint pool (color glyph layers)

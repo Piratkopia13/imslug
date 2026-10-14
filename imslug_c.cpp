@@ -11,6 +11,7 @@
 #include "imslug.h"  // canonical C++ API (defines the version macros, imgui.h)
 
 #include "imslug_c.h"
+#include "imslug_packed.h"  // M7: packed-asset validation entry points
 
 // The C mirror is ABI-pinned by tests/test_c_api.cpp; these asserts keep the
 // implementation honest even in TUs that do not build the tests.
@@ -105,6 +106,19 @@ ImFont* imslug_add_font_from_memory_ttf(const void* data, int data_size, float s
 int imslug_is_registered(const ImFont* font)
 {
     return CBool(ImSlug::IsRegistered(font));
+}
+
+// ---------------------------------------------------------------------------
+// Packed assets (M7)
+// ---------------------------------------------------------------------------
+int imslug_is_packed_font_data(const void* data, int data_size)
+{
+    return CBool(ImSlug::IsPackedFontData(data, data_size));
+}
+
+int imslug_validate_packed_font_data(const void* data, int data_size, char* error_message, int error_message_capacity)
+{
+    return CBool(ImSlug::ImSlugValidatePackedMemory(data, data_size, nullptr, error_message, error_message_capacity));
 }
 
 // ---------------------------------------------------------------------------

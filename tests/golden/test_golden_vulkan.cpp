@@ -36,11 +36,16 @@
 
 #include "imslug_impl_vulkan.h"
 #include "imslug_internal.h"
+#include "imslug_packed.h"
 
 #include <math.h>
 #include <vulkan/vulkan.h>
 
 using namespace ImSlug;
+
+#ifndef IMSLUG_PACKED_TEST_ASSET
+#define IMSLUG_PACKED_TEST_ASSET "tests/assets/Roboto-ASCII.imslug"
+#endif
 
 namespace
 {
@@ -1170,6 +1175,11 @@ int main(int argc, char** argv)
 {
     g_State.UseDynamicRendering = false;
     g_State.ValidationEnabled = EnvFlag("IMSLUG_VALIDATION", true);
+    const char* packedAssetPath = nullptr;
+#if defined(IMSLUG_NO_STBTT)
+    // No TTF parser in this build: the packed asset is the only font source.
+    packedAssetPath = IMSLUG_PACKED_TEST_ASSET;
+#endif
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--dynamic") == 0)  // or --dynamic-rendering
@@ -1178,9 +1188,12 @@ int main(int argc, char** argv)
             g_State.UseDynamicRendering = true;
         else if (std::strcmp(argv[i], "--no-validation") == 0)
             g_State.ValidationEnabled = false;
+        else if (std::strcmp(argv[i], "--packed") == 0)
+            packedAssetPath = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : IMSLUG_PACKED_TEST_ASSET;
         else
         {
-            std::printf("usage: imslug_tests_golden [--dynamic-rendering] [--no-validation]\n");
+            std::printf(
+                "usage: imslug_tests_golden [--dynamic-rendering] [--no-validation] [--packed [asset.imslug]]\n");
             return 1;
         }
     }
@@ -1197,19 +1210,38 @@ int main(int argc, char** argv)
     }
 
     int fontSize = 0;
-    unsigned char* fontData = imslug_test::LoadFontFile("Roboto-Regular.ttf", &fontSize);
-    if (fontData == nullptr)
+    unsigned char* fontData = nullptr;
+    if (packedAssetPath != nullptr)
     {
-        std::printf("imslug_golden: FAIL (test font not found)\n");
-        return 1;
+        // M7: the same golden matrix from a pre-baked `.imslug` asset (no
+        // outline parsing); in a no-parser build this is the only mode.
+        fontData = imslug_test::LoadFile(packedAssetPath, &fontSize);
+        if (fontData == nullptr)
+        {
+            std::printf("imslug_golden: FAIL (packed asset not found: %s)\n", packedAssetPath);
+            return 1;
+        }
+        g_State.Font = ImSlugCreateFontFromPackedMemory(fontData, fontSize);
     }
-    g_State.Font = ImSlugCreateFontFromMemory(fontData, fontSize, 0, true);
+#if !defined(IMSLUG_NO_STBTT)
+    else
+    {
+        fontData = imslug_test::LoadFontFile("Roboto-Regular.ttf", &fontSize);
+        if (fontData == nullptr)
+        {
+            std::printf("imslug_golden: FAIL (test font not found)\n");
+            return 1;
+        }
+        g_State.Font = ImSlugCreateFontFromMemory(fontData, fontSize, 0, true);
+    }
+#endif
     std::free(fontData);
     if (g_State.Font == nullptr)
     {
         std::printf("imslug_golden: FAIL (font load)\n");
         return 1;
     }
+    std::printf("imslug_golden: font source %s\n", packedAssetPath != nullptr ? "packed .imslug asset" : "TTF");
     ImSlugInitPools(&g_State.Pools);
 
     if (!CreateRenderObjects())

@@ -199,6 +199,12 @@ typedef uint16_t imslug_wchar;
     // are rect-less — the atlas never rasterizes or packs them, and their UVs are
     // imslug's glyph handles.
     //
+    // M7: both functions accept TTF/OTF bytes and `.imslug` packed assets; the
+    // kind is auto-detected by content (see imslug_is_packed_font_data and
+    // docs/PACKED_FORMAT.md). The function names are kept for source
+    // compatibility (additions-only policy); packed assets skip outline parsing
+    // and work in builds without the TTF parser.
+    //
     // `font_config` may be NULL (defaults); overrides that would change the baked
     // metrics (Oversample*, PixelSnapH, RasterizerDensity, GlyphOffset,
     // ExtraSizeScale, MergeMode, GlyphMinAdvanceX) are ignored with an assert.
@@ -214,6 +220,27 @@ typedef uint16_t imslug_wchar;
     // 1 when `font` has at least one Slug source (i.e. was created by
     // imslug_add_font_from_*); 0 otherwise (including NULL).
     IMSLUG_C_API int imslug_is_registered(const ImFont* font);
+
+    // ---------------------------------------------------------------------------
+    // Packed assets (M7; additions only)
+    // ---------------------------------------------------------------------------
+    // imslug_add_font_from_{file,memory}_ttf accept both TTF/OTF bytes and
+    // `.imslug` packed assets: the kind is auto-detected by content (the
+    // container magic), not by file extension. A packed asset skips outline
+    // parsing entirely and works in builds without the TTF parser
+    // (IMSLUG_TTF_PARSER=OFF). Format: docs/PACKED_FORMAT.md; generate assets
+    // with the imslug_gen CLI.
+    //
+    // 1 when `data` starts with the `.imslug` container magic; cheap content
+    // sniff, no parsing (0 for NULL/too-short input).
+    IMSLUG_C_API int imslug_is_packed_font_data(const void* data, int data_size);
+
+    // Full structural validation of a `.imslug` v1 asset. Returns 1 when the
+    // asset is valid; 0 otherwise, writing a human-readable reason (when
+    // `error_message` is non-NULL) into `error_message` truncated to
+    // `error_message_capacity` bytes. Never crashes on corrupt input.
+    IMSLUG_C_API int imslug_validate_packed_font_data(const void* data, int data_size, char* error_message,
+                                                      int error_message_capacity);
 
     // ---------------------------------------------------------------------------
     // Draw pipeline (backend-facing)

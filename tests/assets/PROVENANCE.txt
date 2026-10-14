@@ -1,0 +1,25 @@
+# tests/assets — committed generated test assets (M7)
+
+`Roboto-ASCII.imslug` is an `.imslug` container v1 baked from
+`tests/fonts/Roboto-Regular.ttf` (Apache-2.0; license text in
+`tests/fonts/Roboto-LICENSE.txt`; upstream provenance in
+`tests/fonts/PROVENANCE.txt`). It is a generated artifact: never edit it by
+hand, regenerate it with
+
+    scripts\gen_asset.bat      (Windows)
+    scripts/gen_asset.sh       (Linux / macOS)
+
+which runs
+
+    imslug_gen font tests/fonts/Roboto-Regular.ttf --size-range 8:72 \
+        --chars 0x20-0x7E -o tests/assets/Roboto-ASCII.imslug
+
+The round-trip test (`imslug_packed_roundtrip`) regenerates the asset in
+process and byte-compares it with this file; the CLI test
+(`imslug_asset_fresh`) runs the generator CLI and compares. Both fail when the
+committed asset is stale (e.g. after a generator or version change) — rerun
+the script and commit the result together with the change.
+
+Why a committed asset: the no-parser build (`IMSLUG_TTF_PARSER=OFF`) has no
+generator and no test fonts it could bake; the committed asset is what the
+packed loader, the no-parser example and the packed golden run consume.

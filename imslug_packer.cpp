@@ -9,6 +9,7 @@
 
 #include "imslug_packer.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -365,6 +366,17 @@ namespace ImSlug
         MarkDirty(&pool->DirtyRowMin, &pool->DirtyRowMax, &pool->UsedRows, texelY);
     }
 
+    void ImSlugCurveWriteTexelRaw(ImSlugCurvePool* pool, int texelX, int texelY, const uint16_t source[8])
+    {
+        IMSLUG_ASSERT(pool != NULL && pool->Texels != NULL && source != NULL);
+        IMSLUG_ASSERT(texelX >= 0 && texelX + 1 < pool->Width && texelY >= 0 && texelY < pool->Height);
+        IMSLUG_ASSERT((texelX & 1) == 0);  // the two texels of one curve share a row
+
+        uint16_t* texel = pool->Texels + ((size_t)texelY * (size_t)pool->Width + (size_t)texelX) * 4;
+        memcpy(texel, source, 8 * sizeof(uint16_t));
+        MarkDirty(&pool->DirtyRowMin, &pool->DirtyRowMax, &pool->UsedRows, texelY);
+    }
+
     const uint16_t* ImSlugCurveTexelAt(const ImSlugCurvePool* pool, int x, int y)
     {
         IMSLUG_ASSERT(pool != NULL && pool->Texels != NULL);
@@ -488,4 +500,230 @@ namespace ImSlug
         IMSLUG_ASSERT(x >= 0 && x < pool->Width && y >= 0 && y < pool->Height);
         return pool->Texels + ((size_t)y * (size_t)pool->Width + (size_t)x) * 2;
     }
+
+    // ---------------------------------------------------------------------
+    // Band construction
+    // ---------------------------------------------------------------------
+    // Moved here from imslug_glyphgen.cpp in M7: the packed loader
+    // (imslug_packed.cpp) and the synthetic record builder (imslug_font.cpp)
+    // need band assignment without an outline parser, so the pure
+    // quad/band helpers live in this always-compiled translation unit. The
+    // declarations stay in imslug_packer.h.
+    //
+    // M4 band tuning (numbers: the M4 report and the band-sweep tool,
+    // tests/bench/band_sweep.cpp; decision in PLAN §11 D13). Measured over
+    // Roboto/Inter Latin and the CJK subset, sizes 8..72 px, with a model of
+    // the pixel shader's reference walk (band index + sorted early-out):
+    //
+    //   sqrt(2n) 4..32 (M1) : 6.86 / 7.20 / 9.25 refs per pixel, 114/129/193 KB
+    //   2*sqrt(n) 4..32 (M4): 6.12 / 6.42 / 8.25 refs per pixel, 143/159/240 KB
+    //   2.5*sqrt(n)         : 5.76 / 6.03 / 7.71, 168/188/281 KB
+    //   3*sqrt(n)           : 5.51 / 5.74 / 7.38, 193/214/320 KB
+    //
+    // 2*sqrt(n) buys ~11% less fragment work (and ~15% better p99/max tails,
+    // which matters for low-end GPUs) for ~25% more band-pool memory - still
+    // far inside the PLAN §4.7 budget for a typical UI font. Further steps cost
+    // ~2x the memory for ~5% more, so they were rejected. The cap stays 32
+    // (kMaxBandCountPerAxis): the header run must fit in one pool row.
+    int ImSlugCalcBandCount(int curveCount)
+    {
+        if (curveCount <= 0)
+            return 4;  // clamp(ceil(2*sqrt(0)), 4, 32)
+        const float n = ceilf(2.0f * sqrtf((float)curveCount));
+        int count = (int)n;
+        if (count < 4)
+            count = 4;
+        if (count > kMaxBandCountPerAxis)
+            count = kMaxBandCountPerAxis;
+        return count;
+    }
+
+    ImSlugQuadBounds ImSlugQuadControlBounds(const ImSlugQuad& quad)
+    {
+        ImSlugQuadBounds bounds;
+        bounds.MinX =
+            quad.X1 < quad.X2 ? (quad.X1 < quad.X3 ? quad.X1 : quad.X3) : (quad.X2 < quad.X3 ? quad.X2 : quad.X3);
+        bounds.MinY =
+            quad.Y1 < quad.Y2 ? (quad.Y1 < quad.Y3 ? quad.Y1 : quad.Y3) : (quad.Y2 < quad.Y3 ? quad.Y2 : quad.Y3);
+        bounds.MaxX =
+            quad.X1 > quad.X2 ? (quad.X1 > quad.X3 ? quad.X1 : quad.X3) : (quad.X2 > quad.X3 ? quad.X2 : quad.X3);
+        bounds.MaxY =
+            quad.Y1 > quad.Y2 ? (quad.Y1 > quad.Y3 ? quad.Y1 : quad.Y3) : (quad.Y2 > quad.Y3 ? quad.Y2 : quad.Y3);
+        return bounds;
+    }
+
+    // Aggregate control-point bbox of a quad run; all-zero for an empty run.
+    // The single source for both the glyph record bbox and the metrics API's
+    // em-space MinX..MaxY, so the two can never drift apart.
+    void ImSlugControlBoundsOfQuads(const ImSlugQuad* quads, int quadCount, float* outMinX, float* outMinY,
+                                    float* outMaxX, float* outMaxY)
+    {
+        float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+        if (quadCount > 0)
+        {
+            ImSlugQuadBounds bounds = ImSlugQuadControlBounds(quads[0]);
+            minX = bounds.MinX;
+            minY = bounds.MinY;
+            maxX = bounds.MaxX;
+            maxY = bounds.MaxY;
+            for (int i = 1; i < quadCount; ++i)
+            {
+                bounds = ImSlugQuadControlBounds(quads[i]);
+                if (bounds.MinX < minX)
+                    minX = bounds.MinX;
+                if (bounds.MinY < minY)
+                    minY = bounds.MinY;
+                if (bounds.MaxX > maxX)
+                    maxX = bounds.MaxX;
+                if (bounds.MaxY > maxY)
+                    maxY = bounds.MaxY;
+            }
+        }
+        *outMinX = minX;
+        *outMinY = minY;
+        *outMaxX = maxX;
+        *outMaxY = maxY;
+    }
+
+    // Exactly axis-parallel curves can never cross a ray of the matching axis
+    // (PLAN §2.2 rule 2); they are excluded from those bands.
+    static bool IsHorizontalCurve(const ImSlugQuad& quad)
+    {
+        return quad.Y1 == quad.Y2 && quad.Y2 == quad.Y3;
+    }
+
+    static bool IsVerticalCurve(const ImSlugQuad& quad)
+    {
+        return quad.X1 == quad.X2 && quad.X2 == quad.X3;
+    }
+
+    // Stable insertion sort, descending by key (deterministic — equal keys
+    // keep their curve-index order).
+    static void SortBandRefsDescending(int* refs, int count, const ImSlugQuad* quads, bool horizontal)
+    {
+        for (int i = 1; i < count; ++i)
+        {
+            const int item = refs[i];
+            const ImSlugQuadBounds bounds = ImSlugQuadControlBounds(quads[item]);
+            const float key = horizontal ? bounds.MaxX : bounds.MaxY;
+            int j = i - 1;
+            while (j >= 0)
+            {
+                const ImSlugQuadBounds previous = ImSlugQuadControlBounds(quads[refs[j]]);
+                const float previousKey = horizontal ? previous.MaxX : previous.MaxY;
+                if (previousKey >= key)
+                    break;
+                refs[j + 1] = refs[j];
+                j--;
+            }
+            refs[j + 1] = item;
+        }
+    }
+
+    bool ImSlugAssignBands(const ImSlugQuad* quads, int quadCount, int bandMaxX, int bandMaxY, float minX, float minY,
+                           float maxX, float maxY, int* counts, int* refs, int refCapacity, int* requiredRefs)
+    {
+        IMSLUG_ASSERT(quads != nullptr || quadCount == 0);
+        IMSLUG_ASSERT(counts != nullptr && requiredRefs != nullptr);
+        IMSLUG_ASSERT(refs != nullptr || refCapacity <= 0);
+        IMSLUG_ASSERT(bandMaxX >= 0 && bandMaxX < kMaxBandCountPerAxis);
+        IMSLUG_ASSERT(bandMaxY >= 0 && bandMaxY < kMaxBandCountPerAxis);
+
+        const int hBandCount = bandMaxY + 1;  // horizontal slices, indexed by y
+        const int vBandCount = bandMaxX + 1;  // vertical slices, indexed by x
+        const int totalBands = hBandCount + vBandCount;
+        *requiredRefs = 0;
+
+        memset(counts, 0, (size_t)totalBands * sizeof(int));
+        if (quadCount <= 0)
+            return true;
+
+        const float extentX = maxX - minX;
+        const float extentY = maxY - minY;
+        const float epsilon = kBandOverlapEpsilon;
+
+        // Pass 1: counts. A curve joins a band when its control-point bbox
+        // (inflated by epsilon) overlaps the band's em range.
+        for (int i = 0; i < quadCount; ++i)
+        {
+            const ImSlugQuad& quad = quads[i];
+            const ImSlugQuadBounds bounds = ImSlugQuadControlBounds(quad);
+
+            if (!IsHorizontalCurve(quad) && extentY > 0.0f)
+            {
+                for (int band = 0; band < hBandCount; ++band)
+                {
+                    const float bandY0 = minY + extentY * (float)band / (float)hBandCount;
+                    const float bandY1 = minY + extentY * (float)(band + 1) / (float)hBandCount;
+                    if (bounds.MinY - epsilon <= bandY1 && bounds.MaxY + epsilon >= bandY0)
+                        counts[band]++;
+                }
+            }
+
+            if (!IsVerticalCurve(quad) && extentX > 0.0f)
+            {
+                for (int band = 0; band < vBandCount; ++band)
+                {
+                    const float bandX0 = minX + extentX * (float)band / (float)vBandCount;
+                    const float bandX1 = minX + extentX * (float)(band + 1) / (float)vBandCount;
+                    if (bounds.MinX - epsilon <= bandX1 && bounds.MaxX + epsilon >= bandX0)
+                        counts[hBandCount + band]++;
+                }
+            }
+        }
+
+        int total = 0;
+        for (int band = 0; band < totalBands; ++band)
+            total += counts[band];
+        *requiredRefs = total;
+        if (total > refCapacity)
+            return false;
+
+        // Pass 2: fill each band in curve-index order (stable input order for
+        // the sort below), then sort.
+        int cursors[2 * kMaxBandCountPerAxis];
+        int running = 0;
+        for (int band = 0; band < totalBands; ++band)
+        {
+            cursors[band] = running;
+            running += counts[band];
+        }
+
+        for (int i = 0; i < quadCount; ++i)
+        {
+            const ImSlugQuad& quad = quads[i];
+            const ImSlugQuadBounds bounds = ImSlugQuadControlBounds(quad);
+
+            if (!IsHorizontalCurve(quad) && extentY > 0.0f)
+            {
+                for (int band = 0; band < hBandCount; ++band)
+                {
+                    const float bandY0 = minY + extentY * (float)band / (float)hBandCount;
+                    const float bandY1 = minY + extentY * (float)(band + 1) / (float)hBandCount;
+                    if (bounds.MinY - epsilon <= bandY1 && bounds.MaxY + epsilon >= bandY0)
+                        refs[cursors[band]++] = i;
+                }
+            }
+
+            if (!IsVerticalCurve(quad) && extentX > 0.0f)
+            {
+                for (int band = 0; band < vBandCount; ++band)
+                {
+                    const float bandX0 = minX + extentX * (float)band / (float)vBandCount;
+                    const float bandX1 = minX + extentX * (float)(band + 1) / (float)vBandCount;
+                    if (bounds.MinX - epsilon <= bandX1 && bounds.MaxX + epsilon >= bandX0)
+                        refs[cursors[hBandCount + band]++] = i;
+                }
+            }
+        }
+
+        for (int band = 0; band < totalBands; ++band)
+        {
+            const int start = (band == 0) ? 0 : cursors[band - 1];
+            SortBandRefsDescending(refs + start, counts[band], quads, band < hBandCount);
+        }
+
+        return true;
+    }
+
 }  // namespace ImSlug

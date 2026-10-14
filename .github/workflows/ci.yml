@@ -8,6 +8,10 @@
 # (CPU smoke in every job; the headless Vulkan frame in the lavapipe job -
 # the Windows runner image has no Vulkan SDK, so the Vulkan part of the C
 # example is only compile-tested on Linux).
+# M7 adds: the offline generator + packed `.imslug` suites in every job
+# (imslug_packed_loader, imslug_packed_roundtrip, imslug_asset_fresh,
+# imslug_golden_packed*) and a dedicated no-parser job
+# (IMSLUG_TTF_PARSER=OFF) proving the packed path without stb_truetype.
 
 name: CI
 
@@ -92,6 +96,40 @@ jobs:
         run: ./scripts/golden.sh
       - name: C example - headless Vulkan frame through the C API (M6)
         run: ./build/imslug_example_c --vulkan --screenshot build/golden/c_example.ppm
+
+  # M7: the no-parser configuration (IMSLUG_TTF_PARSER=OFF) proves the packed
+  # `.imslug` path without any stb_truetype in the build: the packed loader
+  # suite, the packed goldens (lavapipe, headless) and the example binary
+  # (built without the parser, default font = the committed baked asset) run
+  # from generated data only. Rendering from the asset is compared GPU-vs-CPU
+  # by imslug_golden_packed; the example's window needs a display, so CI runs
+  # its --help path (the manual screenshot evidence is in the M7 report).
+  no-parser:
+    name: No-parser build (packed .imslug assets only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Vulkan (loader + lavapipe for the packed goldens)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri \
+            libglfw3-dev xorg-dev
+      - name: Build (no TTF parser; example on)
+        env:
+          IMSLUG_BUILD_DIR: build-noparser
+          IMSLUG_CMAKE_DEFINES: "-DIMSLUG_TTF_PARSER=OFF -DIMSLUG_BUILD_EXAMPLES=ON -DIMSLUG_BUILD_TOOLS=OFF"
+        run: ./scripts/build.sh
+      - name: Test (packed loader + packed goldens; parser-dependent suites excluded)
+        env:
+          IMSLUG_BUILD_DIR: build-noparser
+          IMSLUG_CMAKE_DEFINES: "-DIMSLUG_TTF_PARSER=OFF -DIMSLUG_BUILD_EXAMPLES=ON -DIMSLUG_BUILD_TOOLS=OFF"
+        run: ./scripts/test.sh
+      - name: Example runs without a parser
+        run: ./build-noparser/imslug_example_glfw_vulkan --help
 
   # M4: the benchmark harness report is a build artifact (numbers are
   # informational; no budgets are enforced in CI - runner hardware is too

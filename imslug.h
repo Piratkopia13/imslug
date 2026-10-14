@@ -130,6 +130,15 @@ namespace ImSlug
     // glyphs are rect-less — the atlas never rasterizes or packs them, and
     // their UVs are imslug's glyph handles.
     //
+    // M7: the font kind is auto-detected by content. Bytes starting with the
+    // `.imslug` magic (see docs/PACKED_FORMAT.md) are a pre-baked packed asset
+    // and load without any outline parsing — the path for deployments built
+    // without the runtime TTF parser (IMSLUG_TTF_PARSER=OFF) and for faster
+    // startup. Everything else is parsed as TTF/OTF by stb_truetype (when the
+    // parser is built in). The `sizePixels` argument is the bake size either
+    // way: packed metrics are computed from the stored font metrics, so any
+    // size works and layout matches the source font.
+    //
     // Ownership: the font bytes are read/copied by Dear ImGui (atlas owned) and
     // independently copied by imslug for outline extraction; both copies live
     // for the atlas' lifetime and are released with the atlas / Shutdown.
@@ -144,6 +153,11 @@ namespace ImSlug
     IMSLUG_API ImFont* AddFontFromMemoryTTF(const void* data, int dataSize, float sizePixels,
                                             const ImFontConfig* fontConfig = nullptr,
                                             const ImWchar* glyphRanges = nullptr);
+
+    // True when `data` starts with the `.imslug` container magic (a packed
+    // asset accepted by AddFontFromFileTTF/AddFontFromMemoryTTF). Cheap
+    // content sniff, no parsing; useful for choosing a stock fallback font.
+    IMSLUG_API bool IsPackedFontData(const void* data, int dataSize);
 
     // True when `font` has at least one Slug source (i.e. was created by
     // AddFontFrom* above).

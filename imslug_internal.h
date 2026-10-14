@@ -56,8 +56,12 @@
 
 // stb_truetype.h is vendored unmodified under third_party/stb/ (see its
 // PROVENANCE.txt). The implementation is compiled in imslug_stb.cpp, in a
-// separate target with third-party warning settings.
+// separate target with third-party warning settings. The no-parser build
+// (IMSLUG_NO_STBTT, M7) excludes both the header and the implementation: the
+// core then only loads packed `.imslug` assets.
+#if !defined(IMSLUG_NO_STBTT)
 #include "stb_truetype.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
