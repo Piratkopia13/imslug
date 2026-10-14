@@ -1158,6 +1158,85 @@ namespace
         std::printf("  [colr] IMSLUG_EMOJI_TEST_FONT not defined - skipping\n");
 #endif
     }
+    // ---------------------------------------------------------------------
+    // Local-only structural check: Segoe UI Emoji (a system font, never
+    // fetched/committed). It is a structurally different COLR v1 font: real
+    // base-glyf outlines, rotations/skews in the transform chain, and
+    // constant-mask src_in composites. Skipped when the file is absent (CI).
+    // ---------------------------------------------------------------------
+    void TestSegoeLocal()
+    {
+#ifdef IMSLUG_SEGOE_FONT
+        int size = 0;
+        unsigned char* data = imslug_test::LoadFile(IMSLUG_SEGOE_FONT, &size);
+        if (data == nullptr)
+        {
+            std::printf("  [colr] Segoe UI Emoji not present - skipping (local manual check)\n");
+            return;
+        }
+        ImSlugFont* font = ImSlugCreateFontFromMemory(data, size, 0, true);
+        std::free(data);
+        TEST_CHECK(font != nullptr);
+        if (font == nullptr)
+            return;
+        ImSlugColorFont* colorFont = ImSlugFontGetColor(font);
+        TEST_CHECK(colorFont != nullptr);
+        if (colorFont != nullptr)
+        {
+            ImSlugColorFontStats stats = {};
+            ImSlugColorFontGetStats(colorFont, &stats);
+            TEST_CHECK(stats.HasColrV1 == 1);
+
+            ImSlugPools pools;
+            ImSlugInitPools(&pools);
+            int gradients = 0;
+            int solids = 0;
+            int totalLayers = 0;
+            int checked = 0;
+            // A spread of BMP emoji the system font covers.
+            const unsigned int codepoints[] = { 0x2764, 0x2600, 0x26BD, 0x2B50, 0x2708 };
+            for (unsigned int codepoint : codepoints)
+            {
+                const int glyphIndex = ImSlugGetGlyphIndex(font, codepoint);
+                if (glyphIndex <= 0 || !ImSlugColorFontHasGlyph(colorFont, glyphIndex))
+                    continue;
+                const ImSlugColorGlyph* colorGlyph = nullptr;
+                if (ImSlugGetColorGlyph(font, &pools, glyphIndex, &colorGlyph) != ImSlugBuildStatus_Ok ||
+                    colorGlyph == nullptr)
+                    continue;
+                ++checked;
+                totalLayers += colorGlyph->LayerCount;
+                TEST_CHECK(colorGlyph->MinX < colorGlyph->MaxX && colorGlyph->MinY < colorGlyph->MaxY);
+                for (int i = 0; i < colorGlyph->LayerCount; ++i)
+                {
+                    const ImSlugColorLayer& layer = colorGlyph->Layers[i];
+                    TEST_CHECK(layer.Record != nullptr && layer.Record->CurveCount > 0);
+                    const ImSlugPaintRecord* paint = ImSlugPaintRecordAt(&pools.Paints, (int)layer.PaintIndex);
+                    TEST_CHECK(paint != nullptr);
+                    if (paint == nullptr)
+                        continue;
+                    if (paint->Type == ImSlugColorPaintType_Solid)
+                        ++solids;
+                    else
+                        ++gradients;
+                    TEST_CHECK(paint->StopCount >= 1 && paint->StopCount <= (uint32_t)kMaxColorStops);
+                    float rgba[4];
+                    ImSlugSamplePaintRecord(paint, 0.5f * (layer.Record->MinX + layer.Record->MaxX),
+                                            0.5f * (layer.Record->MinY + layer.Record->MaxY), rgba);
+                    TEST_CHECK(rgba[3] >= 0.0f && rgba[3] <= 1.0f);
+                }
+            }
+            TEST_CHECKF(checked >= 3, "only %d Segoe emoji resolved", checked);
+            TEST_CHECK(gradients > 0);
+            std::printf("  [colr] Segoe UI Emoji (local): %d glyphs, %d layers (%d gradients, %d solids)\n", checked,
+                        totalLayers, gradients, solids);
+            ImSlugDestroyPools(&pools);
+        }
+        ImSlugDestroyFont(font);
+#else
+        std::printf("  [colr] IMSLUG_SEGOE_FONT not defined - skipping the local Segoe check\n");
+#endif
+    }
 }  // namespace
 
 int main()
@@ -1170,5 +1249,6 @@ int main()
     TestSyntheticV1();
     TestMalformedTables();
     TestRealFont();
+    TestSegoeLocal();
     return imslug_test::Finish("imslug_colr");
 }

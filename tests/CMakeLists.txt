@@ -52,6 +52,9 @@ imslug_target_defaults(imslug_tests_colr)
 target_compile_definitions(imslug_tests_colr PRIVATE
     IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
     IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/emoji/NotoColorEmoji-Regular.ttf"
+    # Local manual check only: a system COLR v1 font (never fetched/committed);
+    # the check skips when the file is absent.
+    IMSLUG_SEGOE_FONT="C:/Windows/Fonts/seguiemj.ttf"
     $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 add_test(NAME imslug_colr COMMAND imslug_tests_colr)
 # ---------------------------------------------------------------------------
