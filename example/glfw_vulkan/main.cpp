@@ -919,7 +919,7 @@ namespace
                                                 "CJK (fetched subset)", "color emoji (COLR v1)" };
         ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
-        ImGui::Begin("imslug M5 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Begin("imslug example " IMSLUG_VERSION, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("Scene (keys 1-%d):", kSceneCount);
         for (int i = 0; i < kSceneCount; ++i)
             if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)))

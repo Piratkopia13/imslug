@@ -1148,20 +1148,56 @@ namespace ImSlug
                                                  ImGuiRenderIO_DrawBatch };
     }  // namespace
 
+    namespace
+    {
+        // Shared by ImSlug_ImplVulkan_Init and
+        // ImSlug_ImplVulkan_InitFromVulkanInfo: initializes the M2 core from
+        // the Vulkan objects and registers the render interface. Instance-ring
+        // and MSAA precedence is documented in imslug_impl_vulkan.h.
+        bool ImSlugImplVulkanInitFromInfo(const ImSlugVulkanInitInfo* vulkanInfo)
+        {
+            IMSLUG_ASSERT(vulkanInfo != nullptr);
+            if (vulkanInfo == nullptr)
+                return false;
+            if (g_ImGuiVulkan.Initialized)
+                ImSlug_ImplVulkan_Shutdown();
+
+            const Config* config = ImSlugGetConfig();
+            if (config == nullptr)
+            {
+                IMSLUG_ASSERT(false && "imslug: call ImSlug::Init() before ImSlug_ImplVulkan_Init()");
+                return false;
+            }
+
+            ImSlugVulkanInitInfo info = *vulkanInfo;
+            if (info.MSAASamples == 0)
+                info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            if (info.MaxInstancesPerFrame == 0)
+                info.MaxInstancesPerFrame = config->MaxInstancesPerFrame;
+
+            if (!ImSlugVulkanInit(&info))
+                return false;
+
+            g_ImGuiVulkan = ImGuiVulkanState();
+            g_ImGuiVulkan.Initialized = true;
+            g_ImGuiVulkan.UploadFrameCount = -1;
+            g_ImGuiVulkan.DynamicRendering = info.UseDynamicRendering;
+            g_ImGuiVulkan.RenderPass = info.RenderPass;
+            g_ImGuiVulkan.Subpass = info.Subpass;
+            // Config::DebugDrawBounds seeds the glyph-bounds overlay (the runtime
+            // toggle stays available for the band views).
+            g_ImGuiVulkan.DebugOverlay = config->DebugDrawBounds ? (uint32_t)ImSlugVulkanDebugOverlay_GlyphBounds
+                                                                 : (uint32_t)ImSlugVulkanDebugOverlay_None;
+            ImSlugSetRenderIO(&g_ImGuiRenderIO);
+            return true;
+        }
+    }  // namespace
+
     bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo* initInfo)
     {
         IMSLUG_ASSERT(initInfo != nullptr);
         if (initInfo == nullptr)
             return false;
-        if (g_ImGuiVulkan.Initialized)
-            ImSlug_ImplVulkan_Shutdown();
-
-        const Config* config = ImSlugGetConfig();
-        if (config == nullptr)
-        {
-            IMSLUG_ASSERT(false && "imslug: call ImSlug::Init() before ImSlug_ImplVulkan_Init()");
-            return false;
-        }
 
         ImSlugVulkanInitInfo vulkanInfo = {};
         vulkanInfo.PhysicalDevice = initInfo->PhysicalDevice;
@@ -1181,23 +1217,12 @@ namespace ImSlug
                                                  VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR)
             vulkanInfo.PipelineRenderingCreateInfo = initInfo->PipelineInfoMain.PipelineRenderingCreateInfo;
 #endif
-        vulkanInfo.MaxInstancesPerFrame = config->MaxInstancesPerFrame;
+        return ImSlugImplVulkanInitFromInfo(&vulkanInfo);
+    }
 
-        if (!ImSlugVulkanInit(&vulkanInfo))
-            return false;
-
-        g_ImGuiVulkan = ImGuiVulkanState();
-        g_ImGuiVulkan.Initialized = true;
-        g_ImGuiVulkan.UploadFrameCount = -1;
-        g_ImGuiVulkan.DynamicRendering = initInfo->UseDynamicRendering;
-        g_ImGuiVulkan.RenderPass = initInfo->PipelineInfoMain.RenderPass;
-        g_ImGuiVulkan.Subpass = initInfo->PipelineInfoMain.Subpass;
-        // Config::DebugDrawBounds seeds the glyph-bounds overlay (the runtime
-        // toggle stays available for the band views).
-        g_ImGuiVulkan.DebugOverlay = config->DebugDrawBounds ? (uint32_t)ImSlugVulkanDebugOverlay_GlyphBounds
-                                                             : (uint32_t)ImSlugVulkanDebugOverlay_None;
-        ImSlugSetRenderIO(&g_ImGuiRenderIO);
-        return true;
+    bool ImSlug_ImplVulkan_InitFromVulkanInfo(const ImSlugVulkanInitInfo* initInfo)
+    {
+        return ImSlugImplVulkanInitFromInfo(initInfo);
     }
 
     void ImSlug_ImplVulkan_Shutdown()

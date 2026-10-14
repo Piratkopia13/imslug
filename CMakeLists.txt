@@ -12,7 +12,7 @@ cmake_minimum_required(VERSION 3.21)
 project(imslug
     VERSION 0.1.0
     DESCRIPTION "Slug-based GPU text rendering for Dear ImGui"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
 # Options
@@ -20,6 +20,7 @@ project(imslug
 option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (M2 renderer core; reused by the M3 ImGui adapter)" ON)
 option(IMSLUG_BUILD_TESTS    "Build unit tests and enable ctest" ON)
 option(IMSLUG_BUILD_EXAMPLES "Build the example applications (M2+)" OFF)
+option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c; M6: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
 option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen, M7)" OFF)
 
 set(IMSLUG_IMGUI_DIR "" CACHE PATH
@@ -153,6 +154,8 @@ endif()
 add_library(imslug STATIC
     imslug.cpp
     imslug.h
+    imslug_c.cpp
+    imslug_c.h
     imslug_internal.h
     imslug_glyphgen.h
     imslug_glyphgen.cpp
@@ -209,11 +212,13 @@ if(IMSLUG_BACKEND_VULKAN)
             target_compile_options(imslug_imgui_vulkan_backend PRIVATE -w)
         endif()
 
-        # Standalone Vulkan rendering core (M2) + ImGui adapter (M3): reused by
-        # the examples, the golden harness and the integration tests.
+        # Standalone Vulkan rendering core (M2) + ImGui adapter (M3) + the C
+        # Vulkan mirror (M6): reused by the examples, the golden harness and
+        # the integration tests.
         add_library(imslug_vulkan STATIC
             backends/imslug_impl_vulkan.cpp
-            backends/imslug_impl_vulkan.h)
+            backends/imslug_impl_vulkan.h
+            backends/imslug_c_vulkan.cpp)
         set_target_properties(imslug_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_vulkan)
         target_include_directories(imslug_vulkan PUBLIC
@@ -290,6 +295,46 @@ if(IMSLUG_BUILD_TOOLS)
     add_library(imslug_gen INTERFACE)
     target_link_libraries(imslug_gen INTERFACE imslug)
     message(STATUS "imslug: imslug_gen placeholder target (offline tool lands in M7)")
+endif()
+
+# ---------------------------------------------------------------------------
+# C example (M6): a pure-C11 consumer of imslug_c.h. The CPU smoke (context,
+# init, add font, one headless frame, shutdown) builds and runs everywhere;
+# when Vulkan is available the headless offscreen frame is compiled in too
+# (`--vulkan`, exit 77 without a device). CI: the default build on Windows +
+# Linux; `imslug_c_example` in ctest; `--vulkan` in the lavapipe golden job.
+# ---------------------------------------------------------------------------
+if(IMSLUG_BUILD_C_EXAMPLE)
+    add_executable(imslug_example_c
+        example/c/main.c
+        example/c/imgui_c_shim.h
+        example/c/imgui_c_shim.cpp)
+    set_target_properties(imslug_example_c PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON)
+    if(MSVC)
+        target_compile_options(imslug_example_c PRIVATE /W4)
+        target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c- /permissive->)
+    else()
+        target_compile_options(imslug_example_c PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(imslug_example_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+    target_link_libraries(imslug_example_c PRIVATE imslug)
+    target_compile_definitions(imslug_example_c PRIVATE
+        IMSLUG_C_EXAMPLE_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+    if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+        target_link_libraries(imslug_example_c PRIVATE imslug_vulkan)
+        target_compile_definitions(imslug_example_c PRIVATE IMSLUG_C_EXAMPLE_VULKAN=1)
+    endif()
+    add_test(NAME imslug_c_example COMMAND imslug_example_c)
+    if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+        # Full offscreen frame; skips (77) without a usable Vulkan device.
+        add_test(NAME imslug_c_example_vulkan COMMAND imslug_example_c --vulkan)
+        set_tests_properties(imslug_c_example_vulkan PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

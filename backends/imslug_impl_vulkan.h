@@ -195,6 +195,19 @@ namespace ImSlug
     // and a renderer with ImGuiBackendFlags_RendererHasTextures.
     IMSLUG_API bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo* initInfo);
 
+    // Same as ImSlug_ImplVulkan_Init, but takes the Vulkan objects directly
+    // (ImSlugVulkanInitInfo) instead of an ImGui_ImplVulkan_InitInfo. This is
+    // the C API's init path (imslug_c.h: imslug_impl_vulkan_init) and the hook
+    // for integrations that never hold an ImGui_ImplVulkan_InitInfo (custom /
+    // non-C++ renderers). Precedence for the instance ring: a nonzero
+    // ImSlugVulkanInitInfo::MaxInstancesPerFrame wins over
+    // Config::MaxInstancesPerFrame; 0 falls back to the config value (and 0
+    // there selects the backend default, 16384). A zero MSAASamples selects
+    // VK_SAMPLE_COUNT_1_BIT. Everything else behaves exactly like
+    // ImSlug_ImplVulkan_Init (render IO registration, debug-overlay seeding
+    // from Config::DebugDrawBounds, shutdown of a previous module).
+    IMSLUG_API bool ImSlug_ImplVulkan_InitFromVulkanInfo(const ImSlugVulkanInitInfo* initInfo);
+
     // Unregisters the render interface and shuts the M2 core down (waits for
     // the device). ImSlug::Shutdown() is separate and owned by the app.
     IMSLUG_API void ImSlug_ImplVulkan_Shutdown();

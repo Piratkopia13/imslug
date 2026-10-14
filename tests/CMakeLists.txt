@@ -23,6 +23,36 @@ imslug_target_defaults(imslug_header_cxx11)
 add_test(NAME imslug_header_cxx11 COMMAND imslug_header_cxx11)
 
 # ---------------------------------------------------------------------------
+# M6: C API. The ABI gate is a C11 translation unit compiled with strict
+# warnings (the header must be C11-clean and the struct layouts must match
+# tests/test_c_api.cpp); the behavioral mirror test compiles both headers in
+# one C++17 TU.
+# ---------------------------------------------------------------------------
+add_executable(imslug_tests_c_abi test_c_abi.c)
+target_link_libraries(imslug_tests_c_abi PRIVATE imslug)
+set_target_properties(imslug_tests_c_abi PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+if(MSVC)
+    target_compile_options(imslug_tests_c_abi PRIVATE /W4 /WX)
+else()
+    target_compile_options(imslug_tests_c_abi PRIVATE -Wall -Wextra -Werror)
+endif()
+if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+    # Also compile the Vulkan declarations + the default init info check.
+    target_compile_definitions(imslug_tests_c_abi PRIVATE IMSLUG_C_VULKAN)
+    target_link_libraries(imslug_tests_c_abi PRIVATE imslug_vulkan)
+endif()
+add_test(NAME imslug_c_abi COMMAND imslug_tests_c_abi)
+
+add_executable(imslug_tests_c_api test_c_api.cpp test_util.h)
+target_link_libraries(imslug_tests_c_api PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
+set_target_properties(imslug_tests_c_api PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_c_api)
+target_compile_definitions(imslug_tests_c_api PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_c_api COMMAND imslug_tests_c_api)
+
+# ---------------------------------------------------------------------------
 # CPU-only suites. Each target gets the test-font directory as a compile
 # definition so the tests do not depend on the ctest working directory.
 # ---------------------------------------------------------------------------
