@@ -359,6 +359,139 @@ namespace
     // (Defined after the Vulkan section; shared by the CPU and GPU benches.)
     void BuildTypicalUiScene(ImFont* font, float size);
 
+    // ---------------------------------------------------------------------
+    // Small-size quality (R8): unhinted Slug vs the atlas rasterizer
+    // ---------------------------------------------------------------------
+    // PLAN R8: Slug is unhinted by design; the open question M4 must answer
+    // with data is whether the optional 4x supersample below ~16 ppem (osgSlug
+    // precedent) is needed. The atlas path (stbtt bitmaps) is the production
+    // fallback, so it is the reference here: for sizes 8..32 px and four X
+    // subpixel offsets this compares (a) what the shader computes today (one
+    // Slug sample per pixel), (b) a 4x4 supersampled Slug sample (the sampling
+    // cost of the option: 16x fragments), against the stbtt bitmap. Metrics:
+    // mean |coverage - stbtt| over the glyph window, and |peak coverage delta|
+    // (a stem-contrast/blur proxy: a washed-out small stem lowers the peak).
+    struct SmallSizeAccumulator
+    {
+        double Sum1x = 0.0;   // sum |slug1x - stbtt|
+        double Sum4x = 0.0;   // sum |slug4x - stbtt|
+        double Peak1x = 0.0;  // sum |peak(slug1x) - peak(stbtt)|
+        double Peak4x = 0.0;
+        long long Samples1x = 0;
+        long long Samples4x = 0;
+        int Pixels = 0;
+        int Runs = 0;
+
+        double Mean1x() const { return Pixels > 0 ? Sum1x / (double)Pixels : 0.0; }
+        double Mean4x() const { return Pixels > 0 ? Sum4x / (double)Pixels : 0.0; }
+        double MeanPeak1x() const { return Runs > 0 ? Peak1x / (double)Runs : 0.0; }
+        double MeanPeak4x() const { return Runs > 0 ? Peak4x / (double)Runs : 0.0; }
+    };
+
+    void RunSmallSizeQuality()
+    {
+        Report("\n## Small-size quality (R8): unhinted Slug vs the atlas rasterizer\n\n");
+
+        int fontDataSize = 0;
+        unsigned char* fontData = imslug_test::LoadFontFile("Roboto-Regular.ttf", &fontDataSize);
+        ImSlugFont* font = fontData != nullptr ? ImSlugCreateFontFromMemory(fontData, fontDataSize, 0, true) : nullptr;
+        stbtt_fontinfo info = {};
+        if (fontData == nullptr || font == nullptr || !stbtt_InitFont(&info, fontData, 0))
+        {
+            Report("  skipped: test font missing or unparsable\n");
+            std::free(fontData);
+            if (font != nullptr)
+                ImSlugDestroyFont(font);
+            return;
+        }
+        const int unitsPerEm = (info.data[info.head + 18] << 8) | info.data[info.head + 19];
+        ImSlugPools pools;
+        ImSlugInitPools(&pools);
+
+        const unsigned int codepoints[6] = { 'a', 'e', 'g', 'm', 'W', '0' };
+        const float sizes[7] = { 8.0f, 10.0f, 12.0f, 14.0f, 16.0f, 24.0f, 32.0f };
+        const float offsets[4] = { 0.0f, 0.25f, 0.5f, 0.75f };
+
+        Report("| size px | mean delta 1x | mean delta 4x | peak delta 1x | peak delta 4x | px (runs) | samples 1x | "
+               "samples 4x |\n");
+        Report("|---|---|---|---|---|---|---|---|\n");
+        for (float size : sizes)
+        {
+            SmallSizeAccumulator accumulator;
+            for (unsigned int codepoint : codepoints)
+            {
+                const ImSlugGlyphRecord* record = nullptr;
+                if (ImSlugGetGlyphRecord(font, &pools, codepoint, &record) != ImSlugBuildStatus_Ok)
+                    continue;
+                const float scale = stbtt_ScaleForPixelHeight(&info, 1.0f) * size;
+                const float pixelsPerEm = scale * (float)unitsPerEm;
+                const float inverse = 1.0f / pixelsPerEm;
+                for (float offsetX : offsets)
+                {
+                    int width = 0;
+                    int height = 0;
+                    int xOffset = 0;
+                    int yOffset = 0;
+                    unsigned char* bitmap = stbtt_GetCodepointBitmapSubpixel(
+                        &info, scale, scale, offsetX, 0.0f, (int)codepoint, &width, &height, &xOffset, &yOffset);
+                    if (bitmap == nullptr || width <= 0 || height <= 0)
+                        continue;
+                    float peakStbtt = 0.0f;
+                    float peak1x = 0.0f;
+                    float peak4x = 0.0f;
+                    for (int j = 0; j < height; ++j)
+                    {
+                        for (int i = 0; i < width; ++i)
+                        {
+                            const float emX = ((float)xOffset + (float)i + 0.5f) * inverse;
+                            const float emY = -((float)yOffset + (float)j + 0.5f) * inverse;
+                            const float reference = (float)bitmap[j * width + i] / 255.0f;
+                            const float sample1x =
+                                ImSlugRasterSample(&pools, record, emX, emY, pixelsPerEm, pixelsPerEm);
+                            float sample4x = 0.0f;
+                            for (int subY = 0; subY < 4; ++subY)
+                            {
+                                for (int subX = 0; subX < 4; ++subX)
+                                {
+                                    const float subEmX =
+                                        ((float)xOffset + (float)i + ((float)subX + 0.5f) * 0.25f) * inverse;
+                                    const float subEmY =
+                                        -((float)yOffset + (float)j + ((float)subY + 0.5f) * 0.25f) * inverse;
+                                    sample4x += ImSlugRasterSample(&pools, record, subEmX, subEmY, pixelsPerEm * 4.0f,
+                                                                   pixelsPerEm * 4.0f);
+                                }
+                            }
+                            sample4x *= 1.0f / 16.0f;
+                            accumulator.Sum1x += std::fabs(sample1x - reference);
+                            accumulator.Sum4x += std::fabs(sample4x - reference);
+                            peakStbtt = reference > peakStbtt ? reference : peakStbtt;
+                            peak1x = sample1x > peak1x ? sample1x : peak1x;
+                            peak4x = sample4x > peak4x ? sample4x : peak4x;
+                            accumulator.Samples1x++;
+                            accumulator.Samples4x += 16;
+                        }
+                    }
+                    accumulator.Peak1x += std::fabs((double)peak1x - (double)peakStbtt);
+                    accumulator.Peak4x += std::fabs((double)peak4x - (double)peakStbtt);
+                    accumulator.Pixels += width * height;
+                    accumulator.Runs++;
+                    stbtt_FreeBitmap(bitmap, nullptr);
+                }
+            }
+            Report("| %.0f | %.4f | %.4f | %.4f | %.4f | %d (%d) | %lld | %lld |\n", (double)size, accumulator.Mean1x(),
+                   accumulator.Mean4x(), accumulator.MeanPeak1x(), accumulator.MeanPeak4x(), accumulator.Pixels,
+                   accumulator.Runs, accumulator.Samples1x, accumulator.Samples4x);
+        }
+        Report("\nThe atlas rasterizer is exact area coverage; Slug's single sample uses the reference estimator's\n"
+               "one-pixel ramp, so the 1x deltas measure estimator error (M1 measured the same effect against the\n"
+               "CPU rasterizer gate). The 4x column is the accuracy ceiling the supersample trade buys for 16x the\n"
+               "fragment cost; the decision (ship/skip) is recorded in docs/DESIGN.md and PLAN section 11.\n");
+
+        ImSlugDestroyPools(&pools);
+        ImSlugDestroyFont(font);
+        std::free(fontData);
+    }
+
     void RunCpuBench()
     {
         Report("\n## CPU pre-pass (no GPU)\n\n");
@@ -431,8 +564,9 @@ namespace
                    uiStats.GeometryCommands);
         }
 
-        // CJK, when the fetched subset is present (heavier per-glyph records).
-        // (Handled above via CpuBenchScene.)
+        // Small-size quality (R8): unhinted Slug vs the atlas rasterizer at
+        // 8..32 px, including the 4x-supersample accuracy ceiling.
+        RunSmallSizeQuality();
 
         ImSlugSetRenderIO(nullptr);
         ImSlug::Shutdown();
