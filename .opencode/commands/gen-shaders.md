@@ -1,18 +1,21 @@
 ---
-description: Verify the committed SPIR-V header is fresh (regenerate with the same script)
+description: Verify both committed shader headers are fresh (SPIR-V + WGSL; regenerate with the same script)
 ---
 
-Freshness check for the committed shader header just ran:
+Freshness check for both committed shader headers just ran:
 
 !`scripts/gen_shaders.bat --check`
 
 If the check failed, or you changed anything under `shaders/`:
 
-1. run `scripts/gen_shaders.bat` to regenerate `shaders/imslug_shaders_vulkan.h`;
+1. run `scripts/gen_shaders.bat` to regenerate `shaders/imslug_shaders_vulkan.h`
+   (SPIR-V, from `shaders/vulkan/`) and `shaders/imslug_shaders_webgpu.h`
+   (embedded NUL-terminated WGSL, from `shaders/wgsl/`; pure python);
 2. review the diff - a churn without a source change is a generator bug, report it;
-3. commit the header together with its shader sources (invariant 8).
+3. commit each header together with its shader sources (invariant 8).
 
-Never hand-edit the generated header (AGENTS.md invariant 1) and never commit
-generated `.spv` intermediates. If `glslangValidator` is reported missing:
-install the Vulkan SDK and set `VULKAN_SDK`, or point `GLSLANG_VALIDATOR` at the
-executable. On Linux/macOS use `scripts/gen_shaders.sh`.
+The SPIR-V half needs `glslangValidator` - install the Vulkan SDK and set
+`VULKAN_SDK`, or point `GLSLANG_VALIDATOR` at the executable. A half whose source
+directory is empty is skipped with a message. Never hand-edit either generated
+header (AGENTS.md invariant 1) and never commit generated `.spv` intermediates.
+On Linux/macOS use `scripts/gen_shaders.sh`.

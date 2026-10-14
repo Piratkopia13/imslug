@@ -1,6 +1,6 @@
 ---
 name: imslug shaders
-description: Shader sources of truth, the glslangValidator workflow, the committed SPIR-V header and its freshness check, attribution headers, and golden tests. Load when editing shaders/**, running scripts/gen_shaders.*, or porting reference shader code.
+description: Shader sources of truth (GLSL + the hand-maintained WGSL port), the glslangValidator workflow, the committed SPIR-V and embedded-WGSL headers and their freshness check, attribution headers, and golden tests. Load when editing shaders/**, running scripts/gen_shaders.*, or porting reference shader code.
 ---
 
 # imslug shaders
@@ -10,32 +10,65 @@ description: Shader sources of truth, the glslangValidator workflow, the committ
 | Path | Role |
 |---|---|
 | `shaders/vulkan/slug.vert`, `slug.frag` | Authoritative GLSL (Vulkan dialect). Compiled by `scripts/gen_shaders.*`. |
+| `shaders/wgsl/slug.vert.wgsl`, `slug.frag.wgsl` | Hand-maintained WGSL port of the GLSL (attribution header + a one-line port note); the WebGPU source of truth. Kept in lockstep - see "WGSL port (WebGPU)". |
 | `shaders/reference/slug.hlsl` | Attributed verbatim copy of Eric Lengyel's reference VS+PS plus the port mapping table (reference function ↔ GLSL function, deliberate deviations). Never compiled. |
+| `shaders/reference/wgsl-port.txt` | WGSL port notes: the GLSL → WGSL mapping table, the frozen WGSL interface and the deliberate deviations. Never compiled. |
 | `shaders/imslug_shaders_vulkan.h` | **Generated + committed** SPIR-V word arrays (`imslug_slug_vert_spv` / `imslug_slug_frag_spv` + `_len` word counts). Never edited by hand. |
+| `shaders/imslug_shaders_webgpu.h` | **Generated + committed** embedded NUL-terminated WGSL string arrays (`imslug_slug_vert_wgsl` / `imslug_slug_frag_wgsl` + `_len` byte counts, excluding the NUL). Never edited by hand. |
 
-Generated `.spv` intermediates are gitignored; only the header is committed
-together with its sources (AGENTS.md invariant 8).
+Generated `.spv` intermediates are gitignored; only the generated headers are
+committed together with their sources (AGENTS.md invariant 8).
 
 ## Regenerate / verify
 
-* Regenerate: `scripts\gen_shaders.bat` (Windows) / `scripts/gen_shaders.sh`.
-* Verify the committed bytes are fresh: add `--check` - it compiles into a temp
-  file and diffs against the committed header; it fails when that header is
+* Regenerate both headers: `scripts\gen_shaders.bat` (Windows) /
+  `scripts/gen_shaders.sh`.
+* Verify the committed bytes are fresh: add `--check` - each half builds into a
+  temp file and diffs against its committed header; it fails when a header is
   missing or stale. Fix by regenerating and committing the header **with** the
-  sources.
-* Tool resolution: `GLSLANG_VALIDATOR` env var, then `$VULKAN_SDK/Bin` (Windows)
-  / `$VULKAN_SDK/bin` (Linux), then `PATH`. A missing tool fails with an
-  actionable message.
+  sources. A half whose source directory is empty is skipped with a message.
+* Tool resolution (SPIR-V half only): `GLSLANG_VALIDATOR` env var, then
+  `$VULKAN_SDK/Bin` (Windows) / `$VULKAN_SDK/bin` (Linux), then `PATH`. A
+  missing tool fails with an actionable message.
 * Invocation used by both scripts (keep in sync):
   `glslangValidator -V --target-env vulkan1.2 -o <tmp>/<name>.<stage>.spv <src>`
 * `--target-env vulkan1.2` emits **SPIR-V 1.5**, which needs an instance/device
   apiVersion of at least 1.2 in the consuming app (Vulkan 1.1 alone rejects it:
   `VUID-VkShaderModuleCreateInfo-pCode-08737`). The example and the golden
   harness use 1.2 (1.3 for dynamic rendering).
-* The emitter (`scripts/emit_shader_header.py`) writes, per module,
-  `imslug_<stem>_<stage>_spv[]` plus `..._spv_len`. Output is deterministic:
-  sorted inputs, no timestamps, LF, 8 words per line. A diff that churns without
-  a source change is a generator bug - report it, never hand-patch the header.
+* WGSL half (pure python, no external tool): `scripts/emit_shader_header.py
+  --mode wgsl --input-dir shaders/wgsl --output shaders/imslug_shaders_webgpu.h`
+  embeds every `*.wgsl` as a NUL-terminated C string array
+  (`imslug_<stem>_<stage>_wgsl` + `_len` bytes, excluding the NUL).
+* The emitter (`scripts/emit_shader_header.py`) output is deterministic in both
+  modes: sorted inputs, no timestamps/paths, LF (the SPIR-V word arrays carry
+  8 words per line). A diff that churns without a source change is a generator
+  bug - report it, never hand-patch a header.
+
+## WGSL port (WebGPU)
+
+* `shaders/wgsl/slug.vert.wgsl` / `slug.frag.wgsl` are the hand-maintained ports
+  of the authoritative GLSL; function names and comments are kept diff-readable.
+  Mapping table + the frozen WGSL interface + the deliberate deviations:
+  `shaders/reference/wgsl-port.txt`.
+* **Lockstep rule**: a change to `shaders/vulkan/slug.{vert,frag}` must be ported
+  to the WGSL in the same commit; run `scripts/gen_shaders.*` and commit
+  `shaders/imslug_shaders_webgpu.h` with the sources. The Vulkan golden remains
+  the arbiter for the shared pipeline; the browser demo validates the WGSL
+  in-browser (`scripts/web_smoke.*` - see the `imslug-webgpu-backend` skill).
+* Key deviations (all forced by WebGPU):
+  * **No push constants**: the same 80 B travel as a `var<uniform>` record bound
+    with a dynamic offset - MVP rows at 0/16/32/48, viewport at 64/68,
+    `debug_flags` at 72. Declared in both stages (the fragment shader reads only
+    the flags), mirroring the GLSL block's VERTEX|FRAGMENT range.
+  * **No samplers**: every access is `textureLoad` (`texture_2d<f32>` curve pool,
+    `texture_2d<u32>` band pool) - exactly what `texelFetch` did.
+  * **Explicit conversions everywhere** (`f32()`/`i32()`/`u32()` constructors;
+    `select(y, x, cond)` for `?:`, but an if/else when an arm calls
+    `SamplePaint`; `bitcast<u32>` for `floatBitsToUint`; `atan2` for `atan`).
+  * The vertex entry point returns one struct (`@builtin(position)` + the
+    varyings); the fragment entry point takes the matching input struct and
+    returns `@location(0)`.
 
 ## Attribution rules (hard requirement)
 
