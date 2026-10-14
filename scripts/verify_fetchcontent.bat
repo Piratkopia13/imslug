@@ -46,7 +46,7 @@ if defined VSINSTALL set "VS_CMAKE=%VSINSTALL%\Common7\IDE\CommonExtensions\Micr
 if defined VS_CMAKE if not exist "%VS_CMAKE%" set "VS_CMAKE="
 if not defined CMAKE_EXE if defined VS_CMAKE set "CMAKE_EXE=%VS_CMAKE%"
 if not defined CMAKE_EXE (
-    echo [fetchcontent] ERROR: cmake not found (PATH, IMSLUG_CMAKE, or Visual Studio).>&2
+    echo [fetchcontent] ERROR: cmake not found - put it on PATH, set IMSLUG_CMAKE, or install the VS C++ CMake tools.>&2
     popd & exit /b 1
 )
 
