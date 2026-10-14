@@ -27,8 +27,11 @@
 // Keys:
 //   1 .. 9   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk /
 //            emoji / packed)
-//   P        select the heavy demo / perf scene (scene 10)
-//   M        text renderer: Slug outlines <-> ImGui dynamic fonts (atlas)
+//   N        select the node editor scene (scene 10; pan/zoom text stress)
+//   P        select the heavy demo / perf scene (scene 11)
+//   M        text renderer: Slug outlines <-> ImGui dynamic fonts (atlas);
+//            same toggle as the prominent top-center renderer bar (atlas mode
+//            shows an explanation instead of the Slug-only samples)
 //   + / -    base font size +-1 px (12 .. 48)
 //   F1/F2/F3 debug overlay: glyph bounds / band grid / reference-walk heat
 //   0        reset fonts/DPI to the defaults    Esc     quit
@@ -1116,7 +1119,7 @@ namespace
                        "                                  [--overlay <none|bounds|grid|refs>]\n"
                        "                                  [--screenshot <file.ppm> [scene] [dpi_scale]]\n"
                        "font: --font <ttf|imslug> or IMSLUG_EXAMPLE_FONT; default: fonts embedded in this binary\n"
-                       "keys: 1-9 + P scenes, M renderer (Slug/atlas), +/- base size, 0 reset; F1/F2/F3 overlays\n",
+                       "keys: 1-9 + N/P scenes, M renderer (Slug/atlas), +/- base size, 0 reset; F1/F2/F3 overlays\n",
                        kExampleSceneCount);
                 exit(0);
             }

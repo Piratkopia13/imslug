@@ -52,7 +52,10 @@ The C API is compiled into the `imslug` library; the Vulkan C entry points into
   `IMSLUG_WCHAR32` for the C header when your binding does not surface
   `IMGUI_USE_WCHAR32`). Non-BMP codepoints (e.g. color emoji) require the
   32-bit configuration in the whole build — a 16-bit `ImWchar` cannot address
-  them.
+  them. This project's own builds define it by default (`IMSLUG_WCHAR32=ON`,
+  public on the Dear ImGui target), so a C consumer that links `imslug` gets a
+  32-bit `imslug_wchar`; match that macro in bindings that compile the C header
+  separately.
 * **Vulkan declarations are conditional**: include `<vulkan/vulkan.h>` before
   `imslug_c.h`, or define `IMSLUG_C_VULKAN` to have the header include it. The
   core declarations are always visible, so the header stays dependency-free

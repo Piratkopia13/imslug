@@ -82,8 +82,9 @@ scripts/build.sh -DIMSLUG_BUILD_EXAMPLES=ON
 The option is cached in the build directory, so later builds only need
 `scripts\build.bat` (`--target imslug_example_glfw_vulkan` builds just the
 example). Run `build\imslug_example_glfw_vulkan.exe` (`build/Release/...`
-with the Visual Studio generator). Keys 1–9 (plus `P` for the heavy demo)
-switch scenes, `M` swaps Slug and ImGui's atlas renderer for the body text,
+with the Visual Studio generator). Keys 1–9 (plus `N` for the node editor and
+`P` for the heavy demo) switch scenes, `M` swaps Slug and ImGui's atlas renderer
+for the body text,
 `+`/`-` change the base font size, F1/F2/F3 toggle the debug overlays, Esc
 quits; `--help` lists the command line, including
 `--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
@@ -103,8 +104,9 @@ project builds; a caller-provided `glfw`/imgui target must also use `/MT`.)
 
 The same example runs in the browser through the WebGPU backend: Emscripten's
 `emdawnwebgpu` port supplies `<webgpu/webgpu.h>`, `contrib.glfw3` the window,
-and the page is exactly what CI deploys to GitHub Pages. All scenes (including
-scenes 8/9), the `M` toggle and F1–F3 overlays are the shared ones.
+and the page is exactly what CI deploys to GitHub Pages. All scenes (the
+color-emoji/packed-asset scenes and the pan/zoom node editor included), the `M`
+toggle and F1–F3 overlays are the shared ones.
 
 ```sh
 pip install fonttools && ./scripts/fetch_cjk_font.sh   # optional: embeds CJK
@@ -120,7 +122,8 @@ known), CMake + Ninja, and one native `scripts\build.*` run — the CJK subset i
 embedded with the native `imslug_gen` (a cross-compiled tool cannot run during
 the web build). The browser build has no filesystem: fonts are the embedded
 Roboto packed asset/atlas TTF, plus build-time subsets of the fetched CJK and
-color-emoji fonts when present (the emoji subset is COLR v1 only, ~12 KB).
+color-emoji fonts when present (the emoji subset is COLR v1 only, ~15 KB,
+snail/shell mascot included).
 
 ## Integration
 
@@ -170,14 +173,20 @@ The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
 `build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
 window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts,
 a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene, the fetched
-CJK subset, the color-emoji scene (with a zoom slider for the gradients), the
-packed-asset scene and a heavy demo / perf scene (key `P`) with a performance
-panel — wall-clock frame-time plot, whole-frame GPU timestamps, draw / Slug /
-atlas counters and a vsync toggle (`--novsync` for uncapped runs). `M` (or
-`--renderer atlas`) swaps the body text between Slug and ImGui's dynamic font
-system for a direct comparison of the same font; debug overlay toggles are
-F1/F2/F3 and `--screenshot <file.ppm> [scene] [dpi_scale]` captures offscreen
-frames.
+CJK subset, the color-emoji scene (a zoom slider for the gradients, plus the
+non-BMP snail/shell mascot), the packed-asset scene, a dummy node-editor canvas
+(key `N`: pan/zoom over a small node graph, node text rendered at
+size x zoom through the active renderer) and a heavy demo / perf scene (key `P`)
+with a performance panel — wall-clock frame-time plot, whole-frame GPU
+timestamps, draw / Slug / atlas counters and a vsync toggle (`--novsync` for
+uncapped runs). A prominent
+top-center renderer bar toggles `M` between Slug and ImGui's dynamic font system
+for a direct comparison of the same font — and atlas mode stays honest about
+what only Slug renders: the CJK scene registers the subset through both
+renderers, the color-emoji and packed-asset scenes explain themselves instead of
+drawing Slug output, and the explicitly labeled Slug/atlas comparisons (mixed
+fonts, perf scene) remain visible. Debug overlay toggles are F1/F2/F3 and
+`--screenshot <file.ppm> [scene] [dpi_scale]` captures offscreen frames.
 
 C and Rust consumers use the `extern "C"` mirror (`imslug_c.h`) instead of the
 C++ API; `example/c/` is a pure-C11 example (CPU smoke, plus a headless Vulkan

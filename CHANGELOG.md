@@ -32,9 +32,47 @@ All notable changes to imslug are documented in this file. The format follows
   `scripts/web_smoke.sh` + `scripts/web_smoke/` (headless-Chrome smoke with a
   software WebGPU adapter) and `.github/workflows/pages.yml` (build + smoke +
   GitHub Pages deploy on `main`).
+- **The example's emoji scene has an imslug mascot.** Unicode has no slug emoji,
+  so the snail (U+1F40C) and the spiral shell (U+1F41A) join the emoji lineup
+  and get a dedicated mascot row; both are non-BMP, so they also exercise the
+  32-bit codepoint path end to end (example, web subset, ImGui-level test and
+  the emoji golden matrix). The web page title gets the snail too.
+- **Example: a dummy node-editor scene (key `N`).** A hand-rolled pan/zoom
+  canvas (grid, nodes, wires; the wheel zooms about the cursor, middle-drag or
+  empty-canvas drag pans, dragging a node moves it) whose titles and row labels
+  render at `size x zoom` through the active renderer - the workload node
+  editors actually have. It is the most direct demo of the dynamic-scaling
+  story: Slug re-renders the outlines at every integer size without allocating
+  texture bytes, while the stock atlas rasterizes every size it sees (the scene
+  HUD shows the atlas size and the Slug counters live). Text crossing the canvas
+  edge also exercises the fine-clip reconstruction; LOD hides row labels below
+  8 px, titles below 6 px. No node-editor dependency: the scene is a few hundred
+  lines of `ImDrawList` in `example/common/example_app.cpp`.
 
 ### Changed
 
+- **This project's builds now define `IMGUI_USE_WCHAR32`.** The new
+  `IMSLUG_WCHAR32` CMake option (default ON) sets 32-bit `ImWchar` PUBLIC on the
+  Dear ImGui target, so every target that links it — including a consumer's app
+  linking imslug — agrees on the width; `-DIMSLUG_WCHAR32=OFF` keeps the 16-bit
+  configuration. The C ABI follows (`imslug_wchar` is 32-bit in these builds;
+  `tests/test_c_abi.c` asserts the width of the active configuration). A
+  caller-provided `imgui` target cannot be modified: a configure-time
+  AUTHOR_WARNING says so.
+
+- **Example: the Slug/atlas toggle moved to a prominent renderer bar.** The
+  top-center toolbar (always on top; big colored buttons, `M` or
+  `--renderer atlas`) replaces the small radios buried in the scene switcher, so
+  the direct Slug-vs-atlas comparison is the example's headline control. The
+  scene windows start below it, and the perf-scene layout clears it.
+- **Example: atlas mode shows only what stock ImGui can render.** The CJK scene
+  registers the fetched subset through ImGui's dynamic atlas as well (its scene
+  text is now visible in both modes, with the atlas size on screen); the
+  Slug-only samples (color emoji, packed `.imslug` asset) are not drawn through
+  Slug while the atlas renderer is active — those scenes explain why instead.
+  The explicitly labeled Slug/atlas comparisons (mixed-fonts scene, perf scene)
+  stay visible; the clipping tooltip and the FontScaleDpi description now name
+  the active renderer instead of assuming Slug.
 - The example's shared application moved to `example/common/`; the two
   generated default-font headers moved with it (`example/common/imslug_example_*.h`).
   `--screenshot` output and CLI behavior are unchanged (verified with
@@ -106,6 +144,14 @@ All notable changes to imslug are documented in this file. The format follows
   renders against a destroyed swapchain; swapchain recreation refreshes the
   backend's image expectation and clamps the frame ring, and a failed
   GPU-timestamp read no longer averages a stale sample.
+- **Example: the base font size now actually resizes the UI text.** `+`/`-`
+  (and `--size`) only re-registered the fonts: ImGui 1.92 stores the `AddFont*`
+  size as `ImFont::LegacySize` and resolves it into `style.FontSizeBase` once,
+  on the first frame, so the runtime control changed the label but not the
+  rendered size in either Slug or atlas mode. `RebuildFonts()` now keeps
+  `style.FontSizeBase` in sync with `BaseSize`, and key `0` re-applies
+  `style.FontScaleDpi` immediately instead of waiting for the FontScaleDpi
+  scene to run again.
 
 ## [0.1.0] — 2026-10-14 (release prepared; `v0.1.0` tag pending the repo owner)
 

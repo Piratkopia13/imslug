@@ -931,20 +931,23 @@ int main(int argc, char** argv)
     }
 
     // Emoji strings: a single gradient-rich face, a heart (gradient + solid
-    // layers), a mixed row, and a composed ZWJ sequence (family) which the
-    // font renders as one glyph with many layers.
-    static const char* kTexts[4] = {
+    // layers), a mixed row, a composed ZWJ sequence (family) which the font
+    // renders as one glyph with many layers, and the non-BMP imslug mascot
+    // (snail, U+1F40C; the test's own UTF-8 decoder does not depend on the
+    // app's ImWchar width).
+    static const char* kTexts[5] = {
         "\xF0\x9F\x98\x80",                                                          // U+1F600 grinning face
         "\xE2\x9D\xA4",                                                              // U+2764 red heart
         "\xF0\x9F\x98\x80\xF0\x9F\x94\xA5\xE2\x9D\xA4",                              // face + fire + heart
         "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",  // family
+        "\xF0\x9F\x90\x8C",                                                          // U+1F40C snail (mascot)
     };
     static const float kBakeSizes[3] = { 16.0f, 32.0f, 64.0f };
     static const float kScales[3] = { 1.0f, 2.0f, 3.5f };
 
     EmojiCase cases[64];
     int caseCount = 0;
-    for (int textIndex = 0; textIndex < 4; ++textIndex)
+    for (int textIndex = 0; textIndex < 5; ++textIndex)
     {
         for (int sizeIndex = 0; sizeIndex < 3; ++sizeIndex)
         {

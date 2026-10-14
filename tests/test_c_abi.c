@@ -35,8 +35,14 @@ _Static_assert(offsetof(imslug_statistics, DroppedRuns) == 12, "imslug_statistic
 _Static_assert(offsetof(imslug_statistics, BoundsMismatches) == 16, "imslug_statistics layout changed");
 _Static_assert(offsetof(imslug_statistics, ColorLayers) == 20, "imslug_statistics layout changed");
 
-// The default ImWchar is 16-bit (define IMGUI_USE_WCHAR32 for non-BMP text).
-_Static_assert(sizeof(imslug_wchar) == 2, "imslug_wchar must match ImWchar (16-bit without IMGUI_USE_WCHAR32)");
+// imslug_wchar must match the app's ImWchar: 16-bit without IMGUI_USE_WCHAR32
+// (ImGui's default), 32-bit with it - this project's builds define it
+// (IMSLUG_WCHAR32 in CMakeLists.txt, default ON) for non-BMP emoji.
+#if defined(IMGUI_USE_WCHAR32) || defined(IMSLUG_WCHAR32)
+_Static_assert(sizeof(imslug_wchar) == 4, "imslug_wchar must match a 32-bit ImWchar (IMGUI_USE_WCHAR32)");
+#else
+_Static_assert(sizeof(imslug_wchar) == 2, "imslug_wchar must match a 16-bit ImWchar (no IMGUI_USE_WCHAR32)");
+#endif
 
 // Version macros must be internally consistent (the runtime comparison with
 // the library's own values happens in imslug_version_num()).

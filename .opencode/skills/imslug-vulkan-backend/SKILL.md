@@ -289,20 +289,25 @@ goldens
 
 ## Example app
 
-`example/glfw_vulkan/main.cpp` (option `IMSLUG_BUILD_EXAMPLES=ON`): a GLFW window
-+ swapchain rendering an ordinary ImGui app (stock GLFW+Vulkan backends, imslug
-for the registered font), validation layers on by default
-(`IMSLUG_VALIDATION=0` disables, `IMSLUG_VALIDATION_VERBOSE=1` adds info
-messages). Scene switcher (keys 1-9 / the radio buttons): demo window,
-widgets/plots/tables, clipping torture, mixed Slug+atlas fonts, runtime
-`style.FontScaleDpi`, the 5k-glyph stress scene, the fetched CJK subset, the
-color-emoji scene (BMP emoji at a size slider plus a single-glyph zoom for the
-gradients) and the packed-asset scene. Key `P` selects a heavy demo / perf scene
-with a performance panel: frame-ms plot, whole-frame GPU time from timestamp
-queries, draw/Slug/atlas counters and a vsync toggle (FIFO <-> MAILBOX/
-IMMEDIATE, `--novsync`); `M` (or `--renderer atlas`) swaps the default font
-between the Slug registration and the stock registration at the same size for
-an A/B comparison. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
+`example/glfw_vulkan/main.cpp` (shell; option `IMSLUG_BUILD_EXAMPLES=ON`) around
+`example/common/example_app.*`: a GLFW window + swapchain rendering an ordinary
+ImGui app (stock GLFW+Vulkan backends, imslug for the registered font),
+validation layers on by default (`IMSLUG_VALIDATION=0` disables,
+`IMSLUG_VALIDATION_VERBOSE=1` adds info messages). Scene switcher (keys 1-9 /
+the radio buttons): demo window, widgets/plots/tables, clipping torture, mixed
+Slug+atlas fonts, runtime `style.FontScaleDpi`, the 5k-glyph stress scene, the
+fetched CJK subset, the color-emoji scene (BMP emoji at a size slider plus a
+single-glyph zoom for the gradients), the packed-asset scene and a dummy
+node-editor canvas (key `N`: pan/zoom, node text at size x zoom through the
+active renderer). Key `P` selects a heavy demo / perf scene with a performance
+panel: frame-ms plot, whole-frame
+GPU time from timestamp queries, draw/Slug/atlas counters and a vsync toggle
+(FIFO <-> MAILBOX/IMMEDIATE, `--novsync`). The top-center renderer bar (`M` or
+`--renderer atlas`) swaps the default font between the Slug registration and the
+stock registration at the same size for an A/B comparison; in atlas mode the
+Slug-only samples (color emoji, packed asset) show an explanation instead of
+Slug output and the CJK scene switches to a stock registration, so the mode
+never displays Slug-rendered text unlabeled. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
 offscreen frame and prints the validation message/error counts on exit. The
 frame loop cycles over `ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and
 null-checks the ring slot pointer - a 2-image swapchain must not touch ring

@@ -300,8 +300,10 @@ the small-size table for the specific font.
   color glyph costs one instance per layer, so emoji-heavy frames are
   instance-hungry (the ring drops overflowing runs gracefully).
 * Non-BMP codepoints (most emoji, U+1F600+) need `IMGUI_USE_WCHAR32` in the
-  ImGui build; with the default 16-bit `ImWchar` they cannot be addressed at
-  all (the emoji scene and ImGui-level tests therefore use BMP emoji).
+  ImGui build; with the 16-bit default `ImWchar` they cannot be addressed at
+  all. This project's builds define it (`IMSLUG_WCHAR32=ON`, the example's
+  snail/shell mascot relies on it); `IMSLUG_WCHAR32=OFF` keeps the 16-bit
+  configuration consistent.
 
 ## 9. Color fonts (COLR v0 / v1)
 

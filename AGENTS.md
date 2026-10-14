@@ -79,13 +79,18 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   taken from `IMSLUG_GLFW_DIR`). It is an ImGui app with a scene switcher
   (keys 1–9, 1-based: demo, widgets/plots/tables, clipping torture, mixed fonts,
   runtime `FontScaleDpi`, 5k-glyph stress, CJK subset, color emoji, packed
-  `.imslug` asset; key `P` = heavy demo / perf scene with a performance panel:
+  `.imslug` asset; key `N` = dummy node-editor canvas (pan/zoom text stress);
+  key `P` = heavy demo / perf scene with a performance panel:
   frame-ms plot, whole-frame GPU timestamps, draw/Slug/atlas counters and a
-  vsync toggle), an `M` toggle (or `--renderer atlas`) that swaps the body text
-  between Slug and ImGui's dynamic font system for the same registered font,
-  F1/F2/F3 debug-overlay toggles (glyph bounds / band grid / ref heat,
-  `--overlay` on the CLI) and `--screenshot <file.ppm> [scene] [dpi_scale]` for
-  deterministic offscreen captures (scene numbers are 1-based like the keys).
+  vsync toggle), a prominent top-center renderer bar whose `M` toggle (or
+  `--renderer atlas`) swaps the body text between Slug and ImGui's dynamic font
+  system for the same registered font. Atlas mode stays honest: the CJK scene
+  registers the subset through both renderers, the Slug-only samples (color
+  emoji, packed asset) explain themselves instead of drawing, and the explicit
+  Slug/atlas comparisons stay labeled. The shared app also has F1/F2/F3
+  debug-overlay toggles (glyph bounds / band grid / ref heat, `--overlay` on the
+  CLI) and `--screenshot <file.ppm> [scene] [dpi_scale]` for deterministic
+  offscreen captures (scene numbers are 1-based like the keys).
   `--font <path>` accepts a TTF or an `.imslug` asset (the loader auto-detects).
   The default fonts are embedded in the binary (the committed packed asset for
   Slug + the raw TTF for ImGui's stock atlas font, so `M` works standalone);
@@ -100,6 +105,14 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   build directory forces a reconfigure of GLFW's runtime choice. It covers the
   targets this project builds: a caller-provided `glfw`/imgui target must use
   `/MT` itself (a configure-time AUTHOR_WARNING flags that case).
+* `IMSLUG_WCHAR32` (configure option, default ON) defines `IMGUI_USE_WCHAR32`
+  across the build — 32-bit `ImWchar`, required to address non-BMP codepoints
+  (most emoji, e.g. the example's snail/shell mascot U+1F40C / U+1F41A). The
+  define is PUBLIC on the Dear ImGui target, so everything that links it — ours
+  and a consumer's app — agrees on the width; `-DIMSLUG_WCHAR32=OFF` builds the
+  16-bit configuration instead (the C ABI's `imslug_wchar` follows). With a
+  caller-provided `imgui` target the option cannot apply the define: a
+  configure-time AUTHOR_WARNING says so.
 * `IMSLUG_BACKEND_WEBGPU` (configure option; default ON under Emscripten, OFF
   elsewhere) builds the WebGPU backend module + the third-party
   `imgui_impl_wgpu` target. `scripts\build_web.bat` / `scripts/build_web.sh` is

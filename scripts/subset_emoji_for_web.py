@@ -21,7 +21,10 @@ import argparse
 import os
 import sys
 
-# The emoji scene's BMP emoji (U+2600..U+2BFF; non-BMP needs IMGUI_USE_WCHAR32).
+# The emoji scene's sample set (example/common/example_app.cpp, SceneEmoji).
+# The last two are the non-BMP imslug mascot: the web build defines
+# IMGUI_USE_WCHAR32 (IMSLUG_WCHAR32, on by default), so 32-bit codepoints are
+# addressable; keep this list and the scene text in sync.
 EMOJI_CODEPOINTS = [
     0x2600,  # ☀  black sun
     0x26C5,  # ⛅ sun behind cloud
@@ -35,6 +38,8 @@ EMOJI_CODEPOINTS = [
     0x2702,  # ✂  black scissors
     0x264B,  # ♋  cancer zodiac
     0x2693,  # ⚓ anchor
+    0x1F40C,  # 🐌 snail (mascot)
+    0x1F41A,  # 🐚 spiral shell (mascot)
 ]
 
 

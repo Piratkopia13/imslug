@@ -18,9 +18,10 @@
 //     #ifndef __EMSCRIPTEN__ and degrade to the embedded asset/message;
 //   * desktop-only UI rows are hidden when their hook is null.
 //
-// The scene switcher stays the source of truth for keys 1-9/P, +/- and the
-// M toggle (it polls ImGui keys); the shell maps its platform keys onto the
-// ExampleApp* actions below for Esc/F1-F3/M/0.
+// The scene switcher stays the source of truth for keys 1-9/N/P and +/- (it
+// polls ImGui keys); the renderer comparison bar drawn every frame at the top
+// center owns the prominent Slug/atlas toggle (M), and the shell maps its
+// platform keys onto the ExampleApp* actions below for Esc/F1-F3/M/0.
 
 #pragma once
 
@@ -33,8 +34,10 @@ constexpr int kExampleWindowWidth = 1280;
 constexpr int kExampleWindowHeight = 800;
 constexpr const char* kExampleWindowTitle = "imslug - Slug text";
 
-// Scene set / font-size limits (CLI + switcher).
-constexpr int kExampleSceneCount = 10;
+// Scene set / font-size limits (CLI + switcher): the first nine are the number
+// keys 1-9, scene 10 is the node editor (key N) and scene 11 the heavy demo /
+// perf scene (key P).
+constexpr int kExampleSceneCount = 11;
 constexpr int kExampleMinSize = 12;
 constexpr int kExampleMaxSize = 48;
 constexpr int kExampleDefaultSize = 17;
@@ -90,12 +93,14 @@ struct ExamplePlatform
 // example's global App: one process, one window).
 struct ExampleAppState
 {
-    ImFont* SlugFont;    // rendered by Slug
-    ImFont* StockFont;   // rendered through the atlas (mixed-font scene)
-    ImFont* CjkFont;     // fetched CJK subset (stress scene; may stay null)
-    ImFont* EmojiFont;   // fetched Noto Color Emoji (color scene; may stay null)
-    ImFont* PackedFont;  // pre-baked .imslug asset (packed scene; may stay null)
+    ImFont* SlugFont;      // rendered by Slug
+    ImFont* StockFont;     // rendered through the atlas (mixed-font scene)
+    ImFont* CjkFont;       // fetched CJK subset through Slug (CJK scene; may stay null)
+    ImFont* CjkStockFont;  // the same subset through ImGui's atlas (CJK scene in atlas mode; may stay null)
+    ImFont* EmojiFont;     // fetched Noto Color Emoji (color scene; may stay null)
+    ImFont* PackedFont;    // pre-baked .imslug asset (packed scene; may stay null)
     bool CjkAttempted;
+    bool CjkStockAttempted;
     bool EmojiAttempted;
     bool PackedAttempted;
     bool PackedFromFile;  // packed scene: loaded the committed file, not the embedded copy
@@ -108,7 +113,10 @@ struct ExampleAppState
     bool ShowDemoStats;
 
     // Text renderer: false = Slug registered fonts, true = the stock
-    // registration through ImGui's dynamic font system (--renderer, M).
+    // registration through ImGui's dynamic font system (--renderer, M / the
+    // renderer bar). While this is true the Slug-only samples (color emoji,
+    // packed asset) explain themselves instead of drawing; the explicitly
+    // labeled comparisons (mixed-fonts scene, perf scene) stay visible.
     bool AtlasText;
 
     // Performance panel: wall-clock frame ms ring.
@@ -159,8 +167,9 @@ int ExampleAppParseArg(int argc, char** argv, int argIndex, ExampleAppOptions* o
 // module exists).
 void ExampleAppInit(const ExampleAppOptions* options, const ExamplePlatform* platform);
 
-// Re-adds the Slug/atlas fonts at the current base size (shell: when
-// FontsDirty); a failed Slug font sets ShouldClose.
+// Re-adds the Slug/atlas fonts at the current base size, and applies that
+// size to style.FontSizeBase (the live UI text size after ImGui 1.92); the
+// shell calls this when FontsDirty. A failed Slug font sets ShouldClose.
 void ExampleAppRebuildFonts();
 
 // One ImGui frame: NewFrame, the scene switcher and the active scene.

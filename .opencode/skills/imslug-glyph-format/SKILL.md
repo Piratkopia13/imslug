@@ -431,12 +431,15 @@ full suite; also a daily informational CI job):
   revisit the synthetic ellipsis (its "contains" check is index-based now).
   Planned with the next upstream release, not for the pinned version.
 
-**Non-BMP codepoints.** With the default 16-bit `ImWchar` (no
-`IMGUI_USE_WCHAR32`), ImGui cannot address codepoints above U+FFFF at all - most
-emoji (U+1F600+) are unreachable, so the ImGui-level tests and the example scene
-use BMP emoji (U+2600..U+2BFF) and the color-font goldens bypass ImGui. An app
-that wants full emoji must build ImGui *and* imslug with `IMGUI_USE_WCHAR32` (the
-adapter passes `ImWchar` straight through).
+**Non-BMP codepoints.** With a 16-bit `ImWchar` (no `IMGUI_USE_WCHAR32`), ImGui
+cannot address codepoints above U+FFFF at all - most emoji (U+1F600+) are
+unreachable. This repo defines `IMGUI_USE_WCHAR32` for its builds by default
+(CMake `IMSLUG_WCHAR32=ON`, PUBLIC on the Dear ImGui target, so everything that
+links it agrees): the example scene's non-BMP snail/shell mascot (U+1F40C /
+U+1F41A) and the ImGui-level non-BMP check rely on it, while the color-font
+goldens bypass ImGui with their own UTF-8 decoder. An app that brings its own
+Dear ImGui must define the macro in that whole build (the adapter passes
+`ImWchar` straight through); `-DIMSLUG_WCHAR32=OFF` keeps a 16-bit build.
 
 Keep the smoke job informational (`continue-on-error`): a red run means
 "upstream moved something", while the pinned v1.92.9b jobs stay the gate.

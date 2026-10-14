@@ -23,6 +23,7 @@ option(IMSLUG_BUILD_EXAMPLES "Build the example applications" OFF)
 option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
 option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen)" ON)
 option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; OFF = packed .imslug assets only)" ON)
+option(IMSLUG_WCHAR32        "Define IMGUI_USE_WCHAR32 across the build (32-bit ImWchar; required for non-BMP emoji)" ON)
 option(IMSLUG_STATIC_CRT     "MSVC only: link the C runtime statically (/MT) so executables run without the VC++ redistributable" OFF)
 
 # WebGPU backend module (browser builds: Emscripten's --use-port=emdawnwebgpu
@@ -123,6 +124,12 @@ else()
                 "IMSLUG_STATIC_CRT=ON with a caller-provided imgui target: its MSVC runtime is outside this "
                 "project's control - make sure it is also /MT or the binary mixes runtimes.")
         endif()
+        if(IMSLUG_WCHAR32)
+            message(AUTHOR_WARNING
+                "IMSLUG_WCHAR32=ON cannot define IMGUI_USE_WCHAR32 on the caller-provided imgui target "
+                "(${IMSLUG_IMGUI_LINK_TARGET}): make sure that target defines it consistently, or non-BMP text "
+                "(e.g. the example's snail emoji) will not render.")
+        endif()
     else()
         include(FetchContent)
         FetchContent_Declare(imgui
@@ -156,6 +163,15 @@ elseif(IMSLUG_IMGUI_SOURCE_DIR)
         target_compile_options(imslug_imgui PRIVATE /w)  # third-party: no warnings
     else()
         target_compile_options(imslug_imgui PRIVATE -w)
+    endif()
+    if(IMSLUG_WCHAR32)
+        # 32-bit ImWchar must hold across the whole binary (ImFontGlyph::
+        # Codepoint, the ImGui-facing callbacks, the C API's imslug_wchar, ...):
+        # the 16-bit default cannot address non-BMP codepoints, which is most
+        # of the emoji (the example's snail/shell mascot). PUBLIC so every
+        # target linking Dear ImGui here - and a consumer linking imslug -
+        # uses the same width.
+        target_compile_definitions(imslug_imgui PUBLIC IMGUI_USE_WCHAR32)
     endif()
     set(IMSLUG_IMGUI_TARGET imslug_imgui)
 else()

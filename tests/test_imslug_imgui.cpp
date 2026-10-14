@@ -1375,9 +1375,15 @@ static void TestColorFonts()
     const float size = 32.0f;
     ImFontBaked* baked = emojiFont->GetFontBaked(size);
     TEST_CHECK(baked != nullptr);
-    const ImFontGlyph* face = baked->FindGlyph((ImWchar)0x2764);  // BMP emoji (ImGui Wchar is 16-bit by default)
+    const ImFontGlyph* face = baked->FindGlyph((ImWchar)0x2764);  // BMP emoji (valid in either ImWchar width)
     const ImFontGlyph* space = baked->FindGlyph((ImWchar)0x20);
     TEST_CHECK(face != nullptr && space != nullptr);
+#if defined(IMGUI_USE_WCHAR32)
+    // Non-BMP (the snail mascot, U+1F40C): the 32-bit ImWchar carries it
+    // through the loader; the emoji goldens pin the COLR rendering itself.
+    const ImFontGlyph* snail = baked->FindGlyph((ImWchar)0x1F40C);
+    TEST_CHECK(snail != nullptr && snail->Colored && snail->Visible);
+#endif
     if (face == nullptr || space == nullptr)
     {
         std::free(emojiData);

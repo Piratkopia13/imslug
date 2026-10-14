@@ -12,11 +12,14 @@ bitmaps. Every other font, shape, texture and draw command keeps going through
 ImGui's stock path.
 
 If you just want to see it run, build the example app instead
-(`-DIMSLUG_BUILD_EXAMPLES=ON`, scene switcher keys 1–9, `P` for the heavy
-demo/perf scene, `M` to swap Slug <-> ImGui's dynamic font system); this
-document is for putting imslug into your own project. For the C API and Rust, see
-[`BINDINGS.md`](BINDINGS.md); for the design and the measured numbers, see
-[`DESIGN.md`](DESIGN.md); common questions are answered in [`FAQ.md`](FAQ.md).
+(`-DIMSLUG_BUILD_EXAMPLES=ON`, scene switcher keys 1–9, `N` for the node
+editor, `P` for the heavy demo/perf scene, `M` — or the top-center renderer bar
+— to swap Slug <-> ImGui's
+dynamic font system; in atlas mode the Slug-only samples explain themselves
+instead of drawing); this document is for putting imslug into your own project.
+For the C API and Rust, see [`BINDINGS.md`](BINDINGS.md); for the design and the
+measured numbers, see [`DESIGN.md`](DESIGN.md); common questions are answered in
+[`FAQ.md`](FAQ.md).
 
 ## 1. Requirements
 
@@ -204,9 +207,13 @@ COLR v0/v1 color glyphs render automatically: one Slug instance per layer with
 per-fragment paint evaluation (solid, linear/radial/sweep gradients, ClipBoxes,
 the exact composite subset). `Config::EnableColorFonts = false` disables the
 path (color glyphs then draw their monochrome `glyf` outline, which is empty
-for most emoji fonts). Non-BMP codepoints (most emoji) require
-`IMGUI_USE_WCHAR32` in the whole build — a 16-bit `ImWchar` cannot address
-them. The documented paint fallbacks are in `DESIGN.md` §9.
+for most emoji fonts). Non-BMP codepoints (most emoji, e.g. the snail U+1F40C)
+require `IMGUI_USE_WCHAR32` in the whole build — a 16-bit `ImWchar` cannot
+address them. imslug's CMake does this by default (`IMSLUG_WCHAR32=ON`) and
+propagates the define to everything that links the Dear ImGui target, imslug or
+its backends; `-DIMSLUG_WCHAR32=OFF` builds a 16-bit configuration instead (for
+an app that must match the 16-bit default). The documented paint fallbacks are
+in `DESIGN.md` §9.
 
 ## 8. Offline assets (no runtime parser)
 
@@ -267,7 +274,7 @@ after v0.1, see `DESIGN.md` §8.
 | `imslug.h` fails to compile with an `#error` about Dear ImGui | ImGui < 1.92.8 or `imgui.h` not included first; see §1. |
 | Glyphs are squeezed or jump at clip edges | Fine-clip reconstruction disabled? The default (`EnableFineClipReconstruction = true`) reconstructs true placement; the fallback compresses into the drawn quad by design. |
 | OTF/CFF font stays on the atlas path | Not parsed in v0.1 (TTF `glyf` only); see `FAQ.md`. |
-| Non-BMP emoji missing | Build the whole app with `IMGUI_USE_WCHAR32`; 16-bit `ImWchar` cannot address them. |
+| Non-BMP emoji missing | Build the whole app with `IMGUI_USE_WCHAR32`; 16-bit `ImWchar` cannot address them. imslug's CMake defines it by default (`IMSLUG_WCHAR32=ON`); check that a caller-provided `imgui` target matches (configure-time AUTHOR_WARNING). |
 | Color glyphs render as empty boxes | The font's emoji glyphs have no `glyf` outline and the color path was disabled or the paint graph was unsupported; check `Config::EnableColorFonts` and `DESIGN.md` §9. |
 | Duplicate ImGui symbols at link time | imslug and your app compiled Dear ImGui twice; share one checkout/one TU set. |
 | Crash in a packed-asset build with a TTF path | `IMSLUG_TTF_PARSER=OFF` accepts only `.imslug` assets; bake with `imslug_gen` or enable the parser. |

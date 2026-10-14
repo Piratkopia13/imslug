@@ -97,7 +97,9 @@ COLR v0/v1 color glyphs render with one Slug instance per layer and
 per-fragment gradients (Noto Color Emoji and Segoe UI Emoji verified). The
 documented approximations for a few rare composite modes are in `DESIGN.md`
 §9. Most emoji are non-BMP codepoints: the whole build needs
-`IMGUI_USE_WCHAR32` for those. Packed `.imslug` v1 assets are monochrome only.
+`IMGUI_USE_WCHAR32` for those (imslug's CMake defines it by default:
+`IMSLUG_WCHAR32=ON`; the example's snail mascot relies on it). Packed
+`.imslug` v1 assets are monochrome only.
 
 **Why do I see no text at very large glyph counts?**
 The per-frame instance ring (default 16384 glyphs/layers) only drops runs that
