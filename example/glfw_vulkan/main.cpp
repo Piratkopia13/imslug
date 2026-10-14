@@ -157,36 +157,6 @@ namespace
         return true;
     }
 
-    unsigned char* ReadWholeFile(const char* path, int* outSize)
-    {
-        FILE* file = fopen(path, "rb");
-        if (file == nullptr)
-            return nullptr;
-        fseek(file, 0, SEEK_END);
-        const long size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-        if (size <= 0)
-        {
-            fclose(file);
-            return nullptr;
-        }
-        unsigned char* data = (unsigned char*)malloc((size_t)size);
-        if (data == nullptr)
-        {
-            fclose(file);
-            return nullptr;
-        }
-        const size_t read = fread(data, 1, (size_t)size, file);
-        fclose(file);
-        if (read != (size_t)size)
-        {
-            free(data);
-            return nullptr;
-        }
-        *outSize = (int)size;
-        return data;
-    }
-
     const char* SeverityName(VkDebugUtilsMessageSeverityFlagBitsEXT severity)
     {
         switch (severity)

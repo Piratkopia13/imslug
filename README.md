@@ -10,22 +10,24 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M7
-> (offline generator + `.imslug` interop; see `docs/PACKED_FORMAT.md`). M5
-> delivered the full rendering feature set (color fonts: COLR v0/v1 layers,
-> gradients, emoji; see `docs/DESIGN.md` section 9); M6 froze the public API
-> for bindings — the C API (`imslug_c.h`) is a mirror with additions only. M7
-> added the `imslug_gen` CLI, the versioned `.imslug` container v1 and the
-> loader path (auto-detected by content, no outline parsing), including a
-> no-parser build (`-DIMSLUG_TTF_PARSER=OFF`). M8 (release polish) is next.
+> **Status: v0.1.0 — release prepared; the `v0.1.0` tag is pending the repo
+> owner.** All milestones M0–M8 are complete: the Slug glyph pipeline and
+> Vulkan renderer, the ImGui integration (mixed fonts, clipping, runtime DPI),
+> color fonts (COLR v0/v1), the C API (`imslug_c.h`) and the Rust wrapper
+> (`imslug-rs`), and the offline generator + `.imslug` container v1 — including
+> a build without any TrueType parser. See [`CHANGELOG.md`](CHANGELOG.md) for
+> the release history and [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the
+> drop-in guide.
 
 ## Requirements
 
 * CMake ≥ 3.21 and a C++17 compiler (MSVC 2022, GCC, or Clang).
 * Dear ImGui ≥ 1.92.8 — fetched automatically at configure time (pinned;
   override with `-DIMSLUG_IMGUI_DIR=<checkout>`).
-* Vulkan SDK — needed from M2 onward (not required for the M0 build).
-* GLFW — needed for the example app from M2 onward.
+* Vulkan 1.2+ SDK — needed for the backend module, the golden tests and the
+  example (the core still builds without Vulkan).
+* GLFW — needed for the example app (fetched at a pinned tag; override with
+  `-DIMSLUG_GLFW_DIR=<checkout>`).
 
 ## Quickstart
 
@@ -40,6 +42,7 @@ humans, CI and the `.opencode/commands`:
 | Verify committed shader header | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
 | Regenerate the packed test asset (M7) | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
 | Golden-image tests (M2+) | `scripts\golden.bat` | `scripts/golden.sh` |
+| Clean-project FetchContent check (M8) | `scripts\verify_fetchcontent.bat` | `scripts/verify_fetchcontent.sh` |
 | Dear ImGui master smoke (drift check) | `scripts\smoke_imgui_master.bat` | `scripts/smoke_imgui_master.sh` |
 | Benchmarks (M4+) | `scripts\bench.bat` | `scripts/bench.sh` |
 | Docs-hygiene check | `scripts\check_docs.bat` | `scripts/check_docs.sh` |
@@ -63,6 +66,9 @@ ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
 
 Registered fonts render through Slug at any size/DPI without atlas bitmaps;
 every other font, shape and texture keeps going through ImGui's own path.
+The full drop-in guide — CMake/FetchContent setup, init order, the offline
+asset path, multi-viewport limits and troubleshooting — is
+[`docs/INTEGRATION.md`](docs/INTEGRATION.md).
 Color fonts (COLR v0/v1) render one Slug instance per layer with per-fragment
 paint evaluation (flat colors, linear/radial/sweep gradients, ClipBoxes); the
 fetched Noto Color Emoji is used by the emoji scene and the emoji goldens.
@@ -100,8 +106,10 @@ ownership rules and the binding status live in
 [`docs/BINDINGS.md`](docs/BINDINGS.md).
 
 Design notes, the measured performance numbers and the debug-overlay /
-small-size policy live in [`docs/DESIGN.md`](docs/DESIGN.md); the benchmark
-harness is `scripts\bench.bat` / `scripts/bench.sh`.
+small-size policy live in [`docs/DESIGN.md`](docs/DESIGN.md); the common
+questions (OTF/CFF, sharpness, DPI, licensing, performance) are answered in
+[`docs/FAQ.md`](docs/FAQ.md); the benchmark harness is `scripts\bench.bat` /
+`scripts/bench.sh`.
 
 ## Credits
 

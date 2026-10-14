@@ -31,13 +31,12 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 ## Current milestone
 
 * Work queue/status: `.agent-docs/PLAN.md` §7. Decisions log: §11.
-* Your brief: the **lowest-numbered** file in `.agent-docs/milestones/` whose
-  `Status:` line is not `done` (the initial commit shipped M0 = repo bootstrap;
-  M1 (glyph pipeline), M2 (standalone Vulkan renderer), M3 (ImGui integration),
-  M4 (robustness/perf/polish), M5 (color fonts), M6 (C API + Rust bindings) and
-  M7 (offline generator + `.imslug` interop) are done, so M8 = release polish is
-  next), unless the owner assigned you a specific milestone.
-  Read **only** that brief — never the whole plan.
+* **All milestones M0–M8 are done.** The v0.1.0 release is prepared (version
+  macros final, `CHANGELOG.md` entry marked "tag pending owner"); the owner
+  holds the `v0.1.0` tag (see the `imslug-release` skill for the exact
+  preconditions and the tag command). There is no open milestone brief; if the
+  owner assigns new work, write a brief into `.agent-docs/milestones/` or
+  extend the plan.
 * `.agent-docs/` is gitignored transient material: never `git add -f` it, never
   write scratch markdown anywhere else (see Docs policy).
 
@@ -181,5 +180,6 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   freshness check, attribution rules.
 * `imslug-vulkan-backend` — Vulkan pipeline/descriptor/callback contract and
   validation expectations.
+* `imslug-release` — version/changelog/NOTICE/tag checklist (M8+).
 * `opencode` (built-in) — required before editing `.opencode/` or
   `opencode.jsonc`.

@@ -72,9 +72,9 @@ runtime `FontScaleDpi` slider.
 **Do Slug fonts allocate glyph bitmaps?**
 No. Registered fonts are rect-less: nothing is rasterized or packed into the
 atlas, and their UVs are imslug's glyph handles. The atlas is free for the
-fonts that stay on the stock path. One full Latin font costs roughly 0.25 MB of
-pool data once (curves + bands; CJK subset ~0.8 MB), uploaded as new glyphs are
-built.
+fonts that stay on the stock path. One full Latin font costs roughly
+0.25–0.4 MB of pool data once (curves + bands; the CJK subset ~0.8 MB),
+uploaded as new glyphs are built.
 
 **Can I mix Slug fonts and atlas fonts in one UI?**
 Yes, in the same frame and even in the same draw list. Every font that is not

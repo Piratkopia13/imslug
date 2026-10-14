@@ -171,6 +171,11 @@ Steady-state pool upload is 0–10 KB/frame once the font's glyphs are built
 (Medians; the numbers move by ~5 % between runs on the same machine. The
 harness prints the raw `--all` table into `<build dir>\bench\bench_report.md`.)
 
+Release re-check (M8, 2026-10-14, same machine/harness, no algorithmic change
+after M5): 0.047 vs 0.018 ms (2.63×) text-dominated, 0.026 vs 0.015 ms (1.74×)
+typical UI, CPU pre-pass 0.304 ms @ 5k glyphs — the table reproduces within
+run-to-run noise.
+
 Slug's fragment shader is deliberately heavier per text pixel than sampling an
 atlas (band header fetches plus ~6.1 reference walks per pixel, each with two
 texel fetches, versus one bilinear texture fetch) — the measured Δ for pure
