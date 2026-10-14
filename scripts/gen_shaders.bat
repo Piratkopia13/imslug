@@ -68,6 +68,8 @@ set "GLSLANG="
 if defined GLSLANG_VALIDATOR if exist "%GLSLANG_VALIDATOR%" set "GLSLANG=%GLSLANG_VALIDATOR%"
 if not defined GLSLANG if defined VULKAN_SDK if exist "%VULKAN_SDK%\Bin\glslangValidator.exe" set "GLSLANG=%VULKAN_SDK%\Bin\glslangValidator.exe"
 if not defined GLSLANG for /f "delims=" %%G in ('where glslangValidator 2^>nul') do if not defined GLSLANG set "GLSLANG=%%G"
+rem glslang 16.x ships the tool as glslang.exe (same CLI for our invocation).
+if not defined GLSLANG for /f "delims=" %%G in ('where glslang 2^>nul') do if not defined GLSLANG set "GLSLANG=%%G"
 if not defined GLSLANG goto :missing_glslang
 
 set "COUNT=0"
@@ -140,7 +142,7 @@ goto :fail
 :missing_glslang
 echo [gen_shaders] ERROR: glslangValidator not found.>&2
 echo [gen_shaders]   install the Vulkan SDK and set VULKAN_SDK, or add its Bin directory to PATH,>&2
-echo [gen_shaders]   or set GLSLANG_VALIDATOR to the executable.>&2
+echo [gen_shaders]   or set GLSLANG_VALIDATOR to the executable ^(glslang 16.x: glslang.exe^).>&2
 goto :fail
 
 :missing_python

@@ -92,10 +92,27 @@ if not defined NINJA_EXE (
     popd & exit /b 1
 )
 
-rem --- optional CJK subset embed (native imslug_gen) --------------------------
-set "CJK_HEADER="
+rem --- native imslug_gen (required to embed the fetched fonts) ---------------
+rem CI and first-time setups have no native build yet; build just the generator
+rem (the embed step needs a host tool, a wasm binary cannot run).
 set "GEN=%IMSLUG_NATIVE_BUILD_DIR%\imslug_gen.exe"
 if not exist "%GEN%" set "GEN=%IMSLUG_NATIVE_BUILD_DIR%\%IMSLUG_BUILD_TYPE%\imslug_gen.exe"
+if exist "%GEN%" goto :native_gen_ready
+echo [build_web] native imslug_gen not found - building it once in "%IMSLUG_BUILD_DIR%-native"
+set "WEB_BUILD_DIR=%IMSLUG_BUILD_DIR%"
+set "USER_CMAKE_DEFINES=%IMSLUG_CMAKE_DEFINES%"
+set "IMSLUG_BUILD_DIR=%WEB_BUILD_DIR%-native"
+set "IMSLUG_CMAKE_DEFINES=-DIMSLUG_BUILD_TESTS=OFF -DIMSLUG_BUILD_C_EXAMPLE=OFF"
+call "%~dp0build.bat" --target imslug_gen
+set "IMSLUG_BUILD_DIR=%WEB_BUILD_DIR%"
+set "IMSLUG_CMAKE_DEFINES=%USER_CMAKE_DEFINES%"
+set "GEN=%WEB_BUILD_DIR%-native\imslug_gen.exe"
+if not exist "%GEN%" set "GEN="
+:native_gen_ready
+if not defined GEN echo [build_web] could not build the native imslug_gen - building without the embedded fonts
+
+rem --- optional CJK subset embed (native imslug_gen) --------------------------
+set "CJK_HEADER="
 set "CJK_FONT=tests\fonts\cjk\NotoSansSC-subset.ttf"
 if exist "%GEN%" if exist "%CJK_FONT%" (
     echo [build_web] embedding the CJK subset with "%GEN%"

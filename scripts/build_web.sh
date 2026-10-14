@@ -85,8 +85,22 @@ GEN_EXE="$NATIVE_DIR/imslug_gen"
 if [ ! -x "$GEN_EXE" ] && [ -x "$NATIVE_DIR/$BUILD_TYPE/imslug_gen" ]; then
     GEN_EXE="$NATIVE_DIR/$BUILD_TYPE/imslug_gen"
 fi
+if [ ! -x "$GEN_EXE" ]; then
+    # CI and first-time setups have no native build yet; build just the
+    # generator (the embed step needs a host tool, a wasm binary cannot run).
+    echo "[build_web] native imslug_gen not found - building it once in $BUILD_DIR-native"
+    if IMSLUG_BUILD_DIR="$BUILD_DIR-native" \
+       IMSLUG_CMAKE_DEFINES="-DIMSLUG_BUILD_TESTS=OFF -DIMSLUG_BUILD_C_EXAMPLE=OFF" \
+       ./scripts/build.sh --target imslug_gen; then
+        GEN_EXE="$BUILD_DIR-native/imslug_gen"
+    fi
+fi
+if [ ! -x "$GEN_EXE" ]; then
+    echo "[build_web] could not build the native imslug_gen - building without the embedded fonts"
+    GEN_EXE=""
+fi
 CJK_FONT="tests/fonts/cjk/NotoSansSC-subset.ttf"
-if [ -x "$GEN_EXE" ] && [ -f "$CJK_FONT" ]; then
+if [ -n "$GEN_EXE" ] && [ -f "$CJK_FONT" ]; then
     echo "[build_web] embedding the CJK subset with $GEN_EXE"
     mkdir -p "$BUILD_DIR/include"
     if ! "$GEN_EXE" embed "$CJK_FONT" --emit-header "$BUILD_DIR/include/imslug_example_cjk.h" \
@@ -140,7 +154,7 @@ if [ -n "${IMSLUG_CMAKE_DEFINES:-}" ]; then
 fi
 
 RECONFIGURE="${IMSLUG_RECONFIGURE:-0}"
-if [ -n "$IMSLUG_CMAKE_DEFINES" ]; then RECONFIGURE=1; fi
+if [ -n "${IMSLUG_CMAKE_DEFINES:-}" ]; then RECONFIGURE=1; fi
 if [ -n "$CJK_HEADER" ]; then RECONFIGURE=1; fi
 if [ -n "$EMOJI_HEADER" ]; then RECONFIGURE=1; fi
 

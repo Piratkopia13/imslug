@@ -3,7 +3,9 @@
 # Entry points are the scripts/ in the repository (never ad-hoc cmake commands):
 # build -> test -> check_docs on Windows (MSVC) and Linux (GCC/Clang).
 # Coverage beyond the default build/test:
-#   * the shader-staleness check (every job) and golden-image tests on Linux
+#   * the shader-staleness check (every job): glslang comes from the distro
+#     package on Linux and from a pinned glslang release download on Windows
+#     (the runner image has no Vulkan SDK), and golden-image tests on Linux
 #     with lavapipe (a software Vulkan device, so no GPU is required);
 #   * the C API ABI gate (C11 TU, strict warnings) and the C example (CPU smoke
 #     in every job; the headless Vulkan frame in the lavapipe job - the Windows
@@ -60,6 +62,14 @@ jobs:
         run: scripts/build.bat
       - name: Test
         run: scripts/test.bat
+      - name: glslangValidator (shader freshness check; the runner image has no Vulkan SDK)
+        shell: pwsh
+        run: |
+          # Pinned release; glslang 16.x names the tool `glslang` (found via PATH)
+          # and its SPIR-V output is byte-identical to the committed header.
+          Invoke-WebRequest -Uri https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip -OutFile "$env:RUNNER_TEMP\glslang.zip"
+          Expand-Archive "$env:RUNNER_TEMP\glslang.zip" -DestinationPath "$env:RUNNER_TEMP\glslang"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\glslang\bin"
       - name: Shaders are fresh
         run: scripts/gen_shaders.bat --check
       - name: Check docs policy
@@ -145,7 +155,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri \
-            libglfw3-dev xorg-dev
+            libglfw3-dev xorg-dev \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: Build (no TTF parser; example on)
         env:
           IMSLUG_BUILD_DIR: build-noparser
@@ -179,7 +190,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri \
-            xorg-dev libgl1-mesa-dev ninja-build
+            xorg-dev libgl1-mesa-dev ninja-build \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: Clean-project FetchContent build + run
         run: ./scripts/verify_fetchcontent.sh
 
@@ -196,6 +208,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Install Vulkan (the bench target builds with the backend module)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers
       - name: Fetch the CJK test font (the CJK bench row is skipped when absent)
         run: |
           python3 -m pip install --quiet fonttools

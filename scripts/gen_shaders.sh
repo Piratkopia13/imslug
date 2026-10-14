@@ -97,10 +97,15 @@ if [ "$have_spirv" = 1 ]; then
         if [ -n "${VULKAN_SDK:-}" ] && [ -x "${VULKAN_SDK}/bin/glslangValidator" ]; then
             GLSLANG="${VULKAN_SDK}/bin/glslangValidator"
         else
+            # glslang 16.x ships the tool as `glslang`; older SDKs as
+            # `glslangValidator`. Same CLI for our invocation.
             GLSLANG=$(command -v glslangValidator 2>/dev/null || true)
+            if [ -z "$GLSLANG" ]; then
+                GLSLANG=$(command -v glslang 2>/dev/null || true)
+            fi
         fi
     fi
-    [ -n "$GLSLANG" ] || fail "glslangValidator not found: install the Vulkan SDK and set VULKAN_SDK, or put glslangValidator on PATH, or set GLSLANG_VALIDATOR."
+    [ -n "$GLSLANG" ] || fail "glslangValidator not found: install the Vulkan SDK and set VULKAN_SDK, or put glslangValidator/glslang on PATH, or set GLSLANG_VALIDATOR."
 
     count=0
     for src in "$SHADER_DIR"/*.vert "$SHADER_DIR"/*.frag "$SHADER_DIR"/*.comp; do
