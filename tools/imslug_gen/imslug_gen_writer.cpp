@@ -74,13 +74,6 @@ namespace ImSlug
             uint32_t Codepoint;
             int GlyphIndex;
         };
-
-        int CompareCodepointRef(const void* a, const void* b)
-        {
-            const uint32_t left = ((const CodepointRef*)a)->Codepoint;
-            const uint32_t right = ((const CodepointRef*)b)->Codepoint;
-            return left < right ? -1 : (left > right ? 1 : 0);
-        }
     }  // namespace
 
     uint32_t ImSlugFnv1a32(const void* data, int size)

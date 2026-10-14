@@ -66,17 +66,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-namespace ImSlug
-{
-    // Public API types used by pointer in this header (definitions in imslug.h).
-    struct Config;
-
 // ---------------------------------------------------------------------
 // Assertions
 // ---------------------------------------------------------------------
 // ImGui-style assert: active unless NDEBUG. Runtime capacity problems must
 // still be reported through return values — never rely on asserts for
-// fallback behavior (PLAN R11).
+// fallback behavior (PLAN R11). Included at global scope (never inside the
+// namespace below): the UCRT headers pull in typedefs that must stay in the
+// global namespace for later system includes.
 #if !defined(IMSLUG_ASSERT)
 #include <assert.h>
 #if defined(NDEBUG)
@@ -85,6 +82,11 @@ namespace ImSlug
 #define IMSLUG_ASSERT(_EXPR) assert(_EXPR)
 #endif
 #endif
+
+namespace ImSlug
+{
+    // Public API types used by pointer in this header (definitions in imslug.h).
+    struct Config;
 
     // ---------------------------------------------------------------------
     // Format constants (must stay in sync with the future shaders)
