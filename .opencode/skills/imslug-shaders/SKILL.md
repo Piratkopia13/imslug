@@ -28,8 +28,12 @@ committed together with their sources (AGENTS.md invariant 8).
   missing or stale. Fix by regenerating and committing the header **with** the
   sources. A half whose source directory is empty is skipped with a message.
 * Tool resolution (SPIR-V half only): `GLSLANG_VALIDATOR` env var, then
-  `$VULKAN_SDK/Bin` (Windows) / `$VULKAN_SDK/bin` (Linux), then `PATH`. A
-  missing tool fails with an actionable message.
+  `$VULKAN_SDK/Bin` (Windows) / `$VULKAN_SDK/bin` (Linux), then `PATH`
+  (`glslangValidator`, or `glslang` - the name glslang 16.x ships; both are
+  searched). A missing tool fails with an actionable message. CI: the Linux
+  jobs install `glslang-tools`; the Windows job downloads the pinned glslang
+  16.6.0 release (its SPIR-V output is byte-identical to the committed
+  header).
 * Invocation used by both scripts (keep in sync):
   `glslangValidator -V --target-env vulkan1.2 -o <tmp>/<name>.<stage>.spv <src>`
 * `--target-env vulkan1.2` emits **SPIR-V 1.5**, which needs an instance/device

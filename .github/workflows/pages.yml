@@ -10,7 +10,9 @@
 # software WebGPU adapter. It starts as informational (continue-on-error)
 # until it is proven stable on the runner; delete that line to promote it to a
 # required gate. If SwiftShader proves unusable there, the documented fallback
-# is Mesa lavapipe + xvfb (see the imslug-webgpu-backend skill).
+# is Mesa lavapipe + xvfb (see the imslug-webgpu-backend skill). The smoke
+# retries the whole run twice on runner hiccups (a fresh browser recovers from
+# the occasional device loss).
 
 name: Web demo (GitHub Pages)
 
@@ -51,6 +53,11 @@ jobs:
         continue-on-error: true
         env:
           IMSLUG_SMOKE_TIMEOUT_MS: "300000"
+          # Software WebGPU on shared runners occasionally loses its device
+          # mid-startup; a fresh browser usually recovers. If SwiftShader
+          # proves unusable on the runner, the documented fallback is Mesa
+          # lavapipe + xvfb (see the imslug-webgpu-backend skill).
+          IMSLUG_SMOKE_RETRIES: "2"
         run: ./scripts/web_smoke.sh
       - name: Upload the smoke screenshot
         if: always()

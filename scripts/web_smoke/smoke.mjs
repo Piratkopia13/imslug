@@ -22,6 +22,9 @@
 //   IMSLUG_SMOKE_FRAMES   frames to wait for      (default: 60)
 //   IMSLUG_SMOKE_TIMEOUT_MS  frames timeout       (default: 180000)
 //   IMSLUG_SMOKE_DWELL_MS    wait when NO_HOOKS=1 (default: 8000)
+//   IMSLUG_SMOKE_RETRIES  whole-run retries (default: 0; CI uses 2 - software
+//                         WebGPU on shared runners occasionally loses its
+//                         device mid-startup, and a fresh browser recovers)
 //   IMSLUG_SMOKE_NO_HOOKS 1   do not require the in-page hooks (generic WebGPU
 //                             page smoke: just dwell, screenshot, check pixels)
 
@@ -72,63 +75,30 @@ function fail(message) {
     process.exitCode = 1;
 }
 
-async function main() {
-    const noHooks = env("IMSLUG_SMOKE_NO_HOOKS", "0") === "1";
-    const framesTarget = Number(env("IMSLUG_SMOKE_FRAMES", "60"));
-    const framesTimeoutMs = Number(env("IMSLUG_SMOKE_TIMEOUT_MS", "180000"));
-    const dwellMs = Number(env("IMSLUG_SMOKE_DWELL_MS", "8000"));
-    const adapter = env("IMSLUG_SMOKE_ADAPTER", "swiftshader");
-    const outPath = resolve(repoRoot, env("IMSLUG_SMOKE_OUT", "build-web/smoke.png"));
-
-    const executablePath = findChrome();
-    if (!executablePath) {
-        fail("no Chrome/Chromium found; set IMSLUG_SMOKE_CHROME=<path to chrome>");
-        return;
-    }
-
-    let server = null;
-    let url = env("IMSLUG_SMOKE_URL", "");
-    if (!url) {
-        const siteDir = resolve(repoRoot, env("IMSLUG_SMOKE_SITE", "build-web/site"));
-        if (!existsSync(resolve(siteDir, "index.html"))) {
-            fail(`no site at ${siteDir} (build it first: scripts/build_web.*)`);
-            return;
-        }
-        server = await startServer(siteDir);
-        url = server.url;
-    }
-
-    const args = [
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--hide-scrollbars",
-        "--mute-audio",
-        "--window-size=1280,800",
-    ];
-    if (adapter === "swiftshader") {
-        // Software WebGPU: the CI-safe path for runner machines without a GPU.
-        args.push("--enable-unsafe-webgpu", "--use-webgpu-adapter=swiftshader");
-    } else {
-        args.push("--enable-unsafe-webgpu");
-    }
-
-    console.log(`[web_smoke] url=${url}`);
-    console.log(`[web_smoke] chrome=${executablePath} adapter=${adapter} hooks=${noHooks ? "off" : "on"}`);
+// One browser run. Returns { ok, frames, ready, error, consoleErrors,
+// pageErrors, stats, screenshotPath }; never throws for page-level failures.
+async function runAttempt({ executablePath, args, url, options }) {
+    const result = {
+        ok: false,
+        frames: 0,
+        ready: false,
+        error: "",
+        consoleErrors: [],
+        pageErrors: [],
+        stats: null,
+        screenshotPath: options.outPath,
+    };
 
     const browser = await puppeteer.launch({
         executablePath,
         headless: true,
         args,
-        protocolTimeout: Math.max(framesTimeoutMs + 60000, 300000),
+        protocolTimeout: Math.max(options.framesTimeoutMs + 60000, 300000),
     });
     try {
         const page = await browser.newPage();
         await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
 
-        const consoleErrors = [];
-        const pageErrors = [];
         page.on("console", (message) => {
             if (message.type() !== "error") {
                 return;
@@ -137,38 +107,39 @@ async function main() {
             if (from.includes("favicon")) {
                 return;
             }
-            consoleErrors.push(`${message.text()} (${from})`);
+            result.consoleErrors.push(`${message.text()} (${from})`);
         });
-        page.on("pageerror", (error) => pageErrors.push(String(error)));
+        page.on("pageerror", (error) => result.pageErrors.push(String(error)));
 
         await page.goto(url, { waitUntil: "load", timeout: 120000 });
 
-        let state = { frames: 0, ready: false, error: "" };
-        if (noHooks) {
-            await new Promise((done) => setTimeout(done, dwellMs));
+        if (options.noHooks) {
+            await new Promise((done) => setTimeout(done, options.dwellMs));
         } else {
             await page.waitForFunction(
-                `window.__imslugError || ((window.__imslugFrames || 0) >= ${framesTarget} && window.__imslugReady === true)`,
-                { timeout: framesTimeoutMs, polling: 250 });
+                `window.__imslugError || ((window.__imslugFrames || 0) >= ${options.framesTarget} && window.__imslugReady === true)`,
+                { timeout: options.framesTimeoutMs, polling: 250 });
         }
-        state = await page.evaluate(() => ({
+        const state = await page.evaluate(() => ({
             frames: window.__imslugFrames | 0,
             ready: window.__imslugReady === true,
             error: String(window.__imslugError || ""),
         }));
+        result.frames = state.frames;
+        result.ready = state.ready;
 
         if (state.error) {
-            fail(`page reported an init error: ${state.error}`);
-            return;
+            result.error = `page reported an init error: ${state.error}`;
+            return result;
         }
-        if (!noHooks && state.frames < framesTarget) {
-            fail(`only ${state.frames}/${framesTarget} frames rendered`);
-            return;
+        if (!options.noHooks && state.frames < options.framesTarget) {
+            result.error = `only ${state.frames}/${options.framesTarget} frames rendered`;
+            return result;
         }
 
         const screenshot = await page.screenshot({ type: "png" });
-        await mkdir(dirname(outPath), { recursive: true });
-        await writeFile(outPath, screenshot);
+        await mkdir(dirname(options.outPath), { recursive: true });
+        await writeFile(options.outPath, screenshot);
 
         // Decode the screenshot in a browser (no image dependencies in Node)
         // and measure how much of it is actual ink rather than the clear color.
@@ -196,31 +167,110 @@ async function main() {
             return { width: canvas.width, height: canvas.height, meanLuma: sum / pixels, inkFraction: ink / pixels };
         }, screenshot.toString("base64"));
         await analyzer.close();
+        result.stats = stats;
 
-        const ok = stats.inkFraction >= 0.002;
-        if (!ok) {
-            fail(`canvas looks blank (ink fraction ${stats.inkFraction.toFixed(5)}, mean luma ${stats.meanLuma.toFixed(2)})`);
+        if (stats.inkFraction < 0.002) {
+            result.error = `canvas looks blank (ink fraction ${stats.inkFraction.toFixed(5)}, mean luma ${stats.meanLuma.toFixed(2)})`;
+            return result;
         }
-        if (consoleErrors.length > 0) {
-            fail(`${consoleErrors.length} console error(s):\n  ${consoleErrors.join("\n  ")}`);
+        if (result.consoleErrors.length > 0) {
+            result.error = `${result.consoleErrors.length} console error(s)`;
+            return result;
         }
-        if (pageErrors.length > 0) {
-            fail(`${pageErrors.length} uncaught page error(s):\n  ${pageErrors.join("\n  ")}`);
+        if (result.pageErrors.length > 0) {
+            result.error = `${result.pageErrors.length} uncaught page error(s)`;
+            return result;
         }
 
-        console.log(JSON.stringify({
-            ok: process.exitCode !== 1,
-            url,
-            frames: state.frames,
-            ready: state.ready,
-            adapter,
-            screenshot: outPath,
-            ...stats,
-            consoleErrors,
-            pageErrors,
-        }, null, 2));
+        result.ok = true;
+        return result;
     } finally {
         await browser.close();
+    }
+}
+
+async function main() {
+    const noHooks = env("IMSLUG_SMOKE_NO_HOOKS", "0") === "1";
+    const retries = Number(env("IMSLUG_SMOKE_RETRIES", "0"));
+    const options = {
+        noHooks,
+        framesTarget: Number(env("IMSLUG_SMOKE_FRAMES", "60")),
+        framesTimeoutMs: Number(env("IMSLUG_SMOKE_TIMEOUT_MS", "180000")),
+        dwellMs: Number(env("IMSLUG_SMOKE_DWELL_MS", "8000")),
+        outPath: resolve(repoRoot, env("IMSLUG_SMOKE_OUT", "build-web/smoke.png")),
+    };
+    const adapter = env("IMSLUG_SMOKE_ADAPTER", "swiftshader");
+
+    const executablePath = findChrome();
+    if (!executablePath) {
+        fail("no Chrome/Chromium found; set IMSLUG_SMOKE_CHROME=<path to chrome>");
+        return;
+    }
+
+    let server = null;
+    let url = env("IMSLUG_SMOKE_URL", "");
+    if (!url) {
+        const siteDir = resolve(repoRoot, env("IMSLUG_SMOKE_SITE", "build-web/site"));
+        if (!existsSync(resolve(siteDir, "index.html"))) {
+            fail(`no site at ${siteDir} (build it first: scripts/build_web.*)`);
+            return;
+        }
+        server = await startServer(siteDir);
+        url = server.url;
+    }
+
+    const args = [
+        "--no-sandbox",
+        "--disable-gpu-sandbox",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--hide-scrollbars",
+        "--mute-audio",
+        "--window-size=1280,800",
+    ];
+    if (adapter === "swiftshader") {
+        // Software WebGPU: the CI-safe path for runner machines without a GPU.
+        args.push("--enable-unsafe-webgpu", "--use-webgpu-adapter=swiftshader");
+    } else {
+        args.push("--enable-unsafe-webgpu");
+    }
+
+    console.log(`[web_smoke] url=${url}`);
+    console.log(`[web_smoke] chrome=${executablePath} adapter=${adapter} hooks=${noHooks ? "off" : "on"} retries=${retries}`);
+
+    try {
+        let last = null;
+        for (let attempt = 1; attempt <= retries + 1; attempt++) {
+            if (attempt > 1) {
+                console.log(`[web_smoke] attempt ${attempt}/${retries + 1} after a 3 s pause`);
+                await new Promise((done) => setTimeout(done, 3000));
+            }
+            last = await runAttempt({ executablePath, args, url, options });
+            if (last.ok) {
+                console.log(JSON.stringify({
+                    ok: true,
+                    url,
+                    frames: last.frames,
+                    ready: last.ready,
+                    adapter,
+                    screenshot: last.screenshotPath,
+                    ...last.stats,
+                    consoleErrors: last.consoleErrors,
+                    pageErrors: last.pageErrors,
+                }, null, 2));
+                return;
+            }
+            console.error(`[web_smoke] attempt ${attempt} failed: ${last.error}`);
+            if (last.consoleErrors.length > 0) {
+                console.error(`[web_smoke]   console errors:\n    ${last.consoleErrors.join("\n    ")}`);
+            }
+            if (last.pageErrors.length > 0) {
+                console.error(`[web_smoke]   page errors:\n    ${last.pageErrors.join("\n    ")}`);
+            }
+        }
+        fail(`all ${retries + 1} attempt(s) failed (last: ${last ? last.error : "no result"})`);
+    } finally {
         if (server) {
             await server.close();
         }
