@@ -134,7 +134,10 @@ Steady-state pool upload is 0–10 KB/frame once the font's glyphs are built
 | 38×132 @17 px (4421 glyphs) | 0.046 ms | 0.018 ms | 2.57× |
 | 50×160 @12 px (7052 glyphs) | 0.056 ms | 0.025 ms | 2.25× |
 | 20×60 @32 px (1059 glyphs) | 0.022 ms | 0.008 ms | 2.78× |
-| typical UI frame (2144 glyphs + widgets) | 0.026 ms | 0.015 ms | 1.74× |
+| typical UI frame (2144 glyphs + widgets) | 0.026 ms | 0.015 ms | 1.76× |
+
+(Medians; the numbers move by ~5 % between runs on the same machine. The
+harness prints the raw `--all` table into `<build dir>\bench\bench_report.md`.)
 
 Slug's fragment shader is deliberately heavier per text pixel than sampling an
 atlas (band header fetches plus ~6.1 reference walks per pixel, each with two

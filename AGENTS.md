@@ -64,9 +64,11 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 * `IMSLUG_BUILD_EXAMPLES=ON` (configure option) builds the GLFW+Vulkan example
   (`build/imslug_example_glfw_vulkan.exe`; GLFW is fetched at a pinned tag or
   taken from `IMSLUG_GLFW_DIR`). It is an ImGui app with a scene switcher
-  (keys 1–5: demo, widgets/plots/tables, clipping torture, mixed fonts, runtime
-  `FontScaleDpi`) and `--screenshot <file.ppm> [scene] [dpi_scale]` for
-  deterministic offscreen captures.
+  (keys 1–7, 1-based: demo, widgets/plots/tables, clipping torture, mixed fonts,
+  runtime `FontScaleDpi`, 5k-glyph stress, CJK subset), F1/F2/F3 debug-overlay
+  toggles (glyph bounds / band grid / ref heat, `--overlay` on the CLI) and
+  `--screenshot <file.ppm> [scene] [dpi_scale]` for deterministic offscreen
+  captures (scene numbers are 1-based like the keys).
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/golden`, `/bench`, `/check-docs`, `/plan-next`,
   `/update-plan`.
