@@ -5,7 +5,7 @@ rem imslug - scripts\format.bat
 rem
 rem Run clang-format over our C/C++ sources. Vendored trees (third_party/,
 rem vendor/) and generated artifacts (shaders\imslug_shaders_vulkan.h,
-rem example\glfw_vulkan\imslug_example_*.h) are never touched - upstream/emitted
+rem example\common\imslug_example_*.h) are never touched - upstream/emitted
 rem files keep their own byte layout.
 rem
 rem   scripts\format.bat            format in place
@@ -37,7 +37,7 @@ if "%CHECK%"=="1" ( set "CF_ARGS=--dry-run --Werror" ) else ( set "CF_ARGS=-i" )
 
 set "RC=0"
 set "COUNT=0"
-for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/" /c:"shaders/imslug_shaders_vulkan.h" /c:"example/glfw_vulkan/imslug_example_asset.h" /c:"example/glfw_vulkan/imslug_example_font.h"') do (
+for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/" /c:"shaders/imslug_shaders_vulkan.h" /c:"example/common/imslug_example_asset.h" /c:"example/common/imslug_example_font.h"') do (
     "%CLANG_FORMAT%" !CF_ARGS! "%%F" || set "RC=1"
     set /a COUNT+=1
 )

@@ -4,13 +4,13 @@
 #   -DIMSLUG_GEN=<imslug_gen executable>
 #   -DIMSLUG_FONT=<tests/fonts/Roboto-Regular.ttf>
 #   -DIMSLUG_ASSET=<tests/assets/Roboto-ASCII.imslug>
-#   -DIMSLUG_EXAMPLE_DIR=<example/glfw_vulkan>
+#   -DIMSLUG_EXAMPLE_DIR=<example/common>
 #   -DIMSLUG_OUT_DIR=<build>/asset_check
 #
 # It regenerates the asset through the CLI with the exact documented parameters,
 # byte-compares it with the committed file (a stale asset fails here - run
 # scripts/gen_asset.* and commit the result), regenerates the two example
-# headers the GLFW example embeds as its default fonts (packed asset + raw TTF)
+# headers the shared example embeds as its default fonts (packed asset + raw TTF)
 # and byte-compares them with the committed copies, and smoke-runs `info`,
 # `--help`, `--emit-header` (including an emitter-determinism re-run) and
 # `embed` (including a determinism re-run).
@@ -90,7 +90,7 @@ if(NOT header_content MATCHES "imslug_asset_test_data" OR NOT header_content MAT
     message(FATAL_ERROR "emitted header misses the requested symbol")
 endif()
 
-# The two generated headers the GLFW example embeds as its default fonts (the
+# The two generated headers the shared example embeds as its default fonts (the
 # packed asset for Slug, the raw TTF for ImGui's stock atlas loader) must match
 # the committed copies byte for byte.
 set(EMIT_ASSET "${IMSLUG_OUT_DIR}/imslug_example_asset.h")
