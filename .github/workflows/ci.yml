@@ -12,6 +12,9 @@
 # (imslug_packed_loader, imslug_packed_roundtrip, imslug_asset_fresh,
 # imslug_golden_packed*) and a dedicated no-parser job
 # (IMSLUG_TTF_PARSER=OFF) proving the packed path without stb_truetype.
+# M8 adds: the clean-project FetchContent job (a throwaway CMake project
+# consumes this repository as a dependency, builds the example + a minimal
+# consumer and runs them) and the release-polish docs/templates.
 
 name: CI
 
@@ -130,6 +133,28 @@ jobs:
         run: ./scripts/test.sh
       - name: Example runs without a parser
         run: ./build-noparser/imslug_example_glfw_vulkan --help
+
+  # M8: clean-project verification - a throwaway CMake project consumes this
+  # repository via FetchContent (a git clone of the checked-out commit), builds
+  # the GLFW+Vulkan example + a minimal consumer executable and runs both.
+  # Vulkan headers are required at configure time (the example target); GLFW is
+  # fetched and built by imslug. The example's --help path needs no GPU.
+  fetchcontent-smoke:
+    name: Clean-project FetchContent build (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Vulkan + GLFW build deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri \
+            xorg-dev libgl1-mesa-dev ninja-build
+      - name: Clean-project FetchContent build + run
+        run: ./scripts/verify_fetchcontent.sh
 
   # M4: the benchmark harness report is a build artifact (numbers are
   # informational; no budgets are enforced in CI - runner hardware is too

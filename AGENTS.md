@@ -53,6 +53,7 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 | Verify shaders are fresh | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
 | Regenerate the packed test asset (M7) | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
 | Golden-image tests (M2+) | `scripts\golden.bat` | `scripts/golden.sh` |
+| Clean-project FetchContent check (M8) | `scripts\verify_fetchcontent.bat` | `scripts/verify_fetchcontent.sh` |
 | Benchmarks (M4+) | `scripts\bench.bat` | `scripts/bench.sh` |
 | Docs-hygiene check | `scripts\check_docs.bat` | `scripts/check_docs.sh` |
 | clang-format our sources | `scripts\format.bat` (`--check`) | `scripts/format.sh` (`--check`) |
@@ -100,8 +101,8 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   `scripts/fetch_emoji_font.*` (Noto Color Emoji, COLR v1, M5). Provenance and
   pinned SHA-256 live next to them in `tests/fonts/*/PROVENANCE.txt`.
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
-  `/gen-shaders`, `/gen-asset`, `/golden`, `/bench`, `/check-docs`,
-  `/plan-next`, `/update-plan`.
+  `/gen-shaders`, `/gen-asset`, `/golden`, `/verify-fetchcontent`, `/bench`,
+  `/check-docs`, `/plan-next`, `/update-plan`.
 * Golden images run in a headless offscreen pass (`tests/golden/`, PPMs in
   `<build>/golden/`) and skip with exit 77 when no Vulkan device is available:
   the M2 tests compare GPU output against the M1 CPU reference; the M3 test
