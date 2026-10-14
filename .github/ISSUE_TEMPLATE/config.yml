@@ -1,0 +1,4 @@
+# Issue template configuration.
+# Blank issues stay enabled: the templates above cover the common cases, but
+# free-form reports are welcome.
+blank_issues_enabled: true
