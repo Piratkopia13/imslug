@@ -4,8 +4,8 @@
 #
 # Run clang-format over our C/C++ sources. Vendored trees (third_party/,
 # vendor/) and generated artifacts (shaders/imslug_shaders_vulkan.h,
-# example/common/imslug_example_*.h) are never touched - upstream/emitted
-# files keep their own byte layout.
+# shaders/imslug_shaders_webgpu.h, example/common/imslug_example_*.h) are
+# never touched - upstream/emitted files keep their own byte layout.
 #
 #   scripts/format.sh            format in place
 #   scripts/format.sh --check    report files that would change, exit non-zero
@@ -41,6 +41,7 @@ fi
 files=$(git ls-files -co --exclude-standard -- '*.h' '*.hpp' '*.c' '*.cpp' '*.cc' '*.cxx' \
     | grep -Ev '^(third_party|vendor)/' \
     | grep -Ev '^shaders/imslug_shaders_vulkan\.h$' \
+    | grep -Ev '^shaders/imslug_shaders_webgpu\.h$' \
     | grep -Ev '^example/common/imslug_example_(asset|font)\.h$')
 
 count=0

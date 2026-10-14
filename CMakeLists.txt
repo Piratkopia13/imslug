@@ -25,6 +25,21 @@ option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen)" ON)
 option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; OFF = packed .imslug assets only)" ON)
 option(IMSLUG_STATIC_CRT     "MSVC only: link the C runtime statically (/MT) so executables run without the VC++ redistributable" OFF)
 
+# WebGPU backend module (browser builds: Emscripten's --use-port=emdawnwebgpu
+# provides <webgpu/webgpu.h>). Default ON under Emscripten, OFF elsewhere: a
+# native build needs a desktop WebGPU implementation, which this repo does not
+# bundle. Built by scripts/build_web.*; see the imslug-webgpu-backend skill.
+if(EMSCRIPTEN)
+    set(IMSLUG_BACKEND_WEBGPU_DEFAULT ON)
+else()
+    set(IMSLUG_BACKEND_WEBGPU_DEFAULT OFF)
+endif()
+option(IMSLUG_BACKEND_WEBGPU "Build the WebGPU backend module (browser/Emscripten builds)" ${IMSLUG_BACKEND_WEBGPU_DEFAULT})
+unset(IMSLUG_BACKEND_WEBGPU_DEFAULT)
+
+set(IMSLUG_CJK_EMBED_HEADER "" CACHE FILEPATH
+    "Web example: generated header embedding the CJK subset (scripts/build_web.*; empty = not embedded)")
+
 # Mirror the MSVC runtime build-wide: our targets, the Dear ImGui sources and
 # GLFW (below) all end up in one binary, which must never mix /MD and /MT.
 # Off by default; a static-CRT build makes the example a single file that
@@ -266,6 +281,43 @@ if(IMSLUG_BACKEND_VULKAN)
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# WebGPU (backend module; browser/Emscripten). The ImGui adapter shares the
+# pass with the stock imgui_impl_wgpu backend, so the third-party renderer is
+# built here too (mirroring the Vulkan pair).
+# ---------------------------------------------------------------------------
+if(IMSLUG_BACKEND_WEBGPU)
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR
+            "IMSLUG_BACKEND_WEBGPU=ON outside Emscripten: provide a <webgpu/webgpu.h> implementation and the "
+            "matching flags yourself, or leave the option OFF (the default outside Emscripten).")
+    endif()
+
+    add_library(imslug_imgui_wgpu_backend STATIC
+        "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp")
+    set_target_properties(imslug_imgui_wgpu_backend PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(imslug_imgui_wgpu_backend PUBLIC ${IMSLUG_IMGUI_TARGET})
+    # PUBLIC: every consumer compiles against the same port-provided webgpu.h.
+    target_compile_options(imslug_imgui_wgpu_backend PUBLIC --use-port=emdawnwebgpu)
+    if(MSVC)
+        target_compile_options(imslug_imgui_wgpu_backend PRIVATE /w)
+    else()
+        target_compile_options(imslug_imgui_wgpu_backend PRIVATE -w)
+    endif()
+
+    add_library(imslug_webgpu STATIC
+        backends/imslug_impl_webgpu.cpp
+        backends/imslug_impl_webgpu.h)
+    set_target_properties(imslug_webgpu PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_webgpu)
+    target_include_directories(imslug_webgpu PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>"
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+    target_compile_options(imslug_webgpu PUBLIC --use-port=emdawnwebgpu)
+    target_link_libraries(imslug_webgpu PUBLIC imslug imslug_imgui_wgpu_backend)
+    message(STATUS "imslug: WebGPU backend module enabled")
+endif()
+
 if(IMSLUG_BUILD_EXAMPLES)
     if(NOT IMSLUG_HAVE_VULKAN)
         message(STATUS "imslug: examples need Vulkan - skipped")
@@ -362,6 +414,95 @@ if(IMSLUG_BUILD_EXAMPLES)
             IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
             IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
             $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Web example (Emscripten + WebGPU): the browser shell around the shared
+# example app. Built by scripts/build_web.*, which also embeds the fetched CJK
+# subset (IMSLUG_CJK_EMBED_HEADER) and assembles the GitHub Pages site under
+# <build>/site/. OUTPUT_NAME/SUFFIX make Emscripten emit index.html + index.js
+# + index.wasm directly into that directory.
+# ---------------------------------------------------------------------------
+if(IMSLUG_BUILD_EXAMPLES AND EMSCRIPTEN)
+    if(NOT TARGET imslug_webgpu)
+        message(STATUS "imslug: web example skipped (IMSLUG_BACKEND_WEBGPU=OFF)")
+    else()
+        # Dear ImGui's GLFW platform backend (third-party; the contrib.glfw3
+        # port provides GLFW itself) and its demo window TU - separate targets
+        # because the desktop ones only exist in Vulkan builds.
+        add_library(imslug_imgui_glfw_web STATIC
+            "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp")
+        set_target_properties(imslug_imgui_glfw_web PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        target_link_libraries(imslug_imgui_glfw_web PUBLIC ${IMSLUG_IMGUI_TARGET})
+        target_compile_options(imslug_imgui_glfw_web PUBLIC --use-port=contrib.glfw3)
+        if(MSVC)
+            target_compile_options(imslug_imgui_glfw_web PRIVATE /w)
+        else()
+            target_compile_options(imslug_imgui_glfw_web PRIVATE -w)
+        endif()
+
+        add_library(imslug_imgui_demo_web STATIC "${IMSLUG_IMGUI_SOURCE_DIR}/imgui_demo.cpp")
+        set_target_properties(imslug_imgui_demo_web PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        target_link_libraries(imslug_imgui_demo_web PUBLIC ${IMSLUG_IMGUI_TARGET})
+        if(MSVC)
+            target_compile_options(imslug_imgui_demo_web PRIVATE /w)
+        else()
+            target_compile_options(imslug_imgui_demo_web PRIVATE -w)
+        endif()
+
+        add_executable(imslug_example_web
+            example/web/main.cpp
+            example/common/example_app.cpp
+            example/common/example_app.h
+            example/common/imslug_example_asset.h
+            example/common/imslug_example_font.h)
+        set_target_properties(imslug_example_web PROPERTIES
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            OUTPUT_NAME "index"
+            SUFFIX ".html"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/site")
+        imslug_target_defaults(imslug_example_web)
+        target_link_libraries(imslug_example_web PRIVATE
+            imslug imslug_webgpu imslug_imgui_glfw_web imslug_imgui_demo_web)
+        target_include_directories(imslug_example_web PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/example/common"
+            "${IMSLUG_IMGUI_SOURCE_DIR}/examples/libs/emscripten")
+        # Mirrors the pinned Dear ImGui Emscripten example: ASYNCIFY drives the
+        # rAF main loop, no filesystem (all fonts are embedded), assertions
+        # off for the release page, and a 1 MB stack for the font build.
+        target_compile_options(imslug_example_web PRIVATE
+            --use-port=emdawnwebgpu
+            --use-port=contrib.glfw3
+            -sDISABLE_EXCEPTION_CATCHING=1
+            # EM_ASM(...)'s $0 bound variable is the documented Emscripten
+            # pattern; clang warns at the '$' token unless told otherwise.
+            -Wno-dollar-in-identifier-extension)
+        target_link_options(imslug_example_web PRIVATE
+            --use-port=emdawnwebgpu
+            --use-port=contrib.glfw3
+            -sWASM=1
+            -sASYNCIFY=1
+            -sALLOW_MEMORY_GROWTH=1
+            -sNO_EXIT_RUNTIME=1
+            -sDISABLE_EXCEPTION_CATCHING=1
+            -sNO_FILESYSTEM=1
+            -sASSERTIONS=0
+            -sSTACK_SIZE=1048576
+            "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/example/web/shell.html")
+        # The web shell always uses the embedded fonts (no filesystem): no
+        # IMSLUG_PACKED_TEST_ASSET / *_TEST_FONT paths and no --font override.
+        if(IMSLUG_CJK_EMBED_HEADER)
+            if(NOT EXISTS "${IMSLUG_CJK_EMBED_HEADER}")
+                message(FATAL_ERROR
+                    "IMSLUG_CJK_EMBED_HEADER='${IMSLUG_CJK_EMBED_HEADER}' does not exist. Generate it with "
+                    "scripts/build_web.* (imslug_gen embed) or clear the cache entry.")
+            endif()
+            get_filename_component(_imslug_cjk_embed_dir "${IMSLUG_CJK_EMBED_HEADER}" DIRECTORY)
+            target_include_directories(imslug_example_web PRIVATE "${_imslug_cjk_embed_dir}")
+            target_compile_definitions(imslug_example_web PRIVATE IMSLUG_EXAMPLE_CJK_EMBED=1)
+        endif()
     endif()
 endif()
 

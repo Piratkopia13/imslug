@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no"/>
+    <title>imslug - Slug GPU text demo (WebGPU)</title>
+    <style>
+        body { margin: 0; background-color: #0e0e13; overflow: hidden; color: #c8c8d2;
+               font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+        /* Same layout contract as Dear ImGui's Emscripten shell (the GLFW3 port
+           sizes the canvas; do not wrap it in extra containers). */
+        .emscripten {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            margin: 0px;
+            border: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: block;
+            image-rendering: optimizeSpeed;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+        }
+        #canvas:focus { outline: none; }
+        #overlay {
+            position: absolute; inset: 0; display: flex; align-items: center;
+            justify-content: center; text-align: center; pointer-events: none;
+            transition: opacity 0.35s ease;
+        }
+        #overlay.hidden { opacity: 0; }
+        #overlay .panel {
+            max-width: 44rem; margin: 1rem; padding: 1.25rem 1.75rem;
+            background: rgba(14, 14, 19, 0.94); border: 1px solid #3a3a52;
+            border-radius: 10px; pointer-events: auto; text-align: left;
+        }
+        #overlay h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.5rem; color: #e6e6ee; }
+        #overlay p { margin: 0.45rem 0; line-height: 1.5; font-size: 0.92rem; }
+        #overlay .muted { color: #9a9aac; }
+        #overlay .warn { color: #ffb454; }
+        #hint {
+            position: absolute; left: 50%; bottom: 0.6rem; transform: translateX(-50%);
+            font-size: 0.78rem; color: #8c8c9e; background: rgba(14, 14, 19, 0.72);
+            border: 1px solid #2c2c40; border-radius: 6px; padding: 0.25rem 0.7rem;
+            white-space: nowrap; opacity: 0.92;
+        }
+        kbd { font-family: inherit; color: #d8d8e4; background: #26263a; border: 1px solid #3a3a52;
+              border-radius: 4px; padding: 0 0.3rem; font-size: 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <div id="overlay">
+      <div class="panel">
+        <h1 id="overlay-title">Loading the imslug web demo&hellip;</h1>
+        <p id="overlay-text" class="muted">Starting the WebAssembly build.</p>
+        <p id="overlay-detail" class="warn" style="display: none;"></p>
+        <div id="overlay-requirements" style="display: none;">
+          <p class="muted">This demo renders through <b>WebGPU</b>. Recent browsers with WebGPU:</p>
+          <p class="muted">Chrome/Edge 113+ (Windows, macOS, ChromeOS), 121+ (Android), Firefox 141+
+          (Windows) / 145+ (macOS), Safari 26+ (macOS, iOS, iPadOS). On Linux, Chrome needs a
+          recent Mesa/driver stack.</p>
+          <p class="muted">If WebGPU is enabled but the demo still will not start, update the browser
+          or GPU driver and reload the page.</p>
+        </div>
+      </div>
+    </div>
+    <div id="hint">
+      <kbd>1</kbd>-<kbd>9</kbd> <kbd>P</kbd> scenes &nbsp;|&nbsp; <kbd>M</kbd> Slug vs atlas
+      &nbsp;|&nbsp; <kbd>F1</kbd>-<kbd>F3</kbd> overlays
+    </div>
+
+    <script type='text/javascript'>
+      // The web shell and the C++ side communicate through these globals; the
+      // headless smoke (scripts/web_smoke/) and CI read them:
+      //   window.__imslugFrames  - rendered frames since boot (int)
+      //   window.__imslugReady   - true after the first successful frame
+      //   window.__imslugError   - non-empty string on a fatal init error
+      //   window.__imslugSetError(message) - shell helper the C++ side may call
+      window.__imslugFrames = 0;
+      window.__imslugReady = false;
+      window.__imslugError = "";
+
+      (function () {
+        var overlay = document.getElementById('overlay');
+        var titleEl = document.getElementById('overlay-title');
+        var textEl = document.getElementById('overlay-text');
+        var detailEl = document.getElementById('overlay-detail');
+        var reqEl = document.getElementById('overlay-requirements');
+
+        function showOverlay(title, text, detail) {
+          titleEl.textContent = title;
+          textEl.textContent = text;
+          if (detail) {
+            detailEl.textContent = detail;
+            detailEl.style.display = '';
+          }
+          reqEl.style.display = '';
+          overlay.classList.remove('hidden');
+        }
+
+        window.__imslugSetError = function (message) {
+          window.__imslugError = String(message || 'unknown error');
+          showOverlay('The demo could not start', 'WebGPU initialization failed.', window.__imslugError);
+        };
+
+        // C++ hooks (EM_ASM from example/web/main.cpp). The JS lives here so
+        // no C++ formatter can reflow it; the smoke test reads the globals.
+        window.__imslugFrameHook = function () {
+          window.__imslugFrames = (window.__imslugFrames | 0) + 1;
+          if (window.__imslugReady !== true) {
+            window.__imslugReady = true;
+            overlay.classList.add('hidden');
+          }
+        };
+        window.__imslugDeviceLostHook = function () {
+          window.__imslugSetError('WebGPU device lost - see the browser console');
+        };
+
+        if (!navigator.gpu) {
+          window.__imslugError = 'navigator.gpu is unavailable';
+          showOverlay('WebGPU is not available in this browser',
+            'This demo renders through WebGPU, which this browser either does not support or has disabled.', null);
+        } else {
+          navigator.gpu.requestAdapter().then(function (adapter) {
+            if (!adapter) {
+              window.__imslugError = 'no WebGPU adapter';
+              showOverlay('No compatible GPU adapter was found',
+                'WebGPU is present, but the browser could not provide a GPU adapter for this page.', null);
+            }
+          }).catch(function (error) {
+            window.__imslugSetError(error && error.message ? error.message : error);
+          });
+        }
+      })();
+
+      var Module = {
+        preRun: [],
+        postRun: [],
+        print: (function () {
+          return function (text) {
+            text = Array.prototype.slice.call(arguments).join(' ');
+            console.log(text);
+          };
+        })(),
+        printErr: function (text) {
+          text = Array.prototype.slice.call(arguments).join(' ');
+          console.error(text);
+        },
+        canvas: (function () {
+          return document.getElementById('canvas');
+        })(),
+        setStatus: function (text) {
+          console.log("status: " + text);
+        },
+        monitorRunDependencies: function (left) {
+          // no run dependencies to log
+        }
+      };
+      window.onerror = function (message) {
+        console.error("uncaught: " + message);
+      };
+    </script>
+    {{{ SCRIPT }}}
+  </body>
+</html>

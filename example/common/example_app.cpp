@@ -20,6 +20,14 @@
 #include "imslug_example_asset.h"
 #include "imslug_example_font.h"
 
+// The browser build has no filesystem: when the web shell was built with the
+// CJK subset embedded (scripts/build_web.* runs imslug_gen embed and defines
+// IMSLUG_EXAMPLE_CJK_EMBED, adding its directory to the include path), the
+// CJK scene registers that subset instead of probing the fetched file.
+#if defined(__EMSCRIPTEN__) && defined(IMSLUG_EXAMPLE_CJK_EMBED)
+#include "imslug_example_cjk.h"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,9 +227,10 @@ namespace
     }
 
     // CJK scene: the fetched Noto Sans SC subset (scripts/fetch_cjk_font.*)
-    // as a second Slug font. Skipped with a message when the font is absent.
-    // The probe is a desktop seam: a no-filesystem web shell skips it (an
-    // embedded subset is its own follow-up).
+    // as a second Slug font. Desktop probes the fetched file; the web shell
+    // has no filesystem and registers the subset embedded at build time
+    // (IMSLUG_EXAMPLE_CJK_EMBED, scripts/build_web.*). Skipped with a message
+    // when neither is present.
     void SceneCjk()
     {
         ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_FirstUseEver);
@@ -229,7 +238,12 @@ namespace
         if (g_App.CjkFont == nullptr && !g_App.CjkAttempted)
         {
             g_App.CjkAttempted = true;
-#ifndef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) && defined(IMSLUG_EXAMPLE_CJK_EMBED)
+            ImFontConfig cjkConfig;
+            cjkConfig.FontDataOwnedByAtlas = false;
+            g_App.CjkFont =
+                ImSlug::AddFontFromMemoryTTF(imslug_example_cjk_data, (int)imslug_example_cjk_size, 22.0f, &cjkConfig);
+#elif !defined(__EMSCRIPTEN__)
             FILE* cjkFile = fopen(IMSLUG_CJK_TEST_FONT, "rb");
             if (cjkFile != nullptr)
             {
@@ -240,8 +254,13 @@ namespace
         }
         if (g_App.CjkFont == nullptr)
         {
+#if defined(__EMSCRIPTEN__)
+            ImGui::TextWrapped("This web build does not embed the CJK subset. Fetch it (scripts/fetch_cjk_font.*) "
+                               "and rebuild (scripts/build_web.* embeds it; see tests/fonts/cjk/PROVENANCE.txt).");
+#else
             ImGui::TextWrapped("The CJK test font is not fetched. Run scripts/fetch_cjk_font.* (see "
                                "tests/fonts/cjk/PROVENANCE.txt), then restart or reselect this scene.");
+#endif
         }
         else
         {
