@@ -85,6 +85,18 @@ if(IMSLUG_HAVE_VULKAN)
         WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
     set_tests_properties(imslug_golden imslug_golden_dynamic imslug_imgui_golden imslug_imgui_golden_dynamic
         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # M4: the perf harness (scripts/bench.*). Not a ctest suite: it prints and
+    # records machine-specific numbers.
+    add_executable(imslug_tests_bench bench/bench_main.cpp test_util.h)
+    target_link_libraries(imslug_tests_bench PRIVATE imslug imslug_vulkan)
+    set_target_properties(imslug_tests_bench PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_tests_bench)
+    target_include_directories(imslug_tests_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(imslug_tests_bench PRIVATE
+        IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+        IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/cjk/NotoSansSC-subset.ttf"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 else()
     message(STATUS "imslug tests: golden-image tests skipped (Vulkan not found)")
 endif()
