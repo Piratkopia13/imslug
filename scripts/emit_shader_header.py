@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
-"""Emit shaders/imslug_shaders_vulkan.h from compiled SPIR-V files.
+"""Emit the committed shader headers from shader sources.
 
-Called by scripts/gen_shaders.bat / scripts/gen_shaders.sh. Reads every *.spv
-in --input-dir, sorts them by filename, and writes one uint32_t array per
-shader plus a word-count constant:
+Called by scripts/gen_shaders.bat / scripts/gen_shaders.sh.
+
+SPIR-V mode (--mode spirv, the default) emits shaders/imslug_shaders_vulkan.h:
+reads every *.spv in --input-dir, sorts them by filename, and writes one
+uint32_t array per shader plus a word-count constant:
 
     static const uint32_t imslug_slug_vert_spv[] = { 0x07230203, ... };
     static const uint32_t imslug_slug_vert_spv_len = 123;
 
-Output is deterministic (sorted inputs, no timestamps, no absolute paths). The
-generated header is committed on purpose and must never be edited
-by hand (AGENTS.md invariant 1).
+WGSL mode (--mode wgsl) emits shaders/imslug_shaders_webgpu.h: reads every
+*.wgsl in --input-dir, sorts them by filename, and writes one NUL-terminated
+char array per shader -- one C string literal per source line -- plus a
+byte-count constant that excludes the terminating NUL:
+
+    static const char imslug_slug_vert_wgsl[] =
+        "// line 1\\n"
+        "// line 2\\n";
+    static const uint32_t imslug_slug_vert_wgsl_len = 21;
+
+Output is deterministic (sorted inputs, no timestamps, no absolute paths, LF
+endings). The generated headers are committed on purpose and must never be
+edited by hand (AGENTS.md invariant 1).
 """
 
 import argparse
@@ -21,11 +33,24 @@ import sys
 
 SPIRV_MAGIC = 0x07230203
 WORDS_PER_LINE = 8
+WGSL_GUARD = "IMSLUG_SHADERS_WEBGPU_GENERATED_H"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Emit a C header with embedded SPIR-V modules.")
-    parser.add_argument("--input-dir", required=True, help="directory containing .spv files")
+    parser = argparse.ArgumentParser(
+        description="Emit a C header with embedded shader modules."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("spirv", "wgsl"),
+        default="spirv",
+        help="input kind: compiled SPIR-V modules (default) or WGSL sources",
+    )
+    parser.add_argument(
+        "--input-dir",
+        required=True,
+        help="directory containing .spv (spirv mode) or .wgsl (wgsl mode) files",
+    )
     parser.add_argument("--output", required=True, help="path of the header to write")
     return parser.parse_args()
 
@@ -43,25 +68,85 @@ def array_name(filename):
     return "imslug_" + ident + "_spv"
 
 
+def wgsl_array_name(filename):
+    """slug.vert.wgsl -> imslug_slug_vert_wgsl"""
+    core = filename[:-5] if filename.endswith(".wgsl") else filename
+    ident = re.sub(r"[^0-9A-Za-z_]+", "_", core)
+    if not ident or ident[0].isdigit():
+        ident = "shader_" + ident
+    return "imslug_" + ident + "_wgsl"
+
+
 def read_words(path):
     with open(path, "rb") as handle:
         data = handle.read()
     if len(data) == 0 or len(data) % 4 != 0:
-        raise ValueError("%s: not a valid SPIR-V module (size %d is not a multiple of 4)" % (path, len(data)))
+        raise ValueError(
+            "%s: not a valid SPIR-V module (size %d is not a multiple of 4)"
+            % (path, len(data))
+        )
     words = list(struct.unpack("<%dI" % (len(data) // 4), data))
     if words[0] != SPIRV_MAGIC:
-        raise ValueError("%s: not a valid SPIR-V module (bad magic 0x%08x)" % (path, words[0]))
+        raise ValueError(
+            "%s: not a valid SPIR-V module (bad magic 0x%08x)" % (path, words[0])
+        )
     return words
+
+
+def escape_wgsl_line(line):
+    """Wrap one source line (including its line ending) in a C string literal."""
+    out = []
+    for ch in line:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch < " " or ch == "\x7f":
+            out.append(
+                "\\%03o" % ord(ch)
+            )  # octal: at most 3 digits, never eats the next character
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def read_wgsl(path):
+    """Return (byte_count, [C string literal per source line]) for one .wgsl file."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    text = data.decode("utf-8")
+    literals = []
+    parts = text.split("\n")
+    for index, part in enumerate(parts):
+        last = index == len(parts) - 1
+        if last and part == "":
+            break  # the file ended with a newline: no trailing empty line
+        literals.append(escape_wgsl_line(part if last else part + "\n"))
+    return len(data), literals
 
 
 def emit_header(entries):
     lines = []
     lines.append("// Generated by scripts/gen_shaders.* - DO NOT EDIT BY HAND.")
     lines.append("//")
-    lines.append("// Sources: shaders/vulkan/*.{vert,frag,comp}; SPIR-V words, little-endian.")
-    lines.append("// Each array is one compiled module; *_len is its word count (not bytes).")
-    lines.append("// Regenerate with scripts/gen_shaders.bat (Windows) or scripts/gen_shaders.sh,")
-    lines.append("// and commit this header together with its sources (AGENTS.md invariant 1).")
+    lines.append(
+        "// Sources: shaders/vulkan/*.{vert,frag,comp}; SPIR-V words, little-endian."
+    )
+    lines.append(
+        "// Each array is one compiled module; *_len is its word count (not bytes)."
+    )
+    lines.append(
+        "// Regenerate with scripts/gen_shaders.bat (Windows) or scripts/gen_shaders.sh,"
+    )
+    lines.append(
+        "// and commit this header together with its sources (AGENTS.md invariant 1)."
+    )
     lines.append("")
     lines.append("#ifndef IMSLUG_SHADERS_VULKAN_GENERATED_H")
     lines.append("#define IMSLUG_SHADERS_VULKAN_GENERATED_H")
@@ -71,7 +156,7 @@ def emit_header(entries):
     for name, words in entries:
         lines.append("static const uint32_t %s[] = {" % name)
         for start in range(0, len(words), WORDS_PER_LINE):
-            chunk = words[start:start + WORDS_PER_LINE]
+            chunk = words[start : start + WORDS_PER_LINE]
             lines.append("    " + " ".join("0x%08x," % word for word in chunk))
         lines.append("};")
         lines.append("static const uint32_t %s_len = %d;" % (name, len(words)))
@@ -81,25 +166,75 @@ def emit_header(entries):
     return "\n".join(lines)
 
 
+def emit_wgsl_header(entries):
+    lines = []
+    lines.append("// Generated by scripts/gen_shaders.* - DO NOT EDIT BY HAND.")
+    lines.append("//")
+    lines.append(
+        "// Sources: shaders/wgsl/*.wgsl; WGSL source text, one C string literal per line."
+    )
+    lines.append(
+        "// Each array is one WGSL module (NUL-terminated); *_len is its byte count"
+    )
+    lines.append("// excluding the terminating NUL.")
+    lines.append(
+        "// Regenerate with scripts/gen_shaders.bat (Windows) or scripts/gen_shaders.sh,"
+    )
+    lines.append(
+        "// and commit this header together with its sources (AGENTS.md invariant 1)."
+    )
+    lines.append("")
+    lines.append("#ifndef %s" % WGSL_GUARD)
+    lines.append("#define %s" % WGSL_GUARD)
+    lines.append("")
+    lines.append("#include <stdint.h>")
+    lines.append("")
+    for name, byte_count, literals in entries:
+        lines.append("static const char %s[] =" % name)
+        if literals:
+            for literal in literals:
+                lines.append("    " + literal)
+            lines[-1] += ";"
+        else:
+            lines.append('    "";')
+        lines.append("static const uint32_t %s_len = %d;" % (name, byte_count))
+        lines.append("")
+    lines.append("#endif  // %s" % WGSL_GUARD)
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     args = parse_args()
     if not os.path.isdir(args.input_dir):
-        print("emit_shader_header: input directory not found: %s" % args.input_dir, file=sys.stderr)
+        print(
+            "emit_shader_header: input directory not found: %s" % args.input_dir,
+            file=sys.stderr,
+        )
         return 1
 
+    suffix = ".spv" if args.mode == "spirv" else ".wgsl"
     names = sorted(
-        name for name in os.listdir(args.input_dir)
-        if name.endswith(".spv") and os.path.isfile(os.path.join(args.input_dir, name))
+        name
+        for name in os.listdir(args.input_dir)
+        if name.endswith(suffix) and os.path.isfile(os.path.join(args.input_dir, name))
     )
     if not names:
-        print("emit_shader_header: no .spv files found in %s" % args.input_dir, file=sys.stderr)
+        print(
+            "emit_shader_header: no %s files found in %s" % (suffix, args.input_dir),
+            file=sys.stderr,
+        )
         return 1
 
     entries = []
     for name in names:
         path = os.path.join(args.input_dir, name)
         try:
-            entries.append((array_name(name), read_words(path)))
+            if args.mode == "spirv":
+                entries.append((array_name(name), read_words(path)))
+            else:
+                byte_count, literals = read_wgsl(path)
+                entries.append((wgsl_array_name(name), byte_count, literals))
         except (OSError, ValueError) as exc:
             print("emit_shader_header: %s" % exc, file=sys.stderr)
             return 1
@@ -107,8 +242,9 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.output))
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+    text = emit_header(entries) if args.mode == "spirv" else emit_wgsl_header(entries)
     with open(args.output, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(emit_header(entries))
+        handle.write(text)
 
     print("emit_shader_header: wrote %s (%d module(s))" % (args.output, len(entries)))
     return 0

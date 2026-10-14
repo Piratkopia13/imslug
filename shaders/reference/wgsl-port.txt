@@ -1,0 +1,130 @@
+imslug WebGPU shaders - WGSL port notes
+=======================================
+
+Files
+  shaders/wgsl/slug.vert.wgsl   WGSL port of shaders/vulkan/slug.vert
+  shaders/wgsl/slug.frag.wgsl   WGSL port of shaders/vulkan/slug.frag
+  shaders/imslug_shaders_webgpu.h
+      generated + committed by scripts/gen_shaders.* (WGSL mode); never edited
+      by hand (AGENTS.md invariant 1).
+
+Lockstep rule
+  The WGSL files are hand-maintained ports of the authoritative GLSL sources.
+  Any change to shaders/vulkan/slug.{vert,frag} must be ported here in the same
+  commit: diff the two files side by side (the port keeps the function names
+  and comments readable) and run scripts/gen_shaders.* (regenerates the
+  embedded header, --check verifies it). The GPU-vs-CPU golden tests remain the
+  arbiter for the Vulkan path; the WebGPU path is validated once the browser
+  backend/example lands.
+
+GLSL -> WGSL mapping
+  gl_VertexIndex                -> @builtin(vertex_index) (u32)
+  instance layout(location=N) in ...
+                                -> @location(N) field of the vertex entry
+                                   point's parameter struct; vertex step mode
+                                   "instance" is WebGPU pipeline state
+                                   (WGPUVertexStepMode_Instance)
+  flat varying                  -> @interpolate(flat) (integers are flat by
+                                   rule; the attribute is written explicitly)
+  push_constant block           -> var<uniform> pc: Pc at @group(0) @binding(3);
+                                   the C++ side supplies an 80-byte record
+                                   (see the layout below)
+  sampler2D + texelFetch        -> texture_2d<f32> + textureLoad(t, vec2<i32>, 0)
+                                   (NO samplers anywhere: nearest texel access
+                                   is exactly what texelFetch did)
+  usampler2D                    -> texture_2d<u32>; textureLoad returns
+                                   vec4<u32>, the two u16 fields are .xy
+  readonly buffer (std430)      -> var<storage, read>; identical layout
+  floatBitsToUint(x)            -> bitcast<u32>(x)
+  atan(y, x)                    -> atan2(y, x)
+  fwidth / fract / mix / clamp  -> same names
+  explicit uint/int/float casts -> explicit i32()/u32()/f32() constructors
+                                   everywhere (WGSL has no implicit conversions)
+  fragment out vec4 outColor    -> @location(0) return value
+  vec2 / vec3 / vec4            -> vec2<f32> / vec3<f32> / vec4<f32>
+  ivec2 / uvec2 / uvec4         -> vec2<i32> / vec2<u32> / vec4<u32>
+  cond ? x : y                  -> select(y, x, cond)
+  cond ? f() : g() (calls)      -> an if/else (WGSL select evaluates both arms;
+                                   the paint path must not run for plain glyphs)
+  chained t1 = t2 = expr        -> two assignments (WGSL has no chained
+                                   assignment)
+  gl_Position                   -> @builtin(position) field of the returned
+                                   struct
+  out parameters                -> ptr<function, T> parameters (SlugDilate)
+  discard                       -> discard;
+  precision highp float/int     -> nothing (WGSL has no precision qualifiers)
+
+Interface (frozen; consumer: backends/imslug_impl_webgpu.cpp)
+  Bind group 0, binding 0: texture_2d<f32> curve_tex   RGBA16F curve pool
+  Bind group 0, binding 1: texture_2d<u32> band_tex    R16G16_UINT band pool
+  Bind group 0, binding 2: var<storage, read> paints   SlugPaintBuffer
+                           (352-byte SlugPaintRecord at offsets
+                            0/16/32/48/64/80/96, array<vec2<u32>,32> Stops)
+  Bind group 0, binding 3: var<uniform> pc: Pc         (dynamic-offset ring)
+  Uniform record Pc (80 bytes): mvp0..mvp3 at 0/16/32/48, viewport at 64,
+  debug_flags at 72, 4 bytes of trailing padding. Declared in BOTH stages (the
+  fragment stage reads only debug_flags), mirroring the GLSL push constant
+  block and its VERTEX|FRAGMENT layout range.
+  Vertex inputs @location(0)..(7): InEmBBox, InScreenRect, InJac, InBanding,
+  InGlyphLoc, InBandMaxWord, InColor, InPaintIndex.
+  Vertex outputs / fragment inputs @location(0)..(7): vTexCoord, vBanding
+  (flat), vGlyphLoc (flat), vBandMaxWord (flat), vColor, vScreenPos,
+  vScreenRect (flat), vPaintIndex (flat).
+  Fragment output @location(0) vec4<f32>.
+
+Deliberate deviations (GLSL -> WGSL, and why)
+  1. No push constants: WebGPU has none. The same bytes travel as a uniform
+     buffer bound with a dynamic offset (one 80-byte record per draw batch).
+  2. No samplers: every texture access was already texelFetch (nearest, no
+     filtering, no wrap - CalcBandLoc does the manual row wrap), so the WGSL
+     uses textureLoad and needs no sampler bindings.
+  3. Explicit conversions everywhere: float(u), int(v), uint(f), ivec2(uvec2)
+     etc. become f32()/i32()/u32()/vec2<i32>() constructors.
+  4. t1 = t2 = (|b| >= eps) ? c * (0.5/b) : 0.0 becomes
+     t1 = select(0.0, c * (0.5/b), |b| >= eps); t2 = t1;
+     (no chained assignment, no ?: operator; select is the value-level form).
+  5. t = (t1 > t0) ? clamp(...) : 0.0 -> select(0.0, clamp(...), t1 > t0).
+  6. i == 0 ? candidate0 : candidate1 -> select(candidate1, candidate0, i == 0).
+  7. isColored ? SamplePaint(...) : vec4(1.0) -> an if; select would evaluate
+     SamplePaint (including the paint storage reads) for every fragment.
+  8. Identifier `type` -> `paintType`: `type` is a WGSL reserved word.
+  9. The GLSL `const int kMaxPaintStops = 32;` is not ported: it is unused
+     there; in WGSL the cap is encoded in the array type
+     `array<vec2<u32>, 32>`.
+ 10. kLogBandTextureWidth is a u32 constant: WGSL shift operators take an
+     unsigned right-hand side; the value (12) is unchanged.
+ 11. The multi-component lvalue `debugColor.rgb = ...` is written as a full
+     vec4 assignment (multi-component swizzle assignment is not core WGSL).
+ 12. gl_Position and the output varyings are fields of the single struct the
+     vertex entry point returns; the fragment entry point takes the matching
+     input struct (locations 0..7, as above).
+ 13. The WGSL sources are pure ASCII (the GLSL banners carry UTF-8 dashes and
+     arrows): the generated header embeds the text as C string literals, so the
+     sources must compile warning-free under any source charset.
+ 14. #version and the precision statements are dropped (no WGSL equivalent).
+
+Port checklist coverage (must stay visible in the WGSL)
+  - SlugUnpack/SlugDilate: perspective-correct 1 px dilation from the MVP rows,
+    sample coordinate re-derived through the inverse Jacobian.
+  - CalcBandLoc with the log2 width 12 / 4096-texel pool width.
+  - CalcRootCode: the sign-bit equivalence classes and the |a| < 1/65536
+    linear fallback with the |b| >= 1/65536 guard (matching the CPU arbiter
+    imslug_refraster.cpp).
+  - SolveHorizPoly/SolveVertPoly winding accumulation with coverage weights.
+  - CalcCoverage combine + the even-odd flag at bit 28 of the packed bandMax
+    word (bit 12 of its high 16-bit half).
+  - Instance-mode vertex generation: corner from the vertex index,
+    dir = (2 corner.x - 1, 1 - 2 corner.y), the Y flip in the screen rect mix.
+  - fill < 0.001 discard; unpremultiplied output for the ImGui-exact blend
+    state (pipeline state, not shader state).
+  - Color layer evaluation: PaintStopOffset, UnpackPaintColor,
+    ExtendPaintParameter, SamplePaintColorLine, SamplePaint.
+
+Verification
+  - scripts/gen_shaders.* regenerates shaders/imslug_shaders_webgpu.h from the
+    sources; --check fails when the committed header is stale.
+  - The generated header was compiled as a C++ TU (emcc -std=c++17
+    -fsyntax-only) to pin the embedding contract.
+  - Browser WGSL validation is exercised once the WebGPU backend/example lands;
+    until then this file is the review aid for keeping the two shader families
+    in lockstep.
