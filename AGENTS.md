@@ -64,11 +64,15 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 * `IMSLUG_BUILD_EXAMPLES=ON` (configure option) builds the GLFW+Vulkan example
   (`build/imslug_example_glfw_vulkan.exe`; GLFW is fetched at a pinned tag or
   taken from `IMSLUG_GLFW_DIR`). It is an ImGui app with a scene switcher
-  (keys 1–7, 1-based: demo, widgets/plots/tables, clipping torture, mixed fonts,
-  runtime `FontScaleDpi`, 5k-glyph stress, CJK subset), F1/F2/F3 debug-overlay
-  toggles (glyph bounds / band grid / ref heat, `--overlay` on the CLI) and
-  `--screenshot <file.ppm> [scene] [dpi_scale]` for deterministic offscreen
-  captures (scene numbers are 1-based like the keys).
+  (keys 1–8, 1-based: demo, widgets/plots/tables, clipping torture, mixed fonts,
+  runtime `FontScaleDpi`, 5k-glyph stress, CJK subset, color emoji), F1/F2/F3
+  debug-overlay toggles (glyph bounds / band grid / ref heat, `--overlay` on the
+  CLI) and `--screenshot <file.ppm> [scene] [dpi_scale]` for deterministic
+  offscreen captures (scene numbers are 1-based like the keys).
+* Fetched, gitignored test assets (optional; suites skip when absent):
+  `scripts/fetch_cjk_font.*` (Noto Sans SC subset, M4) and
+  `scripts/fetch_emoji_font.*` (Noto Color Emoji, COLR v1, M5). Provenance and
+  pinned SHA-256 live next to them in `tests/fonts/*/PROVENANCE.txt`.
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/golden`, `/bench`, `/check-docs`, `/plan-next`,
   `/update-plan`.

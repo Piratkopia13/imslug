@@ -302,6 +302,61 @@ to `FitAxis`/`ReconstructPlacement` must keep `tests/test_fuzz.cpp` (both
 profiles, including the high-slot phase) green; the harness bounds are the
 contract.
 
+## M5: color fonts (COLR v0/v1) - the color glyph cache and paint pool
+
+`imslug_colr.{h,cpp}` (reader + cache) and `imslug_colr.h`'s API; the data
+contract lives in `imslug_internal.h`:
+
+* **Reading.** An SFNT table directory scan over the *same font bytes* stbtt
+  uses (ttcf-aware, `font->FontInfo.fontstart`), then CPAL (palette 0; palette
+  index 0xFFFF = the text foreground = white for Colored glyphs) and COLR
+  (v0 base/layer records, v1 BaseGlyphList/LayerList/ClipList; every Offset24 is
+  relative to its *parent paint*, LayerList entries to the LayerList start,
+  ClipList format 1 = `{u8 format, u32 count, {startGlyphID u16, endGlyphID u16,
+  boxOffset u24}[count]}` with the box offset from the ClipList start). Every
+  read is bounds-checked; a malformed table yields "no color glyph" (monochrome
+  fallback), never a crash. `PaintVar*` reads the default (non-variation)
+  fields.
+* **Flattening.** A paint graph becomes a draw-order `ImSlugColorLayer` list:
+  transforms compose (Affine2x3/translate/scale/rotate/skew, spec field orders;
+  `x' = xx*x + xy*y + dx`), `PaintColrLayers` expands in order,
+  `PaintColrGlyph` recurses (an in-flight glyph stack refuses cycles),
+  `PaintGlyph` emits one layer (its fill resolved through nested transform
+  wrappers to a solid or gradient leaf), and `PaintComposite` maps SRC_OVER /
+  SRC / DEST / DEST_OVER to draw order while SRC_IN / DEST_IN / SRC_OUT /
+  DEST_OUT with a constant `PaintSolid` mask fold the mask alpha into the
+  layers. Everything else (SRC_ATOP/XOR, blend modes incl. SOFT_LIGHT) is
+  approximated as source-over; caps: 512 layers, depth 32, 4096 paints per
+  glyph, 32 color stops.
+* **Layer records.** A layer whose transform is a positive axis-aligned
+  scale+translate reuses the glyph's own record with `ScaleX/Y` +
+  `OffsetX/YEm` (the instance mapping); anything else (rotation, skew, mirror)
+  bakes the transform into a synthetic record built from the transformed
+  quads, so the record space is always the shader's sample space. The paint
+  record's `Xform` maps record space to paint-local space (the inverse of the
+  layer/fill transform chain), and the ClipBox is mapped into record space
+  too.
+* **Metrics.** An empty base outline (Noto's emoji have no `glyf` contours)
+  gets a synthesized box from the layer union with the metrics formulas
+  (floor/ceil + rounded ascent), so advances/layout stay the monochrome
+  path's; `ImSlugColorGlyph::BaseRecord` is the bbox-only record the slab uses
+  for fine-clip reconstruction.
+* **Paint pool.** One `ImSlugPaintRecord` (352 B, static_asserted) per layer in
+  `ImSlugPools::Paints`; the GPU reads it via binding 2 (shaders skill). Solid
+  colors and every stop are RGBA8 with the CPAL alpha and the folded mask
+  alpha applied; stop offsets keep their raw F2DOT14 values (packed as two u32
+  per stop: offset, color - one u32 would overlap the offset with the alpha
+  byte). `ImSlugSamplePaintRecord` is the CPU mirror the goldens use.
+* **Instances.** `ImSlugBuildColorGlyphInstances(colorGlyph, penX, penY, ppem,
+  tintA, out, capacity, outLayerIndices)` emits one instance per layer with
+  `Color = (1,1,1,tintA)` and `PaintIndex`; the pre-pass calls it per color
+  glyph and unions the layer rects into the run scissor (uncropped glyphs
+  only - a fine-clipped glyph's pinned edges stay authoritative).
+* **Fallbacks (never crash, never half-draw):** unsupported paint formats are
+  skipped; a glyph with no usable layer renders monochrome; `Config::
+  EnableColorFonts = false` disables the whole path (read at bake time); pool
+  or slab limits fall back like M1/M3.
+
 ## ImGui version support / master drift (R1)
 
 Supported + verified: **v1.92.9b** (the pinned `IMSLUG_IMGUI_TAG`). `imslug.h`
@@ -323,6 +378,13 @@ full suite; also a daily informational CI job):
   glyph records by index (`ImSlugGetGlyphRecordByIndex` already exists), and
   revisit the synthetic ellipsis (its "contains" check is index-based now).
   Planned with the next upstream release, not for the pinned-version milestone.
+
+**Non-BMP codepoints (M5 note).** With the default 16-bit `ImWchar` (no
+`IMGUI_USE_WCHAR32`), ImGui cannot address codepoints above U+FFFF at all - most
+emoji (U+1F600+) are unreachable, so the ImGui-level tests and the example scene
+use BMP emoji (U+2600..U+2BFF) and the color-font goldens bypass ImGui. An app
+that wants full emoji must build ImGui *and* imslug with `IMGUI_USE_WCHAR32` (the
+adapter passes `ImWchar` straight through).
 
 Keep the smoke job informational (`continue-on-error`): a red run means
 "upstream moved something", while the pinned v1.92.9b jobs stay the gate.

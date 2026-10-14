@@ -2,7 +2,8 @@
 # ============================================================================
 # imslug - scripts/golden.sh
 #
-# Build and run the M2 golden-image tests: headless offscreen Vulkan rendering
+# Build and run the golden-image tests (M2 scenes, M3 Slug-vs-atlas, M5 emoji):
+# headless offscreen Vulkan rendering
 # of fixed strings at sizes 12/16/32/64 x DPI scales 1.0/1.25/2.0, compared per
 # pixel against the M1 CPU reference rasterizer. Both render paths are
 # exercised: a classic render pass and core Vulkan 1.3 dynamic rendering.
@@ -24,7 +25,7 @@ BUILD_DIR="${IMSLUG_BUILD_DIR:-build}"
 BUILD_TYPE="${IMSLUG_BUILD_TYPE:-Release}"
 
 echo "[golden] build step"
-"$(dirname "$0")/build.sh" --target imslug_tests_golden imslug_tests_imgui_golden || exit 1
+"$(dirname "$0")/build.sh" --target imslug_tests_golden imslug_tests_imgui_golden imslug_tests_emoji_golden || exit 1
 
 CTEST_EXE="${IMSLUG_CTEST:-ctest}"
 

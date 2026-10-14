@@ -50,7 +50,7 @@ namespace
     const int kDefaultSize = 17;
     const int kMinSize = 12;
     const int kMaxSize = 48;
-    const int kSceneCount = 7;
+    const int kSceneCount = 8;
 
     struct App
     {
@@ -90,7 +90,11 @@ namespace
         ImFont* SlugFont;   // rendered by Slug
         ImFont* StockFont;  // rendered through the atlas (mixed-font scene)
         ImFont* CjkFont;    // fetched CJK subset (M4 stress scene; may stay null)
+        ImFont* EmojiFont;  // fetched Noto Color Emoji (M5 scene; may stay null)
         bool CjkAttempted;
+        bool EmojiAttempted;
+        float EmojiSize;  // M5 scene: emoji text size (12..96 px)
+        float EmojiZoom;  // M5 scene: single-glyph zoom (32..220 px)
         bool ImGuiInitialized;
         bool ImSlugBackendInitialized;
         bool FontsDirty;  // re-add fonts at the current size next frame
@@ -841,6 +845,59 @@ namespace
         ImGui::End();
     }
 
+    // M5 emoji scene: the fetched Noto Color Emoji (COLR v1; scripts/fetch_emoji_font.*).
+    // The example's ImGui build uses the default 16-bit ImWchar, so the scene
+    // sticks to BMP emoji (U+2600..U+2BFF); non-BMP codepoints (U+1F600+)
+    // require IMGUI_USE_WCHAR32 in the whole app build. The scene shows the
+    // layers at several sizes plus one glyph zoomed up to 220 px so the v1
+    // gradients (radial/linear paints) are visible at arbitrary zoom.
+    void SceneEmoji()
+    {
+        ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("color emoji (COLR v1)");
+        if (g_App.EmojiFont == nullptr && !g_App.EmojiAttempted)
+        {
+            g_App.EmojiAttempted = true;
+            FILE* emojiFile = fopen(IMSLUG_EMOJI_TEST_FONT, "rb");
+            if (emojiFile != nullptr)
+            {
+                fclose(emojiFile);
+                g_App.EmojiFont = ImSlug::AddFontFromFileTTF(IMSLUG_EMOJI_TEST_FONT, 24.0f);
+            }
+        }
+        if (g_App.EmojiFont == nullptr)
+        {
+            ImGui::TextWrapped("The color-emoji test font is not fetched. Run scripts/fetch_emoji_font.* (see "
+                               "tests/fonts/emoji/PROVENANCE.txt), then restart or reselect this scene.");
+        }
+        else
+        {
+            ImGui::TextWrapped("Noto Color Emoji: one Slug instance per COLR layer, flat v0/v1 solids and v1 gradients "
+                               "(radial/linear) evaluated per fragment. Tint only fades the layer colors.");
+            ImGui::SliderFloat("emoji size", &g_App.EmojiSize, 12.0f, 96.0f, "%.0f px");
+            static const char* kEmoji = "\xE2\x98\x80 \xE2\x9B\x85 \xE2\x9D\xA4 \xE2\xAD\x90 \xE2\x9A\xA1 \xE2\x9C\xA8 "
+                                        "\xE2\x9B\x84 \xE2\x98\x94 \xE2\x9A\xBD \xE2\x9C\x82 \xE2\x99\xBB \xE2\x9A\x93";
+            ImGui::PushFont(g_App.EmojiFont, g_App.EmojiSize);
+            ImGui::TextUnformatted(kEmoji);
+            ImGui::PopFont();
+
+            ImGui::Separator();
+            ImGui::Text("zoom (gradients stay exact):");
+            const float zoom = g_App.EmojiZoom;
+            ImGui::SliderFloat("zoom size", &g_App.EmojiZoom, 32.0f, 220.0f, "%.0f px");
+            ImGui::PushFont(g_App.EmojiFont, zoom);
+            ImGui::TextUnformatted("\xE2\x9D\xA4");
+            ImGui::PopFont();
+
+            ImGui::Separator();
+            Statistics stats;
+            ImSlug::GetStatistics(&stats);
+            ImGui::Text("this frame: %u instances (%u color layers), %u runs", stats.Instances, stats.ColorLayers,
+                        stats.LiveBatches);
+        }
+        ImGui::End();
+    }
+
     // M4 debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
     // Returns the new state so a caller can react (keys and checkboxes share it).
     bool ToggleDebugOverlay(uint32_t flag)
@@ -857,12 +914,12 @@ namespace
 
     void DrawSceneSwitcher()
     {
-        const char* sceneNames[kSceneCount] = { "demo window",         "widgets / plots / tables", "clipping torture",
-                                                "mixed fonts",         "runtime FontScaleDpi",     "5k glyph stress",
-                                                "CJK (fetched subset)" };
+        const char* sceneNames[kSceneCount] = { "demo window",          "widgets / plots / tables", "clipping torture",
+                                                "mixed fonts",          "runtime FontScaleDpi",     "5k glyph stress",
+                                                "CJK (fetched subset)", "color emoji (COLR v1)" };
         ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
-        ImGui::Begin("imslug M4 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Begin("imslug M5 example", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("Scene (keys 1-%d):", kSceneCount);
         for (int i = 0; i < kSceneCount; ++i)
             if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)))
@@ -921,8 +978,11 @@ namespace
         case 5:
             SceneStress();
             break;
-        default:
+        case 6:
             SceneCjk();
+            break;
+        default:
+            SceneEmoji();
             break;
         }
     }
@@ -1236,6 +1296,8 @@ namespace
         g_App.FontPath = nullptr;
         g_App.BaseSize = kDefaultSize;
         g_App.Scene = 0;
+        g_App.EmojiSize = 24.0f;
+        g_App.EmojiZoom = 120.0f;
         int sceneNumber = 0;  // 1-based scene number on the CLI (0 = not given)
         g_App.DpiScale = 1.0f;
         g_App.ShowDemoStats = false;

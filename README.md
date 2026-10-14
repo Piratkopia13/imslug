@@ -10,11 +10,10 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M4
-> (robustness/perf/polish: fine-clip fuzzing, stress scenes, tuned band defaults,
-> a benchmark harness with measured numbers, a debug overlay; see
-> `docs/DESIGN.md`). The API, data formats and handle encoding are still moving;
-> M5 adds color fonts.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M5
+> (color fonts: COLR v0/v1 layers, gradients, emoji; see `docs/DESIGN.md`
+> section 9). The API, data formats and handle encoding are still moving;
+> M6 freezes the public API for bindings.
 
 ## Requirements
 
@@ -59,11 +58,15 @@ ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
 
 Registered fonts render through Slug at any size/DPI without atlas bitmaps;
 every other font, shape and texture keeps going through ImGui's own path.
+Color fonts (COLR v0/v1) render one Slug instance per layer with per-fragment
+paint evaluation (flat colors, linear/radial/sweep gradients, ClipBoxes); the
+fetched Noto Color Emoji is used by the emoji scene and the emoji goldens.
 The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
 `build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
 window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts,
-a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene and the fetched
-CJK subset, plus debug overlay toggles (F1/F2/F3) and
+a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene, the fetched
+CJK subset and the color-emoji scene (with a zoom slider for the gradients),
+plus debug overlay toggles (F1/F2/F3) and
 `--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
 
 Design notes, the measured performance numbers and the debug-overlay /

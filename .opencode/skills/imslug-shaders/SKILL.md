@@ -104,6 +104,27 @@ half, the reference's `glyphData.w` test; PLAN §11 D8(g)) - TTF glyphs use the
 nonzero rule (E = 0). Output is **unpremultiplied**:
 `vec4(vColor.rgb, vColor.a * fill)` with `discard` when `fill < 0.001`.
 
+**M5 paint records (color layers).** `slug.frag` adds binding 2, an `std430`
+`readonly buffer SlugPaintBuffer { SlugPaintRecord Paints[]; }` (352-byte
+records; the C++ mirror is `ImSlugPaintRecord`, static_asserted: `uvec4 Header`
+= (type, extend, stopCount, solidColor RGBA8), `vec4 Xform0/1` = the record-space
+-> paint-local affine, `vec4 Geo0/1` = linear (p0.xy, p1.xy)+(p2.xy) / radial
+(c0.xy, r0)+(c1.xy, r1) / sweep (center.xy, startDeg, endDeg), `vec4 Clip` =
+record-space ClipBox (disabled when max <= min), `uvec2 Stops[32]` = (raw
+F2DOT14 offset, RGBA8 color) pairs). The instance's new flat `uint
+vPaintIndex` (loc 7) selects a record; `0xFFFFFFFF` means "plain glyph" and the
+shader takes the M2 path with one uniform compare, so color-free text never
+enters the paint code. For a color layer the shader resolves the paint at the
+fragment's em coordinate (solid / linear via the spec's p2 rotation point /
+two-point conical radial per the WHATWG algorithm / sweep in counter-clockwise
+degrees with the spec's BiasedAngle) and outputs
+`vec4(paint.rgb, paint.a * vColor.a * fill)` - the instance color contributes
+the tint alpha only, matching ImGui's `Colored` semantics (RGB forced to 255).
+`ImSlugSamplePaintRecord()` in `imslug_colr.cpp` is the CPU mirror; the emoji
+golden compares GPU against it (the arbiter) and `tests/test_colr.cpp` unit-tests
+both against hand-computed values. Semantics and fallbacks are documented in
+`docs/DESIGN.md` section 9 (PLAN §11 D20/D21).
+
 **M4 debug overlay (shader side, PLAN §11 D17).** When `pc.DebugFlags != 0` the
 shader returns a debug color and never discards, so the whole dilated quad
 stays visible: `RefHeat` (bit 2) maps the band-reference walk count of the
@@ -153,5 +174,8 @@ a premultiplied blend state.)
    and scales 1.0/1.25/2.0 (+ a 3.5x zoom case), GPU vs the M1 CPU rasterizer,
    both the render-pass and dynamic-rendering paths, validation layers on (any
    validation error fails the run). They skip with exit 77 without a device.
+   The M5 color-font goldens (`imslug_emoji_golden`, same script) compare emoji
+   layers against `ImSlugSamplePaintRecord`; they additionally skip when the
+   fetched Noto Color Emoji asset is absent.
 4. Fallback check: unregistered fonts still render through ImGui's texture path
    (the non-Slug path must never depend on shader changes).

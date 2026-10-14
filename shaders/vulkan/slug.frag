@@ -212,48 +212,51 @@ float ExtendPaintParameter(float t, uint extend)
     return clamp(t, 0.0, 1.0);  // pad
 }
 
-vec4 SamplePaintColorLine(SlugPaintRecord paint, float t)
+vec4 SamplePaintColorLine(uint index, float t)
 {
-    uint count = paint.Header.z;
+    uint count = Paints[index].Header.z;
     if (count == 0u)
         return vec4(0.0);
     uint upper = 1u;
-    while (upper < count && PaintStopOffset(paint.Stops[upper]) < t)
+    while (upper < count && PaintStopOffset(Paints[index].Stops[upper]) < t)
         ++upper;
     if (upper >= count)
-        return UnpackPaintColor(paint.Stops[count - 1u].y);
+        return UnpackPaintColor(Paints[index].Stops[count - 1u].y);
     uint lower = upper - 1u;
-    float t0 = PaintStopOffset(paint.Stops[lower]);
-    float t1 = PaintStopOffset(paint.Stops[upper]);
+    float t0 = PaintStopOffset(Paints[index].Stops[lower]);
+    float t1 = PaintStopOffset(Paints[index].Stops[upper]);
     float f = (t1 > t0) ? clamp((t - t0) / (t1 - t0), 0.0, 1.0) : 0.0;
-    return mix(UnpackPaintColor(paint.Stops[lower].y), UnpackPaintColor(paint.Stops[upper].y), f);
+    return mix(UnpackPaintColor(Paints[index].Stops[lower].y), UnpackPaintColor(Paints[index].Stops[upper].y), f);
 }
 
+// Reads fields straight from the buffer (no by-value struct copy: the 352-byte
+// record would otherwise occupy a large register block in every fragment,
+// including the color-free path's shader).
 vec4 SamplePaint(uint index, vec2 emCoord)
 {
-    SlugPaintRecord paint = Paints[index];
-
     // ClipBox (record em space); disabled when max <= min.
-    if (paint.Clip.z > paint.Clip.x && paint.Clip.w > paint.Clip.y)
+    vec4 clip = Paints[index].Clip;
+    if (clip.z > clip.x && clip.w > clip.y)
     {
-        if (emCoord.x < paint.Clip.x || emCoord.x > paint.Clip.z || emCoord.y < paint.Clip.y ||
-            emCoord.y > paint.Clip.w)
+        if (emCoord.x < clip.x || emCoord.x > clip.z || emCoord.y < clip.y || emCoord.y > clip.w)
             return vec4(0.0);
     }
 
-    uint type = paint.Header.x;
+    uint type = Paints[index].Header.x;
     if (type == 0u)  // solid
-        return UnpackPaintColor(paint.Header.w);
+        return UnpackPaintColor(Paints[index].Header.w);
 
-    float localX = paint.Xform0.x * emCoord.x + paint.Xform0.y * emCoord.y + paint.Xform0.z;
-    float localY = paint.Xform1.x * emCoord.x + paint.Xform1.y * emCoord.y + paint.Xform1.z;
+    vec4 xform0 = Paints[index].Xform0;
+    vec4 xform1 = Paints[index].Xform1;
+    float localX = xform0.x * emCoord.x + xform0.y * emCoord.y + xform0.z;
+    float localY = xform1.x * emCoord.x + xform1.y * emCoord.y + xform1.z;
 
     float t = 0.0;
     if (type == 1u)  // linear: iso-color lines parallel to line p0p2
     {
-        vec2 p0 = paint.Geo0.xy;
-        vec2 p1 = paint.Geo0.zw;
-        vec2 p2 = paint.Geo1.xy;
+        vec2 p0 = Paints[index].Geo0.xy;
+        vec2 p1 = Paints[index].Geo0.zw;
+        vec2 p2 = Paints[index].Geo1.xy;
         vec2 e1 = p1 - p0;
         vec2 e2 = p2 - p0;
         float cross = e1.x * e2.y - e1.y * e2.x;
@@ -265,10 +268,10 @@ vec4 SamplePaint(uint index, vec2 emCoord)
     }
     else if (type == 2u)  // two-point conical (WHATWG radial algorithm)
     {
-        vec2 c0 = paint.Geo0.xy;
-        float r0 = paint.Geo0.z;
-        vec2 c1 = paint.Geo1.xy;
-        float r1 = paint.Geo1.z;
+        vec2 c0 = Paints[index].Geo0.xy;
+        float r0 = Paints[index].Geo0.z;
+        vec2 c1 = Paints[index].Geo1.xy;
+        float r1 = Paints[index].Geo1.z;
         vec2 d = c1 - c0;
         float dr = r1 - r0;
         vec2 q = vec2(localX, localY) - c0;
@@ -312,13 +315,13 @@ vec4 SamplePaint(uint index, vec2 emCoord)
     }
     else  // sweep: counter-clockwise degrees from +x
     {
-        vec2 center = paint.Geo0.xy;
-        float startAngle = paint.Geo0.z;
-        float endAngle = paint.Geo0.w;
+        vec2 center = Paints[index].Geo0.xy;
+        float startAngle = Paints[index].Geo0.z;
+        float endAngle = Paints[index].Geo0.w;
         float span = endAngle - startAngle;
         if (abs(span) < 1.0e-4)
         {
-            if (paint.Header.y != 0u)
+            if (Paints[index].Header.y != 0u)
                 return vec4(0.0);  // repeat/reflect with equal angles: nothing
             t = 0.0;
         }
@@ -331,8 +334,8 @@ vec4 SamplePaint(uint index, vec2 emCoord)
         }
     }
 
-    t = ExtendPaintParameter(t, paint.Header.y);
-    return SamplePaintColorLine(paint, t);
+    t = ExtendPaintParameter(t, Paints[index].Header.y);
+    return SamplePaintColorLine(index, t);
 }
 
 void main()

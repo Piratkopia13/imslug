@@ -26,7 +26,7 @@ if not defined IMSLUG_BUILD_DIR  set "IMSLUG_BUILD_DIR=build"
 if not defined IMSLUG_BUILD_TYPE set "IMSLUG_BUILD_TYPE=Release"
 
 echo [golden] build step
-call "%~dp0build.bat" --target imslug_tests_golden imslug_tests_imgui_golden
+call "%~dp0build.bat" --target imslug_tests_golden imslug_tests_imgui_golden imslug_tests_emoji_golden
 if errorlevel 1 (
     echo [golden] ERROR: build failed.>&2
     popd & exit /b 1

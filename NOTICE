@@ -372,7 +372,21 @@ are cross-checked against them.
 * DearWidgets — Soufiane Khiat (CC0-1.0):
   https://github.com/soufianekhiat/DearWidgets
   A Slug text renderer for Dear ImGui. Feasibility reference for stbtt outline
-  extraction, data textures, ImGui draw-callback behavior and COLR parsing.
+  extraction, data textures and ImGui draw-callback behavior.
+  M5 (color fonts) audit: the CC0 `docs/concepts/slug.md` and the `refacto`
+  branch's `src/api/dear_widgets_slug.cpp` (COLR v0 layer lists, the COLR v1
+  PaintTransform/Translate/Scale/Rotate/Skew composition, PaintColrGlyph
+  recursion and palette resolution) and its `slug_color.hlsl` /`slug_gradient.hlsl`
+  shader permutations were read as an allowed reference before writing
+  imslug_colr.{h,cpp}. **No code was adapted or copied**: the SFNT/COLR/CPAL
+  reader, the paint-graph flattening, the layer/alpha compositing rules and the
+  gradient evaluation in this repository are original implementations of the
+  OpenType COLR/CPAL specification (whose gradient text references the WHATWG
+  canvas two-point-conical algorithm); the DearWidgets sources confirmed the
+  parsing approach and that a separate gradient shader permutation is viable.
+  Their gradient path covers linear gradients only, while imslug implements
+  solid/linear/radial/sweep with the spec's ClipBox clipping, so there was
+  nothing to port. See PLAN §11 D22.
 * Slughorn — AlphaPixel (MIT):
   https://github.com/AlphaPixel/slughorn
   Slug data generation and CPU reference rasterizer; cross-check for the curve
@@ -431,6 +445,17 @@ Version 1.1 (full text in tests/fonts/Inter-LICENSE.txt). Source: Inter v4.1
 release archive (pinned in tests/fonts/PROVENANCE.txt).
 
 Both files are committed unmodified and are used only as test assets.
+
+Fetched (never committed) test assets, documented with pinned URLs + SHA-256 in
+their own PROVENANCE.txt files and downloaded by scripts/fetch_*:
+
+* tests/fonts/cjk/NotoSansSC-subset.ttf — a subset of Noto Sans SC (SIL Open
+  Font License 1.1; scripts/fetch_cjk_font.*; M4).
+* tests/fonts/emoji/NotoColorEmoji-Regular.ttf — Noto Color Emoji, COLR v1
+  (SIL Open Font License 1.1; scripts/fetch_emoji_font.*; M5). Suites that use
+  these fonts skip cleanly when the asset is absent. Segoe UI Emoji
+  (C:\Windows\Fonts\seguiemj.ttf) is used for local manual checks only and is
+  never fetched, copied or committed.
 
 --------------------------------------------------------------------------------
 6. Trademarks and affiliation

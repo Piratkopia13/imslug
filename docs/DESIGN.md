@@ -227,4 +227,64 @@ the R8 table for the specific font.
 * ImGui master (1.93 WIP) reworked the font loader; the pinned v1.92.9b is the
   supported version (the daily smoke job tracks drift).
 * OTF/CFF fonts are not parsed (TTF `glyf` only for now); unsupported fonts
-  stay on the stock atlas path. Color fonts are future work.
+  stay on the stock atlas path.
+* Color fonts (§9) cover COLR v0/v1 with the documented paint fallbacks; a
+  color glyph costs one instance per layer, so emoji-heavy frames are
+  instance-hungry (the ring drops overflowing runs gracefully).
+* Non-BMP codepoints (most emoji, U+1F600+) need `IMGUI_USE_WCHAR32` in the
+  ImGui build; with the default 16-bit `ImWchar` they cannot be addressed at
+  all (the emoji scene and ImGui-level tests therefore use BMP emoji).
+
+## 9. Color fonts (COLR v0 / v1)
+
+`imslug_colr.{h,cpp}` reads the `COLR`/`CPAL` tables from the same font bytes
+stb_truetype uses (an SFNT directory scan plus a bounds-checked reader; every
+malformed or unsupported case falls back to the monochrome outline — never a
+crash). A color glyph is resolved once per font/glyph into a draw-order list of
+layers (`ImSlugColorGlyph`): one Slug glyph record per layer (the glyph's own
+record when the transform is a positive axis-aligned scale+translate, otherwise
+a synthetic record built from the transformed outline) plus one paint record in
+a new shared pool (`ImSlugPools::Paints`, GPU-visible as a storage buffer).
+
+The pre-pass emits one instance per layer, all sharing the base glyph's
+reconstructed pen/ppem; the fragment shader evaluates the layer's paint
+(solid / linear / radial / sweep with pad/repeat/reflect and the COLR ClipBox)
+and modulates the alpha by the instance tint, so `ImFontGlyph::Colored`'s
+"ignore the tint RGB, keep the alpha" semantics are honored exactly (ImGui
+forces RGB=255 for Colored glyphs; see the pinned `RenderText`/`RenderChar`).
+The instance record grew by one `uint32_t` (`PaintIndex`, format v2, 96 bytes)
+and the paint records are 352 bytes (`ImSlugPaintRecord`, std430); both layouts
+are static_asserted on the C++ side and mirrored in `slug.frag`.
+
+Semantics and fallbacks (PLAN §11 D20/D21):
+
+* COLR v0 layer lists and COLR v1 paint graphs; `PaintVar*` reads the default
+  (non-variation) values; variable-font instances are not evaluated.
+* Gradients: linear (the spec's p2 rotation point), two-point conical radial
+  (the WHATWG algorithm the spec references), sweep (counter-clockwise degrees,
+  BiasedAngle); ill-formed gradients (degenerate/parallel points) are skipped
+  per the spec. Color stops are F2DOT14 offsets with CPAL colors; color lines
+  longer than 32 stops keep the first 32.
+* Composites: SRC_OVER / SRC / DEST / DEST_OVER are draw-order exact;
+  SRC_IN / DEST_IN / SRC_OUT / DEST_OUT with a constant `PaintSolid` mask fold
+  the mask alpha into the layer paint (exact for single-layer sources; the
+  two license-vetted test fonts' composites all take this path or draw-order);
+  every other mode (SRC_ATOP/XOR and the separable/non-separable blends,
+  including SOFT_LIGHT) is approximated as source-over and documented here.
+* ClipBoxes (ClipList format 1 ranges) are applied per fragment in record
+  space; clip edges are hard (no antialiasing at the clip boundary, which sits
+  outside the ink for both test fonts).
+* PaintColrGlyph cycles are refused (an in-flight glyph stack); graphs deeper
+  than 32 paints / 512 layers per glyph are truncated to the drawable prefix.
+* Empty base outlines (Noto Color Emoji's emoji glyphs have no `glyf`
+  contours): the layout box is synthesized from the layer union with the same
+  floor/ceil + rounded-ascent formulas as the metrics path, so text layout
+  (advances, wrapping) is unchanged; only the ink box differs from the empty
+  monochrome outline.
+
+Verification: `imslug_colr` (synthetic COLR/CPAL tables on Roboto + the fetched
+Noto font + the CPU paint sampler), `imslug_emoji_golden` (30 GPU-vs-CPU cases
+at 16–64 px and 1×–3.5× zoom; measured worst mean 0.031 LSB, worst channel 21
+LSB on isolated discontinuity ties, validation clean) and the ImGui-level
+`imslug_imgui` color tests (Colored marking, per-layer instances, tint alpha,
+layout parity).

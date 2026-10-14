@@ -47,10 +47,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends glslang-tools
-      - name: Fetch the CJK test font (subset; the stress suite skips it when absent)
+      - name: Fetch the test fonts (CJK subset + color emoji; suites skip when absent)
         run: |
           python3 -m pip install --quiet fonttools
           ./scripts/fetch_cjk_font.sh
+          ./scripts/fetch_emoji_font.sh
       - name: Build
         run: ./scripts/build.sh
       - name: Test (includes the continuous fuzz + stress profiles)
@@ -74,15 +75,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev vulkan-tools glslang-tools \
             mesa-vulkan-drivers libgl1-mesa-dri
-      - name: Fetch the CJK test font (subset; the golden suite skips CJK when absent)
+      - name: Fetch the test fonts (CJK subset + color emoji; goldens skip when absent)
         run: |
           python3 -m pip install --quiet fonttools
           ./scripts/fetch_cjk_font.sh
+          ./scripts/fetch_emoji_font.sh
       - name: Check vkEnumeratePhysicalDevices sees lavapipe
         run: vulkaninfo --summary || true
       - name: Build
         run: ./scripts/build.sh
-      - name: Golden images (render-pass + dynamic-rendering paths, 3 scenes each)
+      - name: Golden images (M2/M3 scenes + M5 emoji, both render paths)
         run: ./scripts/golden.sh
 
   # M4: the benchmark harness report is a build artifact (numbers are

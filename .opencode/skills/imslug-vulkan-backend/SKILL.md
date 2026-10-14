@@ -92,8 +92,9 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
 * Blend state exactly matches stock `imgui_impl_vulkan` (color
   `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`, alpha `ONE`/`ONE_MINUS_SRC_ALPHA`, ADD),
   so the shader must output **unpremultiplied** color (`alpha *= coverage`).
-* Vertex input: **one instance-rate binding** (stride 92,
-  `ImSlugGlyphInstance`) with attributes at locations 0..6; no vertex-rate
+* Vertex input: **one instance-rate binding** (stride 96,
+  `ImSlugGlyphInstance`; M5 v2 added the trailing `PaintIndex`) with attributes
+  at locations 0..7; no vertex-rate
   attributes - the quad comes from `gl_VertexIndex`. Draws are
   `vkCmdDraw(4, instanceCount, 0, FrameIndex * InstanceCapacity + FirstInstance)`:
   `FirstInstance` is **slot-relative** (it indexes the records the caller wrote
@@ -117,7 +118,13 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   per frame in flight, written only when the pool images are (re)created - the
   textures are static after upload.
 * Binding 0: curve pool `sampler2D` (RGBA16F); binding 1: band pool
-  `usampler2D` (R16G16_UINT). Fragment stage only.
+  `usampler2D` (R16G16_UINT); binding 2 (M5): the paint record array
+  (`STORAGE_BUFFER`, `std430`, `readonly buffer` in the fragment shader;
+  `ImSlugPaintRecord`, 352 bytes). Fragment stage only. A minimal 1-record
+  buffer exists from `ImSlugVulkanInit` on, so the descriptor set is valid for
+  plain text too (the shader never reads it when every instance carries
+  `kNoPaintIndex`); growth recreates the buffer (device wait) and rewrites the
+  sets.
 
 ## Upload rules (implemented)
 
@@ -145,6 +152,15 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   into `ImSlugVulkanGetInstanceData(frameIndex)` and batches them with
   slot-relative `FirstInstance` (the buffer is bound whole, never per-batch;
   the draw adds the ring base, see the pipeline rules).
+* M5 paint pool: `ImSlugPools::Paints` (bytes, `ImSlugPaintRecord` array) is
+  uploaded into the binding-2 storage buffer in the same call and through the
+  same per-frame staging buffer. The first upload covers `[0, Count)`, later
+  frames the dirty record range; growth recreates the buffer with a
+  `vkDeviceWaitIdle` and forces a full re-upload. Barrier protocol: the buffer
+  is read by the fragment shader, so each upload brackets the copy with
+  `FRAGMENT_SHADER/READ -> TRANSFER/WRITE` and
+  `TRANSFER/WRITE -> FRAGMENT_SHADER/READ` `VkBufferMemoryBarrier`s
+  (`VK_WHOLE_SIZE`, one queue assumed).
 * Release-safe early-outs (R3): `ImSlugVulkanDraw` is a no-op for an
   out-of-range `FrameIndex`, a slot-relative `FirstInstance` at/beyond the
   capacity, a null MVP, and when no pool upload happened yet (descriptor sets
@@ -153,13 +169,18 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
 
 ## Instance record (frozen, `imslug_internal.h`)
 
-`ImSlugGlyphInstance`, 92 bytes, `static_assert`ed against the vertex input:
-em bbox, screen rect (px, Y down), inverse Jacobian (screen -> em), band
-scale/offset, glyphLoc (band pool), packed bandMax word with **E at bit 28**
-(PLAN §11 D8(g); not "bit 12 of the raw word"), straight-alpha color. The
-placement must be axis-aligned (scale+translate); the shader dilates along the
-screen-space corner diagonals. `ImSlugBuildGlyphInstance()` fills one record;
-`ImSlugPackBandMaxWord()` produces the packed word.
+`ImSlugGlyphInstance`, **96 bytes (M5 format v2)**, `static_assert`ed against the
+vertex input: em bbox, screen rect (px, Y down), inverse Jacobian (screen -> em),
+band scale/offset, glyphLoc (band pool), packed bandMax word with **E at bit 28**
+(PLAN §11 D8(g); not "bit 12 of the raw word"), straight-alpha color, and the M5
+`uint32_t PaintIndex` at offset 92 (`kNoPaintIndex` = 0xFFFFFFFF for plain
+glyphs; a valid index selects an `ImSlugPools::Paints` record). The placement must
+be axis-aligned (scale+translate); the shader dilates along the screen-space
+corner diagonals. `ImSlugBuildGlyphInstance()`/`...Scaled()` fill one record
+(the scaled variant exists for color layers with a per-axis positive scale) and
+always set `PaintIndex = kNoPaintIndex`; `ImSlugPackBandMaxWord()` produces the
+packed word. The M2 layout's first 92 bytes are unchanged - the attribute
+locations 0..6 keep their meaning, loc 7 is the new `R32_UINT`.
 
 ## Validation expectations
 
@@ -232,15 +253,29 @@ TRANSFER_SRC barriers, and `PipelineRenderingCreateInfo.pColorAttachmentFormats`
 must point at storage that outlives the whole module lifetime (a block-scoped
 format array is a use-after-scope crash).
 
+### M5 emoji golden test (`imslug_emoji_golden`, both render paths)
+
+`tests/golden/test_emoji_golden_vulkan.cpp` renders emoji strings (Noto Color
+Emoji, the fetched gitignored asset) as one instance per COLR layer and compares
+the GPU against a CPU composite: `ImSlugRasterSample` for the coverage plus
+`ImSlugSamplePaintRecord` (the mirror of the shader's paint code) for the layer
+paint, blended straight-alpha into an 8-bit destination. 30 cases at 16/32/64 px
+and 1x/2x/3.5x zoom, skipping (exit 77) when the font or a Vulkan device is
+absent. Measured: worst mean 0.031 LSB, worst channel 21 LSB (isolated
+discontinuity ties), validation clean; the same pass rule as the M2 goldens
+(mean <= 0.25, outlier budget 0.05 % + 4).
+
 ## Example app
 
 `example/glfw_vulkan/main.cpp` (option `IMSLUG_BUILD_EXAMPLES=ON`): a GLFW window
 + swapchain rendering an ordinary ImGui app (stock GLFW+Vulkan backends, imslug
 for the registered font), validation layers on by default
 (`IMSLUG_VALIDATION=0` disables, `IMSLUG_VALIDATION_VERBOSE=1` adds info
-messages). Scene switcher (keys 1-5 / the radio buttons): demo window,
+messages). Scene switcher (keys 1-8 / the radio buttons): demo window,
 widgets/plots/tables, clipping torture, mixed Slug+atlas fonts, runtime
-`style.FontScaleDpi`. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
+`style.FontScaleDpi`, the 5k-glyph stress scene, the fetched CJK subset and the
+M5 color-emoji scene (BMP emoji at a size slider plus a single-glyph zoom for the
+gradients). `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
 offscreen frame and prints the validation message/error counts on exit. The
 frame loop cycles over `ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and
 null-checks the ring slot pointer - a 2-image swapchain must not touch ring
