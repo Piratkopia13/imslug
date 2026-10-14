@@ -79,15 +79,26 @@ if [ ! -x "$EXE_DIR/fc_smoke" ]; then
     exit 1
 fi
 
+# The example is a target of the fetched imslug project, so FetchContent
+# places its binary in the dependency's build tree.
+EXAMPLE_EXE="$EXE_DIR/imslug_example_glfw_vulkan"
+if [ ! -x "$EXAMPLE_EXE" ] && [ -x "$BUILD_DIR/build/_deps/imslug-build/imslug_example_glfw_vulkan" ]; then
+    EXAMPLE_EXE="$BUILD_DIR/build/_deps/imslug-build/imslug_example_glfw_vulkan"
+fi
+if [ ! -x "$EXAMPLE_EXE" ]; then
+    echo "[fetchcontent] ERROR: imslug_example_glfw_vulkan not found under $BUILD_DIR/build." >&2
+    exit 1
+fi
+
 echo "[fetchcontent] running fc_smoke ..."
 "$EXE_DIR/fc_smoke"
 
 echo "[fetchcontent] running imslug_example_glfw_vulkan --help ..."
-"$EXE_DIR/imslug_example_glfw_vulkan" --help
+"$EXAMPLE_EXE" --help
 
 if [ "${IMSLUG_FC_SCREENSHOT:-0}" = "1" ]; then
     echo "[fetchcontent] rendering one offscreen frame (scene 1) ..."
-    "$EXE_DIR/imslug_example_glfw_vulkan" --screenshot "$BUILD_DIR/example.ppm" 1
+    "$EXAMPLE_EXE" --screenshot "$BUILD_DIR/example.ppm" 1
     if [ ! -f "$BUILD_DIR/example.ppm" ]; then
         echo "[fetchcontent] ERROR: screenshot missing." >&2
         exit 1

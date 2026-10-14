@@ -219,15 +219,6 @@ namespace ImSlug
             return ReadU32(paint.Base, paint.Size, paint.Offset + fieldOffset, out);
         }
 
-        bool ReadPaintFixed(const PaintTable& paint, uint32_t fieldOffset, float* out)
-        {
-            uint32_t raw = 0;
-            if (!ReadU32(paint.Base, paint.Size, paint.Offset + fieldOffset, &raw))
-                return false;
-            *out = Fixed16ToFloat(raw);
-            return true;
-        }
-
         bool ReadPaintF2Dot14(const PaintTable& paint, uint32_t fieldOffset, float* out)
         {
             uint16_t raw = 0;

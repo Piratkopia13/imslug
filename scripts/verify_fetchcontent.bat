@@ -123,6 +123,17 @@ if not exist "%EXE_DIR%\fc_smoke.exe" (
     popd & exit /b 1
 )
 
+rem The example is a target of the fetched imslug project, so FetchContent
+rem places its binary in the dependency's build tree (multi-config generators
+rem add the configuration directory).
+set "EXAMPLE_EXE=%EXE_DIR%\imslug_example_glfw_vulkan.exe"
+if not exist "%EXAMPLE_EXE%" set "EXAMPLE_EXE=%FC_DIR%\build\_deps\imslug-build\imslug_example_glfw_vulkan.exe"
+if not exist "%EXAMPLE_EXE%" set "EXAMPLE_EXE=%FC_DIR%\build\_deps\imslug-build\%IMSLUG_BUILD_TYPE%\imslug_example_glfw_vulkan.exe"
+if not exist "%EXAMPLE_EXE%" (
+    echo [fetchcontent] ERROR: imslug_example_glfw_vulkan.exe not found under "%FC_DIR%\build".>&2
+    popd & exit /b 1
+)
+
 echo [fetchcontent] running fc_smoke ...
 "%EXE_DIR%\fc_smoke.exe"
 if errorlevel 1 (
@@ -131,7 +142,7 @@ if errorlevel 1 (
 )
 
 echo [fetchcontent] running imslug_example_glfw_vulkan --help ...
-"%EXE_DIR%\imslug_example_glfw_vulkan.exe" --help
+"%EXAMPLE_EXE%" --help
 if errorlevel 1 (
     echo [fetchcontent] ERROR: example --help failed.>&2
     popd & exit /b 1
@@ -139,7 +150,7 @@ if errorlevel 1 (
 
 if not "%IMSLUG_FC_SCREENSHOT%"=="1" goto :done
 echo [fetchcontent] rendering one offscreen frame (scene 1) ...
-"%EXE_DIR%\imslug_example_glfw_vulkan.exe" --screenshot "%FC_DIR%\example.ppm" 1
+"%EXAMPLE_EXE%" --screenshot "%FC_DIR%\example.ppm" 1
 if errorlevel 1 (
     echo [fetchcontent] ERROR: example --screenshot failed.>&2
     popd & exit /b 1
