@@ -1,21 +1,21 @@
 // imslug — implementation.
 //
-// This file holds the backend-independent M3 core:
+// This file holds the backend-independent ImGui-facing core:
 //   * lifecycle (Init/Shutdown/NewFrame) and the glyph slab registry;
 //   * the per-frame arena (batches + instances) that ::PreprocessDrawData
 //     fills and ::DrawCallback consumes;
 //   * the draw-data pre-pass: text-run classification, fine-clip
 //     reconstruction, CmdBuffer rewriting and the ResetRenderState injection.
 //
-// Constraints (see .agent-docs/milestones/M3-imgui-integration.md):
+// Constraints:
 //   * imgui.h only — every imgui_internal.h use lives in
-//     imslug_imgui_adapter.cpp (PLAN R1);
+//     imslug_imgui_adapter.cpp;
 //   * no backend knowledge: instances and draws go through ImSlugRenderIO,
 //     registered by a backend module (Vulkan in backends/imslug_impl_vulkan.*);
 //   * VtxBuffer/IdxBuffer are never modified; only CmdBuffer is rewritten
 //     (in place, through a scratch vector).
 //
-// The M1/M2 core helpers (ImSlugBuildGlyphInstance, record builders, packer,
+// The glyph-record helpers (ImSlugBuildGlyphInstance, record builders, packer,
 // CPU rasterizer) live in imslug_glyphgen/packer/refraster.cpp.
 
 #include "imslug.h"
@@ -37,7 +37,7 @@ namespace ImSlug
         // Small helpers
         // ---------------------------------------------------------------------
         // The public header pulls in imgui.h only: ImMin/ImMax/ImClamp live in
-        // imgui_internal.h, which this file must not include (PLAN R1).
+        // imgui_internal.h, which only imslug_imgui_adapter.cpp may include.
         static inline float ImSlugMin(float a, float b)
         {
             return a < b ? a : b;
@@ -76,8 +76,9 @@ namespace ImSlug
         // value, so the openness test uses a small epsilon. The placement slack
         // absorbs ImGui's integer glyph box: X0..Y1 are floor/ceil of the exact
         // em box *plus* round(baked ascent) on Y, so the drawn quad can exceed
-        // the control-point bbox by up to ~1.5 px per side (M4 fuzz: measured
-        // max 1.076 px at 6.5 px, where ceil + round can both contribute). It is
+        // the control-point bbox by up to ~1.5 px per side (the fuzz harness
+        // measured max 1.076 px at 6.5 px, where ceil + round can both
+        // contribute). It is
         // a garbage filter, not a correctness gate: the fuzz harness bounds the
         // real placement error separately.
         static const float kFracOpenEpsilon = 1e-3f;  // 0/1 exactness margin
@@ -88,8 +89,8 @@ namespace ImSlug
         // sliver path therefore uses the single-corner sample for the pen and
         // the glyph's baked ppem for the scale (the drawn size differs from the
         // bake size only by ImGui's integer rounding, <= ~1.5 %). Slivers are
-        // common in real UIs (text cut by a clip edge); the M4 fuzz measured
-        // the fix: sliver pen error max 2.71 px -> 0.31 px at 100k cases.
+        // common in real UIs (text cut by a clip edge); the fuzz harness
+        // measured the fix: sliver pen error max 2.71 px -> 0.31 px at 100k cases.
         static const float kSpanReliable = 0.1f;      // use the fitted slope at/above this
         static const float kPlacementSlack = 1.6f;    // px; see the note above kFracOpenEpsilon
         static const float kClipEdgeEpsilon = 0.01f;  // px, same-fine-clip comparison
@@ -136,7 +137,7 @@ namespace ImSlug
             int CmdScratchCapacity;
             uint8_t* TriActions;
             int TriActionsCapacity;
-            // M5: per-glyph color layer instances (one glyph's layers at a time).
+            // Per-glyph color layer instances (one glyph's layers at a time).
             ImSlugGlyphInstance* ColorInstances;
             int ColorInstancesCapacity;
 
@@ -379,7 +380,7 @@ namespace ImSlug
             return true;
         }
 
-        // R3 fallback for Config::EnableFineClipReconstruction == false: place
+        // Fallback for Config::EnableFineClipReconstruction == false: place
         // the glyph by mapping its em box into the quad ImGui actually drew
         // (the CPU fine clip already cropped that quad), with a uniform scale
         // so the whole glyph fits inside the quad and is centered in it. Ink
@@ -490,7 +491,8 @@ namespace ImSlug
                 callbackCmd.UserCallbackDataOffset = -1;
                 g_Core.CmdScratch[OutCount++] = callbackCmd;
 
-                // Immediately after, re-establish the stock render state (R5).
+                // Immediately after, re-establish the stock render state via
+                // ImGui's reset callback.
                 ImDrawCmd resetCmd;
                 resetCmd.ClipRect = src.ClipRect;
                 resetCmd.TexRef = src.TexRef;
@@ -572,7 +574,7 @@ namespace ImSlug
             const bool cropped = croppedL || croppedR || croppedT || croppedB;
             if (cropped && !g_Core.Cfg.EnableFineClipReconstruction)
             {
-                // R3 fallback: compress the clipped glyph into the quad ImGui
+                // Fallback: compress the clipped glyph into the quad ImGui
                 // drew (PlaceGlyphFromQuad documents the trade-off).
                 if (!PlaceGlyphFromQuad(slab, pos, &penX, &penY, &pixelsPerEm))
                     return false;  // degenerate placement: drop this glyph
@@ -609,7 +611,7 @@ namespace ImSlug
             const float tintB = (float)((col >> 16) & 0xFFu) / 255.0f;
             const float tintA = (float)((col >> 24) & 0xFFu) / 255.0f;
 
-            // M5: a color glyph draws one instance per layer (draw order), each
+            // A color glyph draws one instance per layer (draw order), each
             // with the layer's paint record; the color/tint rides the instance
             // alpha only (ImGui forces RGB=255 for Colored glyphs, so layer
             // colors are authoritative and a text tint only fades them).
@@ -819,7 +821,7 @@ namespace ImSlug
                     const bool d2ok = ImSlugAdapterDecodeVertex(verts[a2].uv.x, verts[a2].uv.y, &d2);
                     if (!(d0ok && d1ok && d2ok))
                     {
-                        // Mixed triangle (M4 fuzz): one or two corners decode as
+                        // Mixed triangle: one or two corners decode as
                         // Slug handles, the rest do not - ImGui produced this,
                         // for example with a degenerate (NaN interpolating)
                         // fine clip. Neither path can draw it: geometry would
@@ -828,7 +830,7 @@ namespace ImSlug
                         // geometry stream. Fully non-Slug triangles stay
                         // geometry (an app UV can only misfire in the magic
                         // band if all three corners land there, the same
-                        // narrow false-positive window as M3).
+                        // narrow false-positive window the decoder accepts).
                         if (d0ok || d1ok || d2ok)
                             g_Core.TriActions[tri] = TriAction_Drop;
                         continue;
@@ -1026,7 +1028,7 @@ namespace ImSlug
         outInstance->ColorG = g;
         outInstance->ColorB = b;
         outInstance->ColorA = a;
-        outInstance->PaintIndex = kNoPaintIndex;  // M5: plain glyph unless a color layer sets it
+        outInstance->PaintIndex = kNoPaintIndex;  // plain glyph unless a color layer sets it
     }
 
     bool Init(const Config& config)
@@ -1256,7 +1258,8 @@ namespace ImSlug
                 g_Core.WarnedNoReset = true;
                 fprintf(stderr,
                         "[imslug] backend does not provide PlatformIO::DrawCallback_ResetRenderState; Slug text "
-                        "rendering is disabled (see imslug-vulkan-backend skill, R5).\n");
+                        "rendering is disabled (the backend must reset the render state a Slug callback "
+                        "disturbed).\n");
             }
             IMSLUG_ASSERT(false && "imslug requires PlatformIO::DrawCallback_ResetRenderState");
             return;

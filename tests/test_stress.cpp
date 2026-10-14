@@ -1,4 +1,4 @@
-// imslug M4 stress suite — robustness at scale and on degenerate input.
+// imslug stress suite — robustness at scale and on degenerate input.
 //
 // GPU-free: the real pre-pass runs against a fake RenderIO with a ring sized
 // for the whole scene, so the suite runs everywhere (lavapipe CI included).
@@ -13,7 +13,7 @@
 //   4. degenerate input: NaN / out-of-range synthetic outlines are rejected
 //      transactionally (InvalidOutline), fully degenerate quads are harmless
 //      (coverage 0), empty glyphs work;
-//   5. pool-limit fallbacks (R11): CurvePoolLimit and BandPoolLimit are
+//   5. pool-limit fallbacks: CurvePoolLimit and BandPoolLimit are
 //      retryable and fall back to ImGui's replacement glyph; GlyphTooLarge
 //      (a band reference list longer than a row) is definitive; every failed
 //      build leaves the pools untouched;
@@ -204,7 +204,7 @@ namespace
         }
 
         // Sanity: the instance data survives a ring with a frame index != 0 that
-        // a backend would add to the first instance (M2 D10a contract).
+        // a backend would add to the first instance.
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(400.0f, 100.0f), ImGuiCond_Always);
@@ -468,7 +468,7 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // 5. Pool-limit fallbacks (R11)
+    // 5. Pool-limit fallbacks
     // ---------------------------------------------------------------------
     void TestPoolLimits()
     {
@@ -602,7 +602,8 @@ namespace
             return;
         memcpy(reference, g_Ring, (size_t)referenceCount * sizeof(ImSlugGlyphInstance));
 
-        // A 96 px stock font repacks the atlas (the M3 test proves growth);
+        // A 96 px stock font repacks the atlas (the ImGui-integration test
+        // proves growth);
         // Slug handles never touch the atlas, so every instance must be
         // bit-identical afterwards.
         ImFontConfig bigConfig;
@@ -676,7 +677,7 @@ namespace
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    std::printf("imslug_stress: M4 stress suite\n");
+    std::printf("imslug_stress: stress suite\n");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();

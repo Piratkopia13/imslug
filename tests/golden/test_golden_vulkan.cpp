@@ -3,7 +3,7 @@
 // tests/golden/test_golden_vulkan.cpp — headless offscreen Vulkan golden
 // tests: fixed strings at sizes 12/16/32/64 and DPI scales 1.0/1.25/2.0
 // (plus a fractional 3.5x zoom case) rendered through the real Slug pipeline
-// and compared per pixel against the M1 CPU reference rasterizer
+// and compared per pixel against the CPU reference rasterizer
 // (imslug_refraster.cpp — the arbiter). No surface/swapchain is needed, so the
 // test runs on lavapipe in CI.
 //
@@ -21,7 +21,7 @@
 //     destination kept in 8-bit like the render target;
 //   * the same `fill < 0.001` discard threshold is applied on both sides.
 //
-// Thresholds (measured, see the M2 completion notes; 8-bit channel units):
+// Thresholds (measured; 8-bit channel units):
 //   max per-channel diff <= kMaxChannelDiff, mean <= kMaxMeanDiff.
 // On failure the test writes <case>_gpu.ppm / <case>_cpu.ppm / <case>_diff.ppm
 // next to the working directory (the build dir's golden/ folder).
@@ -54,7 +54,7 @@ namespace
 
     // Thresholds: the GPU and the CPU reference read the same fp16 texels and
     // do the same fp32 math, so differences come only from rounding. Measured
-    // worst case is 1 LSB; keep a small headroom (documented in the M2 notes).
+    // worst case is 1 LSB; keep a small headroom.
     const int kMaxChannelDiff = 3;
     const double kMaxMeanDiff = 0.25;
 
@@ -287,8 +287,8 @@ namespace
             }
             if (g_State.UseDynamicRendering && properties.apiVersion < VK_API_VERSION_1_3)
             {
-                // Core 1.3 dynamic rendering only in M2 (lavapipe + desktop GPUs
-                // support it); the extension path is a possible M3 addition.
+                // Core 1.3 dynamic rendering only (lavapipe + desktop GPUs
+                // support it); the extension path is not used.
                 continue;
             }
             const int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : 2;
@@ -785,7 +785,7 @@ namespace
     // ---------------------------------------------------------------------
     // Result reporting
     // ---------------------------------------------------------------------
-    // Thresholds (measured; see the M2 completion notes):
+    // Thresholds (measured):
     //   * mean channel diff <= kMaxMeanDiff LSB over the whole case;
     //   * every pixel within kMaxChannelDiff LSB, except at most
     //     kOutlierFraction of the pixels per case (min kMinOutlierBudget), which
@@ -794,7 +794,7 @@ namespace
     // sample landing (within fp32 rounding) exactly on a control-point
     // coordinate, where CalcRootCode's sign-bit eligibility table legitimately
     // resolves to either branch, so two implementations disagree by up to ~0.5
-    // coverage at that single pixel (the same property forces the M1
+    // coverage at that single pixel (the same property forces the
     // CPU-vs-stbtt gate to use statistical tripwires). Everything else must
     // match within a few LSB.
     struct DiffStats
@@ -851,7 +851,7 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // Backend contract regressions (M2 review findings B1/B2/R3)
+    // Backend contract regressions (instance ring + upload paths)
     // ---------------------------------------------------------------------
     // These run against the same headless pipeline as the golden matrix: they
     // need a real device, but they are not golden-image comparisons - they pin
@@ -950,7 +950,7 @@ namespace
         return pass;
     }
 
-    // B1: the draw must apply the frame's instance-ring base. Distinct content
+    // The draw must apply the frame's instance-ring base. Distinct content
     // is written into ring slot 1 at a non-zero slot-relative FirstInstance,
     // while slot 0 holds a decoy at the same relative offset; the draw runs
     // with FrameIndex = 1 and must produce slot 1's content. Before the fix
@@ -1009,7 +1009,7 @@ namespace
         return pass;
     }
 
-    // B2: consecutive frames (up to three, at least two), each recorded (and
+    // Consecutive frames (up to three, at least two), each recorded (and
     // staged) before any submission, each appending different dirty rows.
     // Every frame's readback must match the CPU reference for its own text.
     // With one shared staging buffer the later recordings overwrite the bytes
@@ -1118,7 +1118,7 @@ namespace
         return allPass;
     }
 
-    // R3: out-of-range frame indices / first instances are release-safe
+    // Out-of-range frame indices / first instances are release-safe
     // no-ops (debug asserts cover the programming error). Both draws are
     // recorded after a real upload, so the "no texture yet" early-out cannot
     // mask them; a regression would bind an unwritten descriptor set or fetch
@@ -1213,7 +1213,7 @@ int main(int argc, char** argv)
     unsigned char* fontData = nullptr;
     if (packedAssetPath != nullptr)
     {
-        // M7: the same golden matrix from a pre-baked `.imslug` asset (no
+        // The same golden matrix from a pre-baked `.imslug` asset (no
         // outline parsing); in a no-parser build this is the only mode.
         fontData = imslug_test::LoadFile(packedAssetPath, &fontSize);
         if (fontData == nullptr)

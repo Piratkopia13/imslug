@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What does this change, and why? Link the milestone/issue if there is one. -->
+<!-- What does this change, and why? Link the issue if there is one. -->
 
 ## Verification
 

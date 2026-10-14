@@ -2,7 +2,7 @@
 //
 // imslug_packer.cpp — shared curve/band pool storage: allocation with growth by
 // doubling, row-wrap addressing (CalcBandLoc), dirty-row tracking and the
-// capacity guards behind the graceful-fallback contract (PLAN §4.3, R11).
+// capacity guards behind the graceful-fallback contract.
 //
 // All writes go through the helpers here so dirty rows and UsedRows can never
 // drift from the actual texel writes.
@@ -99,7 +99,7 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Pool growth and dirty tracking
     // ---------------------------------------------------------------------
-    // First allocation: 32 rows, then doubling (PLAN §4.3: "growth by doubling").
+    // First allocation: 32 rows, then doubling.
     static const int kInitialPoolRows = 32;
 
     static bool EnsureRows(uint16_t** texels, int* height, int rows, size_t bytesPerTexel)
@@ -245,7 +245,7 @@ namespace ImSlug
     }
 
     // ---------------------------------------------------------------------
-    // M5 paint pool
+    // Paint pool
     // ---------------------------------------------------------------------
     static const int kInitialPaintRecords = 64;
 
@@ -504,27 +504,27 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Band construction
     // ---------------------------------------------------------------------
-    // Moved here from imslug_glyphgen.cpp in M7: the packed loader
-    // (imslug_packed.cpp) and the synthetic record builder (imslug_font.cpp)
-    // need band assignment without an outline parser, so the pure
-    // quad/band helpers live in this always-compiled translation unit. The
-    // declarations stay in imslug_packer.h.
+    // The packed loader (imslug_packed.cpp) and the synthetic record builder
+    // (imslug_font.cpp) need band assignment without an outline parser, so
+    // the pure quad/band helpers live in this always-compiled translation
+    // unit. The declarations stay in imslug_packer.h.
     //
-    // M4 band tuning (numbers: the M4 report and the band-sweep tool,
-    // tests/bench/band_sweep.cpp; decision in PLAN §11 D13). Measured over
-    // Roboto/Inter Latin and the CJK subset, sizes 8..72 px, with a model of
-    // the pixel shader's reference walk (band index + sorted early-out):
+    // Band tuning (measured with the band-sweep tool,
+    // tests/bench/band_sweep.cpp, over Roboto/Inter Latin and the CJK subset,
+    // sizes 8..72 px, with a model of the pixel shader's reference walk
+    // (band index + sorted early-out)):
     //
-    //   sqrt(2n) 4..32 (M1) : 6.86 / 7.20 / 9.25 refs per pixel, 114/129/193 KB
-    //   2*sqrt(n) 4..32 (M4): 6.12 / 6.42 / 8.25 refs per pixel, 143/159/240 KB
-    //   2.5*sqrt(n)         : 5.76 / 6.03 / 7.71, 168/188/281 KB
-    //   3*sqrt(n)           : 5.51 / 5.74 / 7.38, 193/214/320 KB
+    //   sqrt(2n) 4..32 : 6.86 / 7.20 / 9.25 refs per pixel, 114/129/193 KB
+    //   2*sqrt(n) 4..32: 6.12 / 6.42 / 8.25 refs per pixel, 143/159/240 KB
+    //   2.5*sqrt(n)    : 5.76 / 6.03 / 7.71, 168/188/281 KB
+    //   3*sqrt(n)      : 5.51 / 5.74 / 7.38, 193/214/320 KB
     //
     // 2*sqrt(n) buys ~11% less fragment work (and ~15% better p99/max tails,
     // which matters for low-end GPUs) for ~25% more band-pool memory - still
-    // far inside the PLAN §4.7 budget for a typical UI font. Further steps cost
-    // ~2x the memory for ~5% more, so they were rejected. The cap stays 32
-    // (kMaxBandCountPerAxis): the header run must fit in one pool row.
+    // well inside the ~0.5 MB curve+band budget of a full Latin UI font.
+    // Further steps cost ~2x the memory for ~5% more, so they were rejected.
+    // The cap stays 32 (kMaxBandCountPerAxis): the header run must fit in one
+    // pool row.
     int ImSlugCalcBandCount(int curveCount)
     {
         if (curveCount <= 0)
@@ -585,8 +585,8 @@ namespace ImSlug
         *outMaxY = maxY;
     }
 
-    // Exactly axis-parallel curves can never cross a ray of the matching axis
-    // (PLAN §2.2 rule 2); they are excluded from those bands.
+    // Exactly axis-parallel curves can never cross a ray of the matching axis;
+    // they are excluded from those bands.
     static bool IsHorizontalCurve(const ImSlugQuad& quad)
     {
         return quad.Y1 == quad.Y2 && quad.Y2 == quad.Y3;

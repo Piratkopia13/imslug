@@ -1,7 +1,7 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
 // imslug_imgui_adapter.cpp — the ONLY translation unit that includes
-// imgui_internal.h (PLAN R1). It implements:
+// imgui_internal.h. It implements:
 //
 //   1. the custom `const ImFontLoader` installed on Slug font sources
 //      (ImFontConfig::FontLoader), verified against Dear ImGui v1.92.9b:
@@ -16,7 +16,7 @@
 //      single bitmap texel;
 //   3. UV handle decoding for the pre-pass.
 //
-// Handle encoding (frozen in M3; documented in imslug_internal.h and the
+// Handle encoding (frozen; documented in imslug_internal.h and the
 // imslug-glyph-format skill):
 //
 //   U = kUvMagicU + 2*slot + 0.25 + 0.5*fracX
@@ -101,7 +101,7 @@ namespace ImSlug
             // and may be freed or kept referenced differently (AddFontFromMemoryTTF
             // with FontDataOwnedByAtlas = false keeps the caller's pointer).
             //
-            // M7: the font kind is auto-detected by content, not by extension:
+            // The font kind is auto-detected by content, not by extension:
             // data starting with the `.imslug` magic is a packed asset and is
             // loaded without any outline parsing; anything else goes through
             // the stb_truetype path (when this build has one).
@@ -314,7 +314,7 @@ namespace ImSlug
 
             ImSlugGlyphMetrics metrics;
             const ImSlugGlyphRecord* record = nullptr;
-            const ImSlugColorGlyph* colorGlyph = nullptr;  // M5: non-null for a drawable color glyph
+            const ImSlugColorGlyph* colorGlyph = nullptr;  // non-null for a drawable color glyph
             if (synthetic)
             {
                 if (!ComputeEllipsisMetrics(font, bakedSrc->Source->DotGlyphIndex, baked->Size, pixelsPerEm, &metrics))
@@ -351,7 +351,7 @@ namespace ImSlug
                 if (status != ImSlugBuildStatus_Ok || record == nullptr)
                     return false;  // pool limits: ImGui uses its fallback glyph
 
-                // M5: resolve COLR color glyphs (the v0/v1 layer list + paint
+                // Resolve COLR color glyphs (the v0/v1 layer list + paint
                 // records). A failure falls back to the monochrome outline.
                 const Config* config = ImSlugGetConfig();
                 if (config == nullptr || config->EnableColorFonts)
@@ -453,8 +453,8 @@ namespace ImSlug
         IM_ASSERT(cfg != nullptr);
         if (cfg->MergeMode)
         {
-            // MergeMode needs ImGui's own per-source scaling; Slug sources are
-            // standalone targets in M3.
+            // MergeMode needs ImGui's own per-source scaling, which the Slug
+            // font loader does not implement.
             IMSLUG_ASSERT(false && "imslug: MergeMode font sources are not supported yet");
             cfg->MergeMode = false;
         }

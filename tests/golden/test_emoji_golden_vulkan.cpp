@@ -1,7 +1,7 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
 // tests/golden/test_emoji_golden_vulkan.cpp — headless offscreen Vulkan golden
-// tests for M5 color fonts (COLR v1): emoji strings at several bake sizes and
+// tests for COLR v1 color fonts: emoji strings at several bake sizes and
 // zoom scales, rendered through the real Slug pipeline (one instance per color
 // layer, gradient paints evaluated in slug.frag) and compared per pixel against
 // the CPU arbiter: ImSlugRasterSample for coverage plus
@@ -14,10 +14,11 @@
 // exits with code 77 (ctest SKIP_RETURN_CODE) when the asset is absent or no
 // Vulkan device is usable.
 //
-// Thresholds: the same contract as the M2 golden (GPU vs the CPU arbiter, 8-bit
+// Thresholds: the same contract as the monochrome golden (GPU vs the CPU
+// arbiter, 8-bit
 // channel units): mean <= kMaxMeanDiff over the case, every pixel within
 // kMaxChannelDiff except a small outlier budget for the reference algorithm's
-// discontinuity ties (see the M2 notes). On failure the test writes
+// discontinuity ties. On failure the test writes
 // <case>_gpu.ppm / <case>_cpu.ppm next to the working directory.
 //
 // Validation layers: enabled by default (IMSLUG_VALIDATION=0 disables); any
@@ -38,12 +39,12 @@ namespace
     const int kExitSkip = 77;
     const float kMargin = 6.0f;
 
-    // Measured against the M5 CPU arbiter (see the M5 completion notes): the
-    // color path is at least as close as the M2 monochrome goldens (worst mean
+    // Measured against the CPU arbiter: the
+    // color path is at least as close as the monochrome goldens (worst mean
     // 0.031 LSB, isolated discontinuity ties up to ~21 LSB), so the same
     // contract applies: mean <= 0.25 LSB over the case, every pixel within a few
     // LSB except a small outlier budget for the reference algorithm's
-    // discontinuity ties (see the M2 notes).
+    // discontinuity ties.
     const int kMaxChannelDiff = 4;
     const double kMaxMeanDiff = 0.25;
     const int kOutlierDiff = 10;
@@ -136,7 +137,7 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // Vulkan setup (mirrors the M2 golden harness)
+    // Vulkan setup (mirrors the monochrome golden harness)
     // ---------------------------------------------------------------------
     bool CreateInstance()
     {

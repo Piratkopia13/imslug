@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_impl_vulkan.cpp — standalone Vulkan rendering core (M2). See
+// imslug_impl_vulkan.cpp — standalone Vulkan rendering core. See
 // imslug_impl_vulkan.h for the contract; the Slug math itself lives in
 // shaders/vulkan/slug.vert/.frag (ported from EricLengyel/Slug with
 // attribution; mapping table in shaders/reference/slug.hlsl).
@@ -9,7 +9,7 @@
 // Vulkan device. All Vulkan objects except the device objects passed in
 // ImSlugVulkanInitInfo are owned here.
 //
-// Upload protocol (PLAN §5.3): one staging buffer per frame in flight +
+// Upload protocol: one staging buffer per frame in flight +
 // vkCmdCopyBufferToImage + barrier to SHADER_READ_ONLY_OPTIMAL, dirty rows
 // only, full re-upload after growth (rare; a device wait is used because the
 // old image may still be in flight). The descriptor sets point at the pool
@@ -19,7 +19,7 @@
 
 #include "imslug_shaders_vulkan.h"
 
-// M3 ImGui adapter (the section at the bottom of this file). The M2 rendering
+// ImGui adapter (the section at the bottom of this file). The rendering
 // core above stays ImGui-agnostic; only the adapter block touches these.
 #include "imslug.h"
 #include "imslug_internal.h"
@@ -44,7 +44,7 @@ namespace ImSlug
             float MVP[4][4];
             float ViewportWidth;
             float ViewportHeight;
-            uint32_t DebugFlags;  // M4 debug overlay (ImSlugVulkanDebugOverlay)
+            uint32_t DebugFlags;  // debug overlay (ImSlugVulkanDebugOverlay)
         };
         static_assert(sizeof(PushConstants) == 76, "push constant block must match slug.vert");
 
@@ -94,13 +94,13 @@ namespace ImSlug
             PoolTexture Bands;
             bool TexturesCreated;
 
-            // M5: paint records (storage buffer, binding 2). Always bound (a
+            // Paint records (storage buffer, binding 2). Always bound (a
             // minimal 1-record buffer exists before the first color glyph), so
             // the descriptor set is valid for plain text too.
             Buffer Paints;
             bool PaintsHasData;
 
-            // One staging buffer per frame in flight (B2): the CPU memcpys for
+            // One staging buffer per frame in flight: the CPU memcpys for
             // frame N use slot N only, so a later frame's recording can never
             // overwrite bytes an earlier frame's recorded copy still has to
             // read. Recording frame N again requires its previous submission to
@@ -243,7 +243,7 @@ namespace ImSlug
                 return true;  // nothing to create yet
             if ((uint32_t)height > g_State.MaxImageDimension)
             {
-                IMSLUG_ASSERT(false);  // pool height beyond device limits (M4: fallback)
+                IMSLUG_ASSERT(false);  // pool height beyond device limits (fallback)
                 return false;
             }
 
@@ -310,7 +310,7 @@ namespace ImSlug
             bandInfo.imageView = g_State.Bands.View;
             bandInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            // M5: paint records (std430 array in slug.frag). The buffer always
+            // Paint records (std430 array in slug.frag). The buffer always
             // exists, even before the first color glyph.
             VkDescriptorBufferInfo paintInfo = {};
             paintInfo.buffer = g_State.Paints.Handle;
@@ -422,7 +422,8 @@ namespace ImSlug
                 VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
             };
 
-            // Blend state mirrors imgui_impl_vulkan.cpp exactly (M3 compatibility):
+            // Blend state mirrors imgui_impl_vulkan.cpp exactly, so Slug runs
+            // composite like the ImGui draws around them:
             // color: src alpha / one-minus-src alpha; alpha: one / one-minus-src alpha.
             VkPipelineColorBlendAttachmentState blendAttachment = {};
             blendAttachment.blendEnable = VK_TRUE;
@@ -624,7 +625,7 @@ namespace ImSlug
             DestroyBuffer(&g_State.Paints);
         }
 
-        // Init failure path (R2): frees anything already created and clears the
+        // Init failure path: frees anything already created and clears the
         // state, so a failed Init leaves nothing behind and Shutdown()/a later
         // Init() start clean.
         bool FailInit()
@@ -673,7 +674,7 @@ namespace ImSlug
             return FailInit();
 
         // Descriptor set layout: curve (sampler2D) + band (usampler2D) + paint
-        // records (M5 storage buffer read by slug.frag).
+        // records (storage buffer read by slug.frag).
         VkDescriptorSetLayoutBinding bindings[3] = {};
         for (int i = 0; i < 2; ++i)
         {
@@ -767,7 +768,7 @@ namespace ImSlug
         if (g_State.Instances.Mapped == nullptr)
             return FailInit();
 
-        // M5: the paint record storage buffer always exists (at least one
+        // The paint record storage buffer always exists (at least one
         // record) so binding 2 is valid for plain text as well.
         CreateBuffer(sizeof(ImSlugPaintRecord), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g_State.Paints);
@@ -822,7 +823,7 @@ namespace ImSlug
             g_State.TexturesCreated = true;
         }
 
-        // Per-pool ranges (R4): a pool without a view has nothing to consume and
+        // Per-pool ranges: a pool without a view has nothing to consume and
         // keeps its dirty rows; the other pool uploads and clears normally.
         UploadRange curveRange = {};
         if (curveReady)
@@ -837,7 +838,7 @@ namespace ImSlug
                                            pools->Bands.DirtyRowMin, pools->Bands.DirtyRowMax);
         }
 
-        // M5: paint records. The buffer grows with the pool (device wait: rare);
+        // Paint records. The buffer grows with the pool (device wait: rare);
         // the first upload covers every record, later frames only the dirty ones.
         const VkDeviceSize paintBytes = (VkDeviceSize)pools->Paints.Count * sizeof(ImSlugPaintRecord);
         bool paintChanged = false;
@@ -970,7 +971,7 @@ namespace ImSlug
         if (!g_State.Initialized || drawInfo == nullptr || cmd == VK_NULL_HANDLE || drawInfo->InstanceCount == 0)
             return;
 
-        // Defensive clamps (R3, release-safe): never bind an unwritten
+        // Defensive clamps (release-safe): never bind an unwritten
         // descriptor set and never fetch past the instance ring.
         if (!g_State.TexturesCreated || drawInfo->MVP == nullptr)
         {
@@ -1028,7 +1029,7 @@ namespace ImSlug
     }
 
     // =====================================================================
-    // M3 ImGui adapter
+    // ImGui adapter
     // =====================================================================
     // Bridges the stock ImGui Vulkan backend and this module:
     //   * Init maps ImGui_ImplVulkan_InitInfo onto ImSlugVulkanInitInfo and
@@ -1042,7 +1043,7 @@ namespace ImSlug
     //     PlatformIO().Renderer_RenderState by the stock backend).
     // The callback runs before the stock scissor/texture setup, so it sets its
     // own dynamic scissor; the core injects a ResetRenderState command right
-    // after every Slug run (R5).
+    // after every Slug run.
     namespace
     {
 
@@ -1053,7 +1054,7 @@ namespace ImSlug
             VkRenderPass RenderPass;  // main viewport (multi-viewport: compatible passes)
             uint32_t Subpass;
 
-            // M4 debug overlay flags (ImSlugVulkanDebugOverlay), toggled with
+            // Debug overlay flags (ImSlugVulkanDebugOverlay), toggled with
             // ImSlug_ImplVulkan_SetDebugOverlay; seeded from
             // Config::DebugDrawBounds at Init.
             uint32_t DebugOverlay;
@@ -1151,9 +1152,10 @@ namespace ImSlug
     namespace
     {
         // Shared by ImSlug_ImplVulkan_Init and
-        // ImSlug_ImplVulkan_InitFromVulkanInfo: initializes the M2 core from
-        // the Vulkan objects and registers the render interface. Instance-ring
-        // and MSAA precedence is documented in imslug_impl_vulkan.h.
+        // ImSlug_ImplVulkan_InitFromVulkanInfo: initializes the Vulkan core
+        // from the Vulkan objects and registers the render interface.
+        // Instance-ring and MSAA precedence is documented in
+        // imslug_impl_vulkan.h.
         bool ImSlugImplVulkanInitFromInfo(const ImSlugVulkanInitInfo* vulkanInfo)
         {
             IMSLUG_ASSERT(vulkanInfo != nullptr);

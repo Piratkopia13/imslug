@@ -1,11 +1,11 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_packed.h — the `.imslug` container v1 (M7): the offline asset format
+// imslug_packed.h — the `.imslug` container v1: the offline asset format
 // produced by tools/imslug_gen and loaded without any outline parser. The
 // durable format specification lives in docs/PACKED_FORMAT.md; this header is
 // the machine-checked definition (layout + validation + the packed font kind).
 //
-// Design contract (PLAN §4.4, M7 brief §3.2):
+// Design contract:
 //   * the asset is generated from the *runtime* generator code — the same
 //     font handle, band construction and packer — so a packed glyph record,
 //     its curve texels and its band texels are byte-identical to what the

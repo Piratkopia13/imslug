@@ -16,38 +16,38 @@ path.
 
 ### Added
 
-- **Core glyph pipeline (M1).** stb_truetype outline extraction, lines/quadratic
+- **Core glyph pipeline.** stb_truetype outline extraction, lines/quadratic
   Bézier conversion, adaptive band construction with sorted reference lists,
   packing into two shared pools (curve `RGBA16F`, band `R16G16_UINT`),
   ImGui-parity metrics (`OversampleH/V = 1`, `RasterizerDensity = 1`, …) and a
   CPU reference rasterizer that arbitrates every golden test.
-- **Standalone Vulkan renderer (M2).** An ImGui-free `ImSlugVulkan*` core:
+- **Standalone Vulkan renderer.** An ImGui-free `ImSlugVulkan*` core:
   instanced glyph draws with dynamic 1 px dilation, a frames-in-flight instance
   ring, dirty-row pool uploads through a staging buffer, and both classic
   render-pass and Vulkan 1.3 dynamic-rendering paths.
-- **Dear ImGui integration (M3).** A custom `ImFontLoader` producing rect-less
+- **Dear ImGui integration.** A custom `ImFontLoader` producing rect-less
   glyphs with stable UV handles (no glyph bitmaps for Slug fonts), a draw-data
   pre-pass that rewrites Slug text runs into callback commands with their own
   dynamic scissor and an injected reset-render-state command, fine-clip
   reconstruction (clipped glyphs keep their true position), and the mixed-font
   fallback path.
-- **Robustness, performance and tooling (M4).** Fine-clip fuzz coverage
+- **Robustness, performance and tooling.** Fine-clip fuzz coverage
   (100k-case CI profile), tuned band defaults
   (`clamp(ceil(2*sqrt(n)), 4, 32)` per axis), a benchmark harness
   (`scripts/bench.*`) with CPU/GPU numbers, the F1/F2/F3 debug overlay
   (glyph bounds / band grid / reference-walk heat), and the script-fetched
   Noto Sans SC subset for CJK stress tests.
-- **Color fonts (M5).** A COLR v0/v1 reader and layered rendering: one Slug
+- **Color fonts.** A COLR v0/v1 reader and layered rendering: one Slug
   instance per layer, per-fragment solid/linear/radial/sweep gradients, ClipBox
   clipping, the exact draw-order composites plus alpha-folded constant-mask
   composites, and documented graceful fallbacks for the rest. Verified against
   Noto Color Emoji and locally against Segoe UI Emoji.
-- **C API and Rust bindings (M6).** `imslug_c.h` / `imslug_c.cpp` — an
+- **C API and Rust bindings.** `imslug_c.h` / `imslug_c.cpp` — an
   `extern "C"` mirror with additions only — plus the Vulkan C entry points and
   the additive `ImSlug_ImplVulkan_InitFromVulkanInfo`, a pure-C11 example
   (`example/c/`), a C11 ABI gate, and the `imslug-rs` wrapper crate (sibling
   repo, smoke scope) with `docs/BINDINGS.md`.
-- **Offline assets (M7).** The `imslug_gen` CLI and the versioned, validated,
+- **Offline assets.** The `imslug_gen` CLI and the versioned, validated,
   deterministic `.imslug` container v1 (`docs/PACKED_FORMAT.md`), loaded through
   the same `AddFont*` entry points by content auto-detection — including
   `-DIMSLUG_TTF_PARSER=OFF` builds that ship with no TrueType parser at all.
@@ -61,11 +61,11 @@ path.
 
 - Draw-data pre-pass double-commit that produced invalid early GPU benchmark
   numbers and wrong instances when a manual pre-pass preceded `UploadPools`
-  (fixed in M4; regression-tested).
+  (regression-tested).
 - The CI workflow YAML was invalid (an unquoted colon in a step name) and had
-  never been parsed; fixed while landing M7.
+  never been parsed; fixed during development.
 - `<assert.h>` included inside `namespace ImSlug` broke clang-cl/UCRT builds;
-  fixed while landing M7 (the core is now clang-clean with the parser on and
+  fixed during development (the core is now clang-clean with the parser on and
   off).
 
 ### Known limitations

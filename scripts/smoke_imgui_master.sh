@@ -2,7 +2,7 @@
 # ============================================================================
 # imslug - scripts/smoke_imgui_master.sh
 #
-# ImGui master smoke job (PLAN §8 / M3 brief §6, risk R1: internal-API drift).
+# ImGui master smoke job: detects internal-API drift against ImGui master.
 # Configures a separate build directory against a *fetched Dear ImGui master*
 # instead of the pinned release tag and runs the full test suite. The suite is
 # exactly the code that touches imgui_internal.h (the custom ImFontLoader, the

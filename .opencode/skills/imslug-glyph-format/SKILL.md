@@ -1,16 +1,13 @@
 ---
 name: imslug glyph format
-description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer caps, the frozen core API, the M3 glyph handle encoding/slab registry and how to run the reference/packing tests. Load when editing the generator, packer, glyph records, the CPU reference rasterizer or the handle encoder/decoder (M1+).
+description: Curve/band data contract for the imslug glyph pipeline - texel layouts, epsilon/sorting rules, packer caps, the frozen core API, the glyph handle encoding/slab registry and how to run the reference/packing tests. Load when editing the generator, packer, glyph records, the CPU reference rasterizer or the handle encoder/decoder.
 ---
 
 # imslug glyph data format
 
-Implemented contract as of M1 (`.agent-docs/milestones/M1-core-glyph-pipeline.md`;
-constants live in `imslug_internal.h`, the behavior in `imslug_{packer,glyphgen,refraster}.*`).
-PLAN §2.1-§2.2/§4.1-§4.3 remain the design source; where this file and the plan
-disagree on a detail, the code + this skill are the implemented truth (the M1
-brief says the plan is authoritative "in all matters it specifies" — these are
-the specifications it delegated).
+Implemented contract: constants live in `imslug_internal.h`, the behavior in
+`imslug_{packer,glyphgen,refraster}.*`. Where this file and the code disagree on
+a detail, the code + this skill are the implemented truth.
 
 **All coordinates are em space (1.0 = em), Y-up, origin at the pen position on
 the baseline. Never mix in font units or pixels in stored geometry, and never
@@ -40,7 +37,7 @@ with 'g' (descender) in `tests/test_glyphgen.cpp`.**
   record's `CurveLocX/Y` + `CurveCount` address the block; the shader itself
   only uses band reference lists.
 * Endpoint sharing between connected curves is **not** implemented (optional
-  optimization, skipped in M1 by time-box).
+  optimization, not implemented).
 
 ## Band pool (one global pool)
 
@@ -92,17 +89,16 @@ shader masks `bandMax.y &= 0x00FF` and tests bit 12. The CPU record uses
    inflated by `1/1024` em on both ends, inclusive overlap
    (`bbox.min - eps <= band.max && bbox.max + eps >= band.min`).
 4. Uniform bands per glyph, adaptive count
-   `n = clamp(ceil(2 * sqrt(curveCount)), 4, 32)` per axis (M4 default; the M1
-   formula was `ceil(sqrt(2 * curveCount))`). The sweep tool
+   `n = clamp(ceil(2 * sqrt(curveCount)), 4, 32)` per axis. The sweep tool
    (`tests/bench/band_sweep.cpp`, run via `scripts/bench.*`) models the pixel
-   shader's per-pixel reference walk and the band-pool footprint: the M4
-   default cuts that walk by ~11% (mean and p99/max tails, which matter for
+   shader's per-pixel reference walk and the band-pool footprint: the default
+   cuts that walk by ~11% (mean and p99/max tails, which matter for
    low-end GPUs) for ~25% more band-pool memory (measured 8..72 px on Roboto /
    Inter / the CJK subset: 6.12/6.42/8.25 vs 6.86/7.20/9.25 refs per pixel,
    143/159/240 KB vs 114/129/193 KB); the next coefficients (2.5x, 3x) cost
    ~2x the memory for ~5% more, so they were rejected. The cap stays 32 because
-   the two band header runs must fit in the glyph's first pool row. Decision:
-   PLAN §11 D13. The single tuning point is `ImSlugCalcBandCount()`.
+   the two band header runs must fit in the glyph's first pool row. The single
+   tuning point is `ImSlugCalcBandCount()`.
    Empty glyphs (space) use one band per axis with `bandScale = 0`; a zero em
    extent on an axis also forces `bandScale = 0` for that axis (all curves there
    are axis-parallel anyway).
@@ -114,7 +110,7 @@ shader masks `bandMax.y &= 0x00FF` and tests bit 12. The CPU record uses
 6. Packer: growth by doubling (32-row base), 16-bit/4096 capacity guards with
    asserts + returned `ImSlugBuildStatus` (`CurvePoolLimit`, `BandPoolLimit`,
    `GlyphTooLarge`, `OutOfMemory`) for the graceful fallback; dirty-row tracking
-   (`DirtyRowMin/Max`) + `UsedRows` high-water mark for M2 uploads. Never write
+   (`DirtyRowMin/Max`) + `UsedRows` high-water mark for backend uploads. Never write
    outside the pool. A **failed glyph build is transactional**: the curve/band
    cursors and dirty/used bookkeeping are rolled back, so non-cached failures
    (`CurvePoolLimit`, `BandPoolLimit`, `OutOfMemory`) can be retried on the next
@@ -179,7 +175,7 @@ row 0 = top row, pixel centers, `(centerX0, centerY0)` = em coord of pixel
   `imslug_refraster` (math pins + the stbtt coverage gate + banded/unbanded +
   convergence + `ImSlugRasterGlyphRect` convention),
   `imslug_metrics_imgui_parity` (test-only ImGui build, exact equality).
-* Packed-asset edits (M7): `imslug_packed_loader` (container validation,
+* Packed-asset edits: `imslug_packed_loader` (container validation,
   corruption, packed metrics/records/raster; runs without the parser),
   `imslug_packed_roundtrip` (writer vs runtime generation, **bitwise**),
   `imslug_asset_fresh` (CLI + committed asset freshness),
@@ -194,13 +190,13 @@ row 0 = top row, pixel centers, `(centerX0, centerY0)` = em coord of pixel
   reference estimator is **not** exact area coverage: mean deviations 1.5-8.3%
   at 16 px come from the sampler's ±0.5 px ramp on edge pixels, not geometry
   (deep pixels are exact and the mean collapses ~40x by 256 px). Change these
-  numbers only with measurements + a PLAN §11 entry.
+  numbers only with measurements.
 * After shader-affecting format changes: `scripts/gen_shaders.* --check` and the
-  goldens (`scripts/golden.*`, M2+).
+  goldens (`scripts/golden.*`).
 * Never "fix" a failing invariant by loosening the epsilon or the superset check
-  without recording the decision in `.agent-docs/PLAN.md` §11.
+  without recording the decision (AGENTS.md invariant 9).
 
-## Frozen core API for M2 (imslug_internal.h + modules)
+## Frozen core API (imslug_internal.h + modules)
 
 ```c
 ImSlugFont* ImSlugCreateFontFromMemory(const void* data, int size, int fontIndex, bool copyData);
@@ -228,11 +224,11 @@ void  ImSlugRasterGlyphRect(const ImSlugPools*, const ImSlugGlyphRecord*, float 
 
 Pools expose `Curves.Texels` (RGBA16F, `4*u16` per texel), `Bands.Texels`
 (R16G16_UINT, `2*u16`), `Width`, `Height`, `UsedRows`, `DirtyRowMin/Max` for
-the M2 uploads. Records point into the font's cache and stay valid until the
+backend uploads. Records point into the font's cache and stay valid until the
 font is destroyed (they are rebuilt if a different `ImSlugPools` is passed).
 The pipeline is single-threaded; build scratch buffers live inside `ImSlugFont`.
 
-## M3: glyph handle encoding and slabs (the UV payload)
+## Glyph handle encoding and slabs (the UV payload)
 
 One baked glyph (per font source, glyph index and *bake size*) owns a **slot**;
 the slot indexes `ImSlugGlyphSlab` (core registry, `imslug.cpp`):
@@ -295,7 +291,7 @@ evaluates it at the record's em bbox corners; `Ascent` bridges ImGui's
 line-top Y and em's baseline Y. The sanity slack is ~1 px because `X0..Y1` are
 the *integer* (floor/ceil) box around the exact control-point bbox.
 
-**Sliver precision (M4, PLAN §11 D18).** Fine clipping a glyph down to a few
+**Sliver precision.** Fine clipping a glyph down to a few
 pixels makes the *decoded* fractions carry the encoded-UV quantization: the ulp
 is ~0.002 frac units at slot ids of a few thousand, so a sliver's fraction span
 can even collapse to zero (all four corners bitwise equal). The reconstruction
@@ -310,7 +306,7 @@ to `FitAxis`/`ReconstructPlacement` must keep `tests/test_fuzz.cpp` (both
 profiles, including the high-slot phase) green; the harness bounds are the
 contract.
 
-## M5: color fonts (COLR v0/v1) - the color glyph cache and paint pool
+## Color fonts (COLR v0/v1) - the color glyph cache and paint pool
 
 `imslug_colr.{h,cpp}` (reader + cache) and `imslug_colr.h`'s API; the data
 contract lives in `imslug_internal.h`:
@@ -363,9 +359,9 @@ contract lives in `imslug_internal.h`:
 * **Fallbacks (never crash, never half-draw):** unsupported paint formats are
   skipped; a glyph with no usable layer renders monochrome; `Config::
   EnableColorFonts = false` disables the whole path (read at bake time); pool
-  or slab limits fall back like M1/M3.
+  or slab limits fall back like monochrome glyphs.
 
-## M7: packed assets (`.imslug` container v1) and the no-parser build
+## Packed assets (`.imslug` container v1) and the no-parser build
 
 * **What it is.** An offline-baked font: header + glyph table + codepoint map +
   the *verbatim* runtime curve/band pool rows. Generated by `imslug_gen`
@@ -407,13 +403,13 @@ contract lives in `imslug_internal.h`:
   to the glyf outline). `Record` pool locations in the asset address the
   asset's blobs; the loader rebases them. `ImSlugGetGlyphOutlineQuads` recovers
   fp16 quads from the curve pool (the synthetic ellipsis path works).
-* **Gotcha (M1 contract).** Glyph records are cached per `(glyph index,
+* **Gotcha (cache keying).** Glyph records are cached per `(glyph index,
   ImSlugPools*)` — the *address* of the pool set. A transient pool set whose
   stack/heap address is reused must call `ImSlugFontClearCache` (the writer
   does this via a guard); otherwise stale records from the previous pool set
   are returned.
 
-## ImGui version support / master drift (R1)
+## ImGui version support / master drift
 
 Supported + verified: **v1.92.9b** (the pinned `IMSLUG_IMGUI_TAG`). `imslug.h`
 hard-errors below `IMGUI_VERSION_NUM 19208`. Every `imgui_internal.h` use lives
@@ -433,9 +429,9 @@ full suite; also a daily informational CI job):
   adaptation is contained: resolve codepoints through the new hook, key the
   glyph records by index (`ImSlugGetGlyphRecordByIndex` already exists), and
   revisit the synthetic ellipsis (its "contains" check is index-based now).
-  Planned with the next upstream release, not for the pinned-version milestone.
+  Planned with the next upstream release, not for the pinned version.
 
-**Non-BMP codepoints (M5 note).** With the default 16-bit `ImWchar` (no
+**Non-BMP codepoints.** With the default 16-bit `ImWchar` (no
 `IMGUI_USE_WCHAR32`), ImGui cannot address codepoints above U+FFFF at all - most
 emoji (U+1F600+) are unreachable, so the ImGui-level tests and the example scene
 use BMP emoji (U+2600..U+2BFF) and the color-font goldens bypass ImGui. An app
@@ -448,7 +444,7 @@ Keep the smoke job informational (`continue-on-error`): a red run means
 ## Budgets (typical Latin UI font, ~2000 glyphs)
 
 * Curve pool 50-150 KB, band pool 50-400 KB; uploaded once, incremental after.
-  Measured M4 (Roboto + full Latin bake): 143 KB curves + 159 KB bands for the
+  Measured (Roboto + full Latin bake): 143 KB curves + 159 KB bands for the
   whole font used by the benchmarks; steady-state upload 0-10 KB/frame.
 * One Slug draw call = 2 textures + 1 instance buffer, regardless of font count;
   one callback + one reset per contiguous text run (2 commands for a 5k-glyph
@@ -458,11 +454,11 @@ Keep the smoke job informational (`continue-on-error`): a red run means
   <= 6.8 us/glyph (target <= 50 us).
 * GPU is fragment-heavier than the atlas path by design: 2.3-2.8x the atlas
   fragment cost for pure text (RTX 5080, 1024x640), bounded to +0.011 ms in a
-  production-shaped typical-UI frame (PLAN §11 D14). Band tuning is the lever;
+  production-shaped typical-UI frame. Band tuning is the lever;
   `tests/bench/band_sweep.cpp` measures refs/pixel and pool KB per candidate.
-* Small sizes (R8): unhinted by design; the optional 4x supersample below
+* Small sizes: unhinted by design; the optional 4x supersample below
   ~16 ppem is **not shipped** (measured 5-10 % mean-accuracy gain for 16x the
-  fragments; PLAN §11 D15). `imslug_tests_bench --cpu` prints the R8 table
+  fragments). `imslug_tests_bench --cpu` prints the small-size table
   (Slug vs stbtt bitmaps at 8..32 px, plus the supersample ceiling).
 * Zero glyph bitmaps for Slug fonts (the whole point).
 

@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_gen_writer.h — the `.imslug` container v1 writer (M7). This is the
+// imslug_gen_writer.h — the `.imslug` container v1 writer. This is the
 // offline half of the packed-asset pipeline: it consumes the *runtime* core
 // code (the font handle, band construction, the packer) and serializes the
 // exact pool texels + glyph records the runtime would have produced, so the

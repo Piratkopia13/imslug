@@ -1,6 +1,6 @@
 ---
 name: imslug release
-description: Release checklist for imslug - version sources of truth (imslug.h/imslug_c.h/CMakeLists.txt), CHANGELOG/README state, regenerated-artifact freshness (packed asset, shader header), the full verification matrix, NOTICE/attribution audit, and the owner-approved tag procedure. Load when preparing, tagging or documenting a release (M8+).
+description: Release checklist for imslug - version sources of truth (imslug.h/imslug_c.h/CMakeLists.txt), CHANGELOG/README state, regenerated-artifact freshness (packed asset, shader header), the full verification matrix, NOTICE/attribution audit, and the owner-approved tag procedure. Load when preparing, tagging or documenting a release.
 ---
 
 # imslug release checklist
@@ -38,7 +38,7 @@ version with a `-dev` suffix. `v0.1.0` ships `IMSLUG_VERSION "0.1.0"`.
 ## Release procedure
 
 1. **Scope/state.** `main` is feature-complete for the release, the tree is
-   clean, and the milestone brief/completion notes + PLAN §11 are current.
+   clean, and the plan's status/decision notes are current.
 2. **Version.** Update the five rows above. Bump PATCH for fixes, MINOR for
    additive (ABI-compatible) features, MAJOR only with owner approval; in 0.x,
    a breaking change bumps MINOR.
@@ -80,11 +80,11 @@ version with a `-dev` suffix. `v0.1.0` ships `IMSLUG_VERSION "0.1.0"`.
 
 * Root `CHANGELOG.md`, newest entry first, sections per Keep a Changelog:
   Added / Changed / Fixed / Known limitations.
-* Describe user-visible behavior and reference the milestone/decision (not the
+* Describe user-visible behavior and the decision behind it (not the
   plan's internal wording); never paste `.agent-docs/` wholesale.
 * While a release is prepared but untagged, mark the entry
-  "(release prepared; tag pending owner)" and note the exact tag command in
-  the completion notes.
+  "(release prepared; tag pending owner)" and note the exact tag command
+  alongside the plan entry.
 
 ## What CI enforces (mirror these locally)
 

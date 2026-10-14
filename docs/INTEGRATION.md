@@ -235,7 +235,7 @@ viewport's pass. Secondary viewports whose pass is incompatible with the main
 pipeline therefore cannot work; passes that happen to be compatible (same
 formats/samples) follow Vulkan's pipeline-compatibility rules but are outside
 the tested matrix. A correct path needs an explicit per-viewport render-pass
-API (the M2 core already creates pipelines lazily per render pass) — planned
+API (the Vulkan core already creates pipelines lazily per render pass) — planned
 after v0.1, see `DESIGN.md` §8.
 
 ## 10. Diagnostics

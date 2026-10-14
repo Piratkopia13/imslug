@@ -1,24 +1,24 @@
 ---
 name: imslug vulkan backend
-description: Vulkan backend contract for imslug - the frozen M2 standalone rendering core (pipeline/descriptor/upload/instance-ring API, instance record layout) and the M3 ImGui adapter rules (dynamic scissor + reset-render-state callback protocol, validation expectations including the usual VUIDs). Load when working in backends/, on the golden harness, or on draw-data callbacks.
+description: Vulkan backend contract for imslug - the frozen standalone rendering core (pipeline/descriptor/upload/instance-ring API, instance record layout) and the ImGui adapter rules (dynamic scissor + reset-render-state callback protocol, validation expectations including the usual VUIDs). Load when working in backends/, on the golden harness, or on draw-data callbacks.
 ---
 
 # imslug Vulkan backend contract
 
 Two layers:
 
-* **M2 (implemented)** - `backends/imslug_impl_vulkan.*`: the standalone,
+* **Standalone core** - `backends/imslug_impl_vulkan.*`: the standalone,
   ImGui-free rendering core (pool textures, uploads, instance ring, pipelines,
-  draw). This is the contract below; it is frozen for M3 to build on.
-* **M3 (implemented)** - the `ImSlug_ImplVulkan_*` adapter in the same file
+  draw).
+* **ImGui adapter** - the `ImSlug_ImplVulkan_*` adapter in the same file
   (bottom section): bridges `ImGui_ImplVulkan_InitInfo`/`ImDrawData` onto the
-  M2 core + the core's `ImSlugRenderIO` callback interface. The M2 section stays
+  core + the core's `ImSlugRenderIO` callback interface. The core section stays
   ImGui-agnostic; only the adapter block includes imgui/imgui_impl_vulkan
   headers.
 
 Vulkan code lives in `backends/` only; the core stays backend-independent.
 
-## M2 frozen API (`backends/imslug_impl_vulkan.h`)
+## Frozen core API (`backends/imslug_impl_vulkan.h`)
 
 ```cpp
 struct ImSlugVulkanInitInfo
@@ -52,11 +52,11 @@ struct ImSlugVulkanDrawInfo
     const float* MVP;                          // 16 floats, screen px -> clip, row-major
     float ViewportWidth, ViewportHeight;       // framebuffer px (SlugDilate's dim)
     VkRect2D Scissor;                          // set by Draw (dynamic state)
-    uint32_t DebugFlags;                       // M4 overlay (ImSlugVulkanDebugOverlay), 0 = off
+    uint32_t DebugFlags;                       // debug overlay (ImSlugVulkanDebugOverlay), 0 = off
 };
 void ImSlugVulkanDraw(VkCommandBuffer, const ImSlugVulkanDrawInfo*);
 
-// M4 debug overlay (see docs/DESIGN.md section 6; shader side in the shaders
+// Debug overlay (see docs/DESIGN.md section 6; shader side in the shaders
 // skill): flags combine, RefHeat wins over BandGrid, geometry/placement and
 // fallbacks are untouched. ImSlugVulkanDrawInfo::DebugFlags carries them into
 // the push constants.
@@ -86,23 +86,23 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   the copied `VkPipelineRenderingCreateInfo`; MSAA from `MSAASamples`.
 * Pipelines are created **lazily and cached per (render pass, subpass)** (16
   entries; dynamic rendering is one entry) - multi-viewport/render-pass changes
-  just work (R4). The pipeline cache (`VkPipelineCache`) is honoured.
+  just work. The pipeline cache (`VkPipelineCache`) is honoured.
 * State: triangle-strip, cull NONE, fill, CCW; dynamic VIEWPORT + SCISSOR;
   depth/stencil disabled; MSAA per init.
 * Blend state exactly matches stock `imgui_impl_vulkan` (color
   `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`, alpha `ONE`/`ONE_MINUS_SRC_ALPHA`, ADD),
   so the shader must output **unpremultiplied** color (`alpha *= coverage`).
 * Vertex input: **one instance-rate binding** (stride 96,
-  `ImSlugGlyphInstance`; M5 v2 added the trailing `PaintIndex`) with attributes
+  `ImSlugGlyphInstance`; instance format v2 has the trailing `PaintIndex`) with attributes
   at locations 0..7; no vertex-rate
   attributes - the quad comes from `gl_VertexIndex`. Draws are
   `vkCmdDraw(4, instanceCount, 0, FrameIndex * InstanceCapacity + FirstInstance)`:
   `FirstInstance` is **slot-relative** (it indexes the records the caller wrote
   at `ImSlugVulkanGetInstanceData(FrameIndex)`) and the draw itself adds the
-  ring base. Forgetting the base silently reads slot 0 for every frame (the
-  review's B1); the golden harness pins it with a `FrameIndex = 1` +
+  ring base. Forgetting the base silently reads slot 0 for every frame; the
+  golden harness pins it with a `FrameIndex = 1` +
   `FirstInstance != 0` case.
-* Push constants: 4 MVP rows + viewport size + M4 `DebugFlags` (76 B; the
+* Push constants: 4 MVP rows + viewport size + `DebugFlags` (76 B; the
   fragment shader reads the flags, so the layout range and the push itself use
   `VERTEX | FRAGMENT` stage flags — see the shaders skill).
 * Required features: none beyond core - the pool formats
@@ -118,7 +118,7 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   per frame in flight, written only when the pool images are (re)created - the
   textures are static after upload.
 * Binding 0: curve pool `sampler2D` (RGBA16F); binding 1: band pool
-  `usampler2D` (R16G16_UINT); binding 2 (M5): the paint record array
+  `usampler2D` (R16G16_UINT); binding 2: the paint record array
   (`STORAGE_BUFFER`, `std430`, `readonly buffer` in the fragment shader;
   `ImSlugPaintRecord`, 352 bytes). Fragment stage only. A minimal 1-record
   buffer exists from `ImSlugVulkanInit` on, so the descriptor set is valid for
@@ -134,7 +134,7 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   it consumed** (per-pool clearing: a missing pool view must not drop the other
   pool's pending rows). The caller submits. The **first** upload after creation
   sends `[0, UsedRows)`; later frames send `[DirtyRowMin, DirtyRowMax]`.
-* **One staging buffer per frame in flight** (B2): the CPU memcpys for frame N
+* **One staging buffer per frame in flight**: the CPU memcpys for frame N
   use `Staging[N]` only, so recording a later frame can never overwrite bytes an
   earlier frame's recorded copy still has to read. Recording frame N again
   requires its previous submission to have completed (the standard
@@ -152,7 +152,7 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   into `ImSlugVulkanGetInstanceData(frameIndex)` and batches them with
   slot-relative `FirstInstance` (the buffer is bound whole, never per-batch;
   the draw adds the ring base, see the pipeline rules).
-* M5 paint pool: `ImSlugPools::Paints` (bytes, `ImSlugPaintRecord` array) is
+* Paint pool: `ImSlugPools::Paints` (bytes, `ImSlugPaintRecord` array) is
   uploaded into the binding-2 storage buffer in the same call and through the
   same per-frame staging buffer. The first upload covers `[0, Count)`, later
   frames the dirty record range; growth recreates the buffer with a
@@ -161,7 +161,7 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   `FRAGMENT_SHADER/READ -> TRANSFER/WRITE` and
   `TRANSFER/WRITE -> FRAGMENT_SHADER/READ` `VkBufferMemoryBarrier`s
   (`VK_WHOLE_SIZE`, one queue assumed).
-* Release-safe early-outs (R3): `ImSlugVulkanDraw` is a no-op for an
+* Release-safe early-outs: `ImSlugVulkanDraw` is a no-op for an
   out-of-range `FrameIndex`, a slot-relative `FirstInstance` at/beyond the
   capacity, a null MVP, and when no pool upload happened yet (descriptor sets
   not written); `InstanceCount` is clamped to the remaining slot capacity.
@@ -169,18 +169,18 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
 
 ## Instance record (frozen, `imslug_internal.h`)
 
-`ImSlugGlyphInstance`, **96 bytes (M5 format v2)**, `static_assert`ed against the
+`ImSlugGlyphInstance`, **96 bytes (format v2)**, `static_assert`ed against the
 vertex input: em bbox, screen rect (px, Y down), inverse Jacobian (screen -> em),
 band scale/offset, glyphLoc (band pool), packed bandMax word with **E at bit 28**
-(PLAN §11 D8(g); not "bit 12 of the raw word"), straight-alpha color, and the M5
+(not "bit 12 of the raw word"), straight-alpha color, and the
 `uint32_t PaintIndex` at offset 92 (`kNoPaintIndex` = 0xFFFFFFFF for plain
 glyphs; a valid index selects an `ImSlugPools::Paints` record). The placement must
 be axis-aligned (scale+translate); the shader dilates along the screen-space
 corner diagonals. `ImSlugBuildGlyphInstance()`/`...Scaled()` fill one record
 (the scaled variant exists for color layers with a per-axis positive scale) and
 always set `PaintIndex = kNoPaintIndex`; `ImSlugPackBandMaxWord()` produces the
-packed word. The M2 layout's first 92 bytes are unchanged - the attribute
-locations 0..6 keep their meaning, loc 7 is the new `R32_UINT`.
+packed word. The base layout's first 92 bytes are unchanged - the attribute
+locations 0..6 keep their meaning, loc 7 is the `R32_UINT` addition.
 
 ## Validation expectations
 
@@ -190,7 +190,7 @@ locations 0..6 keep their meaning, loc 7 is the new `R32_UINT`.
 * Frequent failures and their real cause:
   * `vkCreateGraphicsPipelines(): ... Push constant are used, but VkPipelineLayout ... doesn't set VK_SHADER_STAGE_FRAGMENT_BIT`
     (VUID-VkGraphicsPipelineCreateInfo-layout-07987) / `vkCmdPushConstants(): ...` (VUID-vkCmdPushConstants-offset-01796) -
-    since M4 the fragment shader declares the push constant block (`DebugFlags`), so the layout range and every
+    the fragment shader declares the push constant block (`DebugFlags`), so the layout range and every
     `vkCmdPushConstants` call must name `VERTEX | FRAGMENT`, not vertex only.
   * `vkCreateGraphicsPipelines(): pNext<VkPipelineRenderingCreateInfo>...` /
     "not compatible with the current render pass/subpass" -
@@ -230,7 +230,7 @@ locations 0..6 keep their meaning, loc 7 is the new `R32_UINT`.
   case (out-of-range `FrameIndex`/`FirstInstance` must leave the target clear).
   They run in both the render-pass and dynamic-rendering invocations.
 
-### M3 golden test (`imslug_imgui_golden`, both render paths)
+### ImGui golden test (`imslug_imgui_golden`, both render paths)
 
 `tests/golden/test_imgui_golden_vulkan.cpp` renders one fixed ImGui scene twice
 (headless offscreen, 1024x640): with a Slug font and with the same font through
@@ -253,7 +253,7 @@ TRANSFER_SRC barriers, and `PipelineRenderingCreateInfo.pColorAttachmentFormats`
 must point at storage that outlives the whole module lifetime (a block-scoped
 format array is a use-after-scope crash).
 
-### M5 emoji golden test (`imslug_emoji_golden`, both render paths)
+### Emoji golden test (`imslug_emoji_golden`, both render paths)
 
 `tests/golden/test_emoji_golden_vulkan.cpp` renders emoji strings (Noto Color
 Emoji, the fetched gitignored asset) as one instance per COLR layer and compares
@@ -262,7 +262,8 @@ the GPU against a CPU composite: `ImSlugRasterSample` for the coverage plus
 paint, blended straight-alpha into an 8-bit destination. 30 cases at 16/32/64 px
 and 1x/2x/3.5x zoom, skipping (exit 77) when the font or a Vulkan device is
 absent. Measured: worst mean 0.031 LSB, worst channel 21 LSB (isolated
-discontinuity ties), validation clean; the same pass rule as the M2 goldens
+discontinuity ties), validation clean; the same pass rule as the monochrome
+goldens
 (mean <= 0.25, outlier budget 0.05 % + 4).
 
 ## Example app
@@ -271,17 +272,17 @@ discontinuity ties), validation clean; the same pass rule as the M2 goldens
 + swapchain rendering an ordinary ImGui app (stock GLFW+Vulkan backends, imslug
 for the registered font), validation layers on by default
 (`IMSLUG_VALIDATION=0` disables, `IMSLUG_VALIDATION_VERBOSE=1` adds info
-messages). Scene switcher (keys 1-8 / the radio buttons): demo window,
+messages). Scene switcher (keys 1-9 / the radio buttons): demo window,
 widgets/plots/tables, clipping torture, mixed Slug+atlas fonts, runtime
-`style.FontScaleDpi`, the 5k-glyph stress scene, the fetched CJK subset and the
-M5 color-emoji scene (BMP emoji at a size slider plus a single-glyph zoom for the
-gradients). `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
+`style.FontScaleDpi`, the 5k-glyph stress scene, the fetched CJK subset, the
+color-emoji scene (BMP emoji at a size slider plus a single-glyph zoom for the
+gradients) and the packed-asset scene. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
 offscreen frame and prints the validation message/error counts on exit. The
 frame loop cycles over `ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and
 null-checks the ring slot pointer - a 2-image swapchain must not touch ring
-slot 2 (review B3).
+slot 2.
 
-## M3 adapter (implemented) - callback protocol
+## ImGui adapter - callback protocol
 
 Public API (declared in `backends/imslug_impl_vulkan.h`, implemented at the
 bottom of `backends/imslug_impl_vulkan.cpp`; requires `ImSlug::Init()` and a
@@ -289,7 +290,7 @@ renderer with `ImGuiBackendFlags_RendererHasTextures`):
 
 ```c
 bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo*);  // maps PipelineInfoMain
-// M6 additive: same as Init, but takes the Vulkan objects directly
+// Additive: same as Init, but takes the Vulkan objects directly
 // (ImSlugVulkanInitInfo) - the C API's init path and the hook for integrations
 // that never hold an ImGui_ImplVulkan_InitInfo (custom/non-C++ renderers).
 // Precedence: a nonzero ImSlugVulkanInitInfo::MaxInstancesPerFrame wins over
@@ -299,13 +300,13 @@ void ImSlug_ImplVulkan_Shutdown();
 void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd);        // per frame, outside the render pass
 void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline mainPipeline = VK_NULL_HANDLE);
 
-// M4 debug overlay (seeded from Config::DebugDrawBounds at Init; takes effect
+// Debug overlay (seeded from Config::DebugDrawBounds at Init; takes effect
 // on the next RenderDrawData; ignored/asserted before Init).
 void     ImSlug_ImplVulkan_SetDebugOverlay(uint32_t overlayFlags);  // ImSlugVulkanDebugOverlay
 uint32_t ImSlug_ImplVulkan_GetDebugOverlay();
 ```
 
-**M6 C API**: `imslug_c.h` mirrors the whole ImGui-facing surface with C
+**C API**: `imslug_c.h` mirrors the whole ImGui-facing surface with C
 symbols (`imslug_impl_vulkan_init(imslug_vulkan_init_info)` etc.; the C Vulkan
 mirror lives in `backends/imslug_c_vulkan.cpp`, invariant 7). `imslug_config` /
 `imslug_vulkan_init_info` are fixed-size PODs with `int` booleans; the Vulkan
@@ -315,11 +316,11 @@ defined). ABI pinned by `tests/test_c_abi.c` (C11, strict warnings) +
 
 Order contract: `UploadPools` -> `RenderDrawData`. A manual
 `ImSlug::PreprocessDrawData` call is *not* needed (RenderDrawData runs it) and
-before M4's fix it was harmful: the pre-pass is idempotent per frame now
+before the fix it was harmful: the pre-pass is idempotent per frame now
 (`Core::CommittedBatches` - a second call must not re-commit batches, because
 `batch->FirstInstance` is a ring index after the first commit; the old
-double-commit read the arena out of bounds and drew garbage instances, the M4
-bench bug of PLAN §11 D14(a); regression: `TestPrepassIdempotence`). A manual
+double-commit read the arena out of bounds and drew garbage instances;
+regression: `TestPrepassIdempotence`). A manual
 pre-pass before `UploadPools` also targets the previous ring slot.
 
 1. `UploadPools` advances the frames-in-flight slot, resets the instance
@@ -341,7 +342,7 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    clamped exactly like the stock backend.
 4. Immediately after every Slug callback command the pre-pass injects a
    `GetPlatformIO().DrawCallback_ResetRenderState` command, so the stock backend
-   re-establishes pipeline/descriptors/vertex buffers (R5 - never skip it, never
+   re-establishes pipeline/descriptors/vertex buffers (never skip it, never
    move it). Without that hook (or `RendererHasTextures`) the pre-pass refuses to
    rewrite anything: a debug assert + a one-time stderr warning.
 5. Draws are recorded into the active command buffer from
@@ -351,7 +352,7 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    frame index, the main render pass (`VK_NULL_HANDLE` under dynamic rendering),
    the batch's slot-relative `FirstInstance`/`InstanceCount`, a Y-down ortho MVP
    for the framebuffer, the framebuffer size and the batch scissor.
-6. Instances live in the M2 ring: the adapter tracks the per-frame allocation
+6. Instances live in the core's instance ring: the adapter tracks the per-frame allocation
    cursor (`ReserveInstances`); exhaustion drops the overflowing run with a
    debug assert and `Statistics::DroppedRuns`.
 7. Render pass: the pipeline mirrors `PipelineInfoMain.RenderPass/Subpass`, so
@@ -359,8 +360,7 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    formats/samples; the helper-created viewport passes are). Dynamic rendering
    needs `PipelineInfoMain.PipelineRenderingCreateInfo` with the color format
    array alive for the whole module lifetime (the adapter copies the struct but
-   not the array - a block-scoped format array is a real crash, see the M3
-   notes). **Multi-viewport beyond compatible passes stays a documented
+   not the array - a block-scoped format array is a real crash). **Multi-viewport beyond compatible passes stays a documented
    deferral** (verified against pinned v1.92.9b): a secondary viewport created
    by the `ImGui_ImplVulkanH_*` helpers owns a *distinct* render pass
    (`ImGui_ImplVulkanH_Window::RenderPass`, created in
@@ -369,8 +369,7 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    PipelineLayout` - no render pass/subpass. The adapter therefore cannot
    discover the active viewport's pass from the published state, and drawing
    Slug text into a foreign pass would use an incompatible pipeline. A correct
-   path needs app cooperation (an explicit per-viewport pass API); deferred
-   beyond M3.
+   path needs app cooperation (an explicit per-viewport pass API); deferred.
 8. The pre-pass rewrites only `CmdBuffer` (scratch vector): geometry triangles
    keep exact order/offsets, each maximal text run becomes a callback command
    with `ElemCount = 0` and `ClipRect`/`TexRef` copied from the original; the

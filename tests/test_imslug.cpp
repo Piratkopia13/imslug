@@ -1,8 +1,8 @@
-// imslug smoke test (M0): the core library links, and the version string
+// imslug smoke test: the core library links, and the version string
 // reported by the library matches the public header.
 //
-// Grows into the M1 test suites (outline extraction, bands, packing, CPU
-// reference rasterizer) — see .agent-docs/milestones/.
+// The feature suites live alongside this file (outline extraction, bands,
+// packing, CPU reference rasterizer, ...).
 
 #include "imslug.h"
 

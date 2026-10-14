@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_colr.h — COLR/CPAL color-font ingestion (M5): a minimal SFNT table
+// imslug_colr.h — COLR/CPAL color-font ingestion: a minimal SFNT table
 // reader over the same font bytes stb_truetype uses (it does not expose COLR or
 // CPAL), a COLR v0 layer-list reader, a COLR v1 paint-graph flattener, and the
 // per-font color-glyph cache that turns a graph into drawable Slug records plus
@@ -24,7 +24,7 @@
 // Robustness: every read is bounds-checked against the font bytes; malformed or
 // unsupported content never crashes - the affected subtree is skipped, and a
 // glyph with no usable layer is reported as "not a color glyph" so callers keep
-// the monochrome path (PLAN R11-style graceful fallback).
+// the monochrome path (graceful fallback).
 //
 // References: DearWidgets (CC0) documents the same parsing exercise in
 // src/api/dear_widgets_slug.cpp; no code was copied from it (see NOTICE).

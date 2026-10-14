@@ -1,6 +1,6 @@
 // imslug — implementation.
 //
-// imslug_c.cpp — C API (M6): translation between the C surface (imslug_c.h)
+// imslug_c.cpp — C API: translation between the C surface (imslug_c.h)
 // and the canonical C++ API (imslug.h). Every function is a thin mirror: the
 // only logic here is the int<->bool translation of the config struct and the
 // statistics copy, so the C API cannot drift behaviorally from the C++ API.
@@ -11,7 +11,7 @@
 #include "imslug.h"  // canonical C++ API (defines the version macros, imgui.h)
 
 #include "imslug_c.h"
-#include "imslug_packed.h"  // M7: packed-asset validation entry points
+#include "imslug_packed.h"  // packed-asset validation entry points
 
 // The C mirror is ABI-pinned by tests/test_c_api.cpp; these asserts keep the
 // implementation honest even in TUs that do not build the tests.
@@ -109,7 +109,7 @@ int imslug_is_registered(const ImFont* font)
 }
 
 // ---------------------------------------------------------------------------
-// Packed assets (M7)
+// Packed assets
 // ---------------------------------------------------------------------------
 int imslug_is_packed_font_data(const void* data, int data_size)
 {

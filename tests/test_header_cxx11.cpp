@@ -1,5 +1,5 @@
 // The public header must stay C++11-compatible and STL-free (AGENTS.md
-// invariant 4, PLAN §6). This translation unit is deliberately compiled with
+// invariant 4). This translation unit is deliberately compiled with
 // the C++11 standard; it fails to build if that contract is broken.
 
 #include "imslug.h"

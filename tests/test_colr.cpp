@@ -1,4 +1,4 @@
-// imslug — M5 unit test: COLR/CPAL reader, color-glyph cache, CPU paint sampler.
+// imslug — unit test: COLR/CPAL reader, color-glyph cache, CPU paint sampler.
 //
 // Three layers of coverage:
 //   1. synthetic COLR/CPAL tables grafted onto the committed Roboto bytes
@@ -1103,7 +1103,7 @@ namespace
         if (colorGlyph != nullptr)
         {
             // The measured font: U+1F600 has 10 draw ops (verified with
-            // fontTools; see the M5 completion notes). Allow a range so a font
+            // fontTools). Allow a range so a font
             // update does not make this brittle.
             TEST_CHECKF(colorGlyph->LayerCount >= 5 && colorGlyph->LayerCount <= 40, "layers=%d",
                         colorGlyph->LayerCount);

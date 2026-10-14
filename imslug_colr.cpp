@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_colr.cpp — COLR/CPAL reader + color-glyph cache (M5). See
+// imslug_colr.cpp — COLR/CPAL reader + color-glyph cache. See
 // imslug_colr.h for the contract; this file implements:
 //
 //   1. a bounds-checked SFNT table directory reader (ttcf-aware, using the same

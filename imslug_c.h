@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_c.h — C API (M6): an extern "C" mirror of the public C++ API
+// imslug_c.h — C API: an extern "C" mirror of the public C++ API
 // (imslug.h) plus the ImGui-facing Vulkan entry points
 // (backends/imslug_impl_vulkan.h), following cimgui-style conventions.
 //
@@ -152,9 +152,8 @@ typedef uint16_t imslug_wchar;
 
         // Fine-clip reconstruction (default on): rebuild a clipped glyph's
         // unclipped placement from the corner fractions ImGui's CPU fine clip left
-        // in the UVs. When 0 — the R3 fallback — clipped glyphs are compressed
-        // into the quad ImGui drew instead. Unclipped glyphs are placed
-        // identically either way.
+        // in the UVs. When 0, clipped glyphs are compressed into the quad ImGui
+        // drew instead. Unclipped glyphs are placed identically either way.
         int EnableFineClipReconstruction;
 
         // Instance ring sizing per frame; 0 selects the backend default (16384).
@@ -199,7 +198,7 @@ typedef uint16_t imslug_wchar;
     // are rect-less — the atlas never rasterizes or packs them, and their UVs are
     // imslug's glyph handles.
     //
-    // M7: both functions accept TTF/OTF bytes and `.imslug` packed assets; the
+    // Both functions accept TTF/OTF bytes and `.imslug` packed assets; the
     // kind is auto-detected by content (see imslug_is_packed_font_data and
     // docs/PACKED_FORMAT.md). The function names are kept for source
     // compatibility (additions-only policy); packed assets skip outline parsing
@@ -222,7 +221,7 @@ typedef uint16_t imslug_wchar;
     IMSLUG_C_API int imslug_is_registered(const ImFont* font);
 
     // ---------------------------------------------------------------------------
-    // Packed assets (M7; additions only)
+    // Packed assets (additions only)
     // ---------------------------------------------------------------------------
     // imslug_add_font_from_{file,memory}_ttf accept both TTF/OTF bytes and
     // `.imslug` packed assets: the kind is auto-detected by content (the
@@ -356,7 +355,7 @@ typedef uint16_t imslug_wchar;
     IMSLUG_C_API void imslug_impl_vulkan_render_draw_data(ImDrawData* draw_data, VkCommandBuffer cmd,
                                                           VkPipeline main_pipeline);
 
-// M4 debug overlay flags (mirror of ImSlugVulkanDebugOverlay).
+// Debug overlay flags (mirror of ImSlugVulkanDebugOverlay).
 #define IMSLUG_VULKAN_DEBUG_OVERLAY_NONE 0u
 #define IMSLUG_VULKAN_DEBUG_OVERLAY_GLYPH_BOUNDS (1u << 0)
 #define IMSLUG_VULKAN_DEBUG_OVERLAY_BAND_GRID (1u << 1)

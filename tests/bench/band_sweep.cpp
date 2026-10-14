@@ -1,4 +1,4 @@
-// imslug — band-count strategy sweep (M4).
+// imslug — band-count strategy sweep.
 //
 // The band count per glyph is the one tuning knob of the Slug data format:
 // records are size-independent (one band layout serves 8..72 px), so the
@@ -24,9 +24,9 @@
 // Usage (via scripts/bench.* or directly):
 //   imslug_tests_band_sweep [--fonts roboto,inter,cjk] [--csv <file>]
 //
-// The chosen default and the decision are recorded in PLAN §11 and the
-// imslug-glyph-format skill; this tool exists so the numbers can be
-// re-measured after generator changes.
+// The chosen default is documented (with the measured trade-off) in the
+// imslug-glyph-format skill and imslug_packer.cpp; this tool exists so the
+// numbers can be re-measured after generator changes.
 
 #include "imslug_internal.h"
 
@@ -95,7 +95,7 @@ namespace
     }
 
     const Candidate kCandidates[] = {
-        { "sqrt(2n) 4..16", Sqrt2n4_16 },      { "sqrt(2n) 4..32 (M1 default)", Sqrt2n4_32 },
+        { "sqrt(2n) 4..16", Sqrt2n4_16 },      { "sqrt(2n) 4..32", Sqrt2n4_32 },
         { "sqrt(2n) 4..64", Sqrt2n4_64 },      { "sqrt(n)  4..32", Sqrtn4_32 },
         { "2*sqrt(n) 4..32", TwoSqrtn4_32 },   { "2.5*sqrt(n) 4..32", TwoHalfSqrtn4_32 },
         { "3*sqrt(n) 4..32", ThreeSqrtn4_32 }, { "fixed 8", Fixed8 },

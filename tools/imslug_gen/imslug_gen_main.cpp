@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_gen_main.cpp — the offline generator CLI (M7):
+// imslug_gen_main.cpp — the offline generator CLI:
 //
 //   imslug_gen font <font.ttf> --size-range 8:72 --chars a-z,0x20-0x7E -o font.imslug
 //   imslug_gen font <font.ttf> --chars 0x20-0x7E --emit-header font_asset.h
@@ -311,7 +311,7 @@ namespace
     // ---------------------------------------------------------------------
     int Usage()
     {
-        printf("imslug_gen %s - offline generator for .imslug packed assets (M7)\n", IMSLUG_VERSION);
+        printf("imslug_gen %s - offline generator for .imslug packed assets\n", IMSLUG_VERSION);
         printf("\n");
         printf("usage:\n");
         printf("  imslug_gen font <font.ttf> --chars <spec> [-o <out.imslug>] [--size-range <min:max>]\n");

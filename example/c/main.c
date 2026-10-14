@@ -1,6 +1,6 @@
 // imslug — example/c/main.c
 //
-// C API example (M6): a pure-C11 consumer of imslug_c.h.
+// C API example: a pure-C11 consumer of imslug_c.h.
 //
 // Two modes:
 //   * default (no GPU needed): creates the ImGui context, initializes imslug,
@@ -526,7 +526,7 @@ static int ExVkRenderFrame(ex_vk_state* state, ImDrawData* draw_data, int readba
     if (vkBeginCommandBuffer(state->CommandBuffer, &begin_info) != VK_SUCCESS)
         return 0;
 
-    // Glyph-pool uploads are recorded outside the render pass (M3 contract).
+    // Glyph-pool uploads are recorded outside the render pass.
     imslug_impl_vulkan_upload_pools(state->CommandBuffer);
 
     VkClearValue clear;

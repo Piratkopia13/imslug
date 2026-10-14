@@ -1,4 +1,4 @@
-# imslug — M7: CLI-level freshness check for the committed packed test asset.
+# imslug — CLI-level freshness check for the committed packed test asset.
 #
 # Invoked by ctest as `imslug_asset_fresh` with:
 #   -DIMSLUG_GEN=<imslug_gen executable>

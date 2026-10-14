@@ -9,9 +9,9 @@ material: never commit it, never `git add -f` it, never move it to the repo root
    `D<n> (resolved/open, <today's date>):` with the decision, the options
    considered, and the rationale. Keep it factual and dated; do not rewrite
    history - supersede with a new entry.
-2. The current milestone brief in `.agent-docs/milestones/`: update its status
-   line; when the milestone ends, fill its §8 completion notes (status + date,
-   deviations, what the next milestone must know, verification evidence with
+2. The active task brief in `.agent-docs/milestones/`: update its status
+   line; when the work ends, fill its completion notes (status + date,
+   deviations, what the next task must know, verification evidence with
    exact commands and results).
 3. If durable docs changed, update them in the same change (README/AGENTS/
    `docs/**`); promoting a scratch doc means rewriting it under `docs/` and

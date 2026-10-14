@@ -2,7 +2,7 @@
 # ============================================================================
 # imslug - scripts/bench.sh
 #
-# Benchmark harness (M4): builds imslug_tests_bench and runs it.
+# Benchmark harness: builds imslug_tests_bench and runs it.
 #
 #   scripts/bench.sh              CPU pre-pass + GPU (headless) with a report
 #   scripts/bench.sh --cpu        CPU-side numbers only (no Vulkan device)

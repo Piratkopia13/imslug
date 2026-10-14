@@ -1,6 +1,6 @@
-// imslug — M7 round-trip test: runtime TTF generation vs packed asset loading.
+// imslug — round-trip test: runtime TTF generation vs packed asset loading.
 //
-// The M7 invariant is that the offline generator can never diverge from the
+// The invariant is that the offline generator can never diverge from the
 // runtime generator (same core code, byte-exact output). This suite proves it:
 //
 //   1. the writer (imslug_gen_core) bakes Roboto's ASCII range from the TTF

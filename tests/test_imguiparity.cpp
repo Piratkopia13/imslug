@@ -1,10 +1,10 @@
-// imslug M1 test — metric parity against Dear ImGui's own stb loader.
+// imslug test — metric parity against Dear ImGui's own stb loader.
 //
 // This is a test-only build: Dear ImGui is compiled into this executable
 // (imslug_imgui_testlib) and never into the library. For every test font and
 // bake size it compares ImSlugGlyphMetrics with the real ImFontGlyph values
 // produced by ImGui v1.92.9b's ImGui_ImplStbTrueType_FontBakedLoadGlyph, with
-// the config Slug fonts use (or will use in M3): OversampleH/V = 1,
+// the config Slug fonts use: OversampleH/V = 1,
 // RasterizerDensity = 1, ExtraSizeScale = 1, GlyphOffset = 0.
 //
 // AdvanceX is additionally compared against the default configuration, since

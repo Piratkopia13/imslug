@@ -11,7 +11,7 @@ a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
 > **Status: v0.1.0 — release prepared; the `v0.1.0` tag is pending the repo
-> owner.** All milestones M0–M8 are complete: the Slug glyph pipeline and
+> owner.** The feature set is complete: the Slug glyph pipeline and
 > Vulkan renderer, the ImGui integration (mixed fonts, clipping, runtime DPI),
 > color fonts (COLR v0/v1), the C API (`imslug_c.h`) and the Rust wrapper
 > (`imslug-rs`), and the offline generator + `.imslug` container v1 — including
@@ -40,11 +40,11 @@ humans, CI and the `.opencode/commands`:
 | Build + run tests (ctest) | `scripts\test.bat` | `scripts/test.sh` |
 | Regenerate shader header | `scripts\gen_shaders.bat` | `scripts/gen_shaders.sh` |
 | Verify committed shader header | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
-| Regenerate the packed test asset (M7) | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
-| Golden-image tests (M2+) | `scripts\golden.bat` | `scripts/golden.sh` |
-| Clean-project FetchContent check (M8) | `scripts\verify_fetchcontent.bat` | `scripts/verify_fetchcontent.sh` |
+| Regenerate the packed test asset | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
+| Golden-image tests | `scripts\golden.bat` | `scripts/golden.sh` |
+| Clean-project FetchContent check | `scripts\verify_fetchcontent.bat` | `scripts/verify_fetchcontent.sh` |
 | Dear ImGui master smoke (drift check) | `scripts\smoke_imgui_master.bat` | `scripts/smoke_imgui_master.sh` |
-| Benchmarks (M4+) | `scripts\bench.bat` | `scripts/bench.sh` |
+| Benchmarks | `scripts\bench.bat` | `scripts/bench.sh` |
 | Docs-hygiene check | `scripts\check_docs.bat` | `scripts/check_docs.sh` |
 
 Agents should start with [`AGENTS.md`](AGENTS.md).
@@ -73,7 +73,7 @@ Color fonts (COLR v0/v1) render one Slug instance per layer with per-fragment
 paint evaluation (flat colors, linear/radial/sweep gradients, ClipBoxes); the
 fetched Noto Color Emoji is used by the emoji scene and the emoji goldens.
 
-**Offline generation (M7).** The same entry points also accept pre-baked
+**Offline generation.** The same entry points also accept pre-baked
 `.imslug` assets — auto-detected by content, no outline parsing:
 
 ```sh

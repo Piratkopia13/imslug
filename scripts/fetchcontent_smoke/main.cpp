@@ -1,6 +1,6 @@
 // imslug - scripts/fetchcontent_smoke/main.cpp
 //
-// Minimal clean-project consumer (M8): includes only the public header, links
+// Minimal clean-project consumer: includes only the public header, links
 // the core library and prints the version. Built and run by
 // scripts/verify_fetchcontent.* from the throwaway FetchContent project.
 

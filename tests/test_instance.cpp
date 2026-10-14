@@ -1,8 +1,8 @@
-// imslug — M2 unit test: the frozen glyph-instance record.
+// imslug — unit test: the frozen glyph-instance record.
 //
 // Pins the layout (`sizeof`, field offsets — complementing the static_asserts
-// in imslug_internal.h), the packed bandMax word (band maxima + E at bit 28,
-// PLAN §11 D8(g)) and the placement contract of ImSlugBuildGlyphInstance:
+// in imslug_internal.h), the packed bandMax word (band maxima + E at bit 28)
+// and the placement contract of ImSlugBuildGlyphInstance:
 //   screen (px, Y down) = (penX + emX * P, penY - emY * P)
 // with the corner correspondence the vertex shader builds from gl_VertexIndex:
 // em (MinX, MinY) maps to screen (ScreenMinX, ScreenMaxY) — i.e. the Y flip
@@ -55,7 +55,7 @@ namespace
 
     void TestLayout()
     {
-        TEST_CHECK(sizeof(ImSlugGlyphInstance) == 96);  // M5: + PaintIndex (v2)
+        TEST_CHECK(sizeof(ImSlugGlyphInstance) == 96);  // + PaintIndex (format v2)
         TEST_CHECK(offsetof(ImSlugGlyphInstance, EmMinX) == 0);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, Jac00) == 32);
@@ -65,7 +65,7 @@ namespace
         TEST_CHECK(offsetof(ImSlugGlyphInstance, ColorR) == 76);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, PaintIndex) == 92);
 
-        // M5 paint record layout (GPU-visible std430 contract).
+        // Paint record layout (GPU-visible std430 contract).
         TEST_CHECK(sizeof(ImSlugPaintRecord) == 352);
         TEST_CHECK(offsetof(ImSlugPaintRecord, Xform0) == 16);
         TEST_CHECK(offsetof(ImSlugPaintRecord, Geo0) == 48);
@@ -130,11 +130,11 @@ namespace
         TEST_CHECKF(std::fabs(emX - (record.MinX + 1.0f / pixelsPerEm)) <= epsilon, "screen +1px -> em %f", emX);
         TEST_CHECKF(std::fabs(emY - (record.MinY + 1.0f / pixelsPerEm)) <= epsilon, "screen -1px -> em %f", emY);
 
-        // M5: a plain instance carries no paint record.
+        // A plain instance carries no paint record.
         TEST_CHECK(instance.PaintIndex == kNoPaintIndex);
     }
 
-    // M5: the per-axis scaled builder used by color layers whose transform is a
+    // The per-axis scaled builder used by color layers whose transform is a
     // positive axis-aligned scale. Same corner contract, per-axis mapping.
     void TestInstanceBuildScaled()
     {

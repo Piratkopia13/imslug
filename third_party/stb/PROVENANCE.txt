@@ -9,7 +9,7 @@ Size:           199192 bytes
 
 Vendored unmodified and read-only (AGENTS.md invariant 2: never modify
 third-party sources). This is upstream stb, deliberately NOT ImGui's
-imstb_truetype.h, to avoid symbol/macro coupling with ImGui (PLAN §4.1, D1).
+imstb_truetype.h, to avoid symbol/macro coupling with ImGui.
 
 License: public domain / MIT (dual), quoted in NOTICE section 2.
 Not a git submodule: single header committed so builds do not need network.

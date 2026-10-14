@@ -3,7 +3,7 @@
 # Entry points for humans, CI and agents are scripts/build.* and scripts/test.*
 # (see AGENTS.md); do not bypass them with ad-hoc cmake invocations.
 #
-# Style contract (PLAN §6): public headers compile as C++11 and contain no STL;
+# Style contract: public headers compile as C++11 and contain no STL;
 # our implementation is C++17 without exceptions; third-party targets keep
 # their own settings.
 
@@ -17,12 +17,12 @@ project(imslug
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (M2 renderer core; reused by the M3 ImGui adapter)" ON)
+option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (standalone renderer core; reused by the ImGui adapter)" ON)
 option(IMSLUG_BUILD_TESTS    "Build unit tests and enable ctest" ON)
-option(IMSLUG_BUILD_EXAMPLES "Build the example applications (M2+)" OFF)
-option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c; M6: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
-option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen, M7)" ON)
-option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; M7: OFF = packed .imslug assets only)" ON)
+option(IMSLUG_BUILD_EXAMPLES "Build the example applications" OFF)
+option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
+option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen)" ON)
+option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; OFF = packed .imslug assets only)" ON)
 
 set(IMSLUG_IMGUI_DIR "" CACHE PATH
     "Use an existing Dear ImGui checkout instead of fetching it (-DIMSLUG_IMGUI_DIR=...)")
@@ -69,7 +69,7 @@ endfunction()
 # Upstream Dear ImGui ships no CMakeLists.txt, so FetchContent only populates
 # the source tree; we compile the subset we need (imgui.cpp, imgui_draw.cpp,
 # imgui_tables.cpp, imgui_widgets.cpp) into `imslug_imgui_lib` when we own the
-# sources. The imslug core needs Dear ImGui from M3 on (imslug.h includes
+# sources. The imslug core needs Dear ImGui (imslug.h includes
 # imgui.h and the pre-pass walks ImDrawData), so a checkout is mandatory.
 # ---------------------------------------------------------------------------
 set(IMSLUG_IMGUI_SOURCE_DIR "")
@@ -138,8 +138,8 @@ endif()
 
 # ---------------------------------------------------------------------------
 # stb (vendored, third-party) — its own target so our warning settings never
-# apply to third-party code (AGENTS.md invariant 2; M1 brief). The no-parser
-# build (IMSLUG_TTF_PARSER=OFF, M7) excludes it entirely.
+# apply to third-party code (AGENTS.md invariant 2). The no-parser
+# build (IMSLUG_TTF_PARSER=OFF) excludes it entirely.
 # ---------------------------------------------------------------------------
 if(IMSLUG_TTF_PARSER)
     add_library(imslug_stb STATIC imslug_stb.cpp)
@@ -152,10 +152,10 @@ if(IMSLUG_TTF_PARSER)
 endif()
 
 # ---------------------------------------------------------------------------
-# Core library (M3: includes the ImGui-facing core + adapter; the backend
+# Core library (includes the ImGui-facing core + adapter; the backend
 # modules stay in backends/ — AGENTS.md invariants 4 and 7)
 #
-# M7: imslug_font.cpp (font-kind dispatch + shared record builder) and
+# imslug_font.cpp (font-kind dispatch + shared record builder) and
 # imslug_packed.cpp (the `.imslug` container v1 loader) are always compiled;
 # imslug_glyphgen.cpp (the stb_truetype outline path) only with the parser.
 # ---------------------------------------------------------------------------
@@ -210,13 +210,12 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Optional targets — placeholders until their milestones land. They are
-# created only when the corresponding option is ON; see the milestone briefs.
+# Optional targets — created only when the corresponding option is ON.
 # ---------------------------------------------------------------------------
 if(IMSLUG_BACKEND_VULKAN)
     if(IMSLUG_HAVE_VULKAN)
-        # Dear ImGui's Vulkan renderer backend (third-party): the M3 adapter in
-        # imslug_vulkan calls ImGui_ImplVulkan_RenderDrawData, so it is linked
+        # Dear ImGui's Vulkan renderer backend (third-party): the ImGui adapter
+        # in imslug_vulkan calls ImGui_ImplVulkan_RenderDrawData, so it is linked
         # together with the module (and reused by the examples).
         add_library(imslug_imgui_vulkan_backend STATIC
             "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
@@ -233,8 +232,8 @@ if(IMSLUG_BACKEND_VULKAN)
             target_compile_options(imslug_imgui_vulkan_backend PRIVATE -w)
         endif()
 
-        # Standalone Vulkan rendering core (M2) + ImGui adapter (M3) + the C
-        # Vulkan mirror (M6): reused by the examples, the golden harness and
+        # Standalone Vulkan rendering core + ImGui adapter + the C
+        # Vulkan mirror: reused by the examples, the golden harness and
         # the integration tests.
         add_library(imslug_vulkan STATIC
             backends/imslug_impl_vulkan.cpp
@@ -278,7 +277,7 @@ if(IMSLUG_BUILD_EXAMPLES)
         endif()
 
         # Dear ImGui platform backend (third-party; examples only). The Vulkan
-        # renderer backend is built globally (see below): the M3 ImGui adapter
+        # renderer backend is built globally (see below): the ImGui adapter
         # in imslug_vulkan calls into it.
         add_library(imslug_imgui_backends STATIC
             "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp")
@@ -304,7 +303,7 @@ if(IMSLUG_BUILD_EXAMPLES)
         set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_example_glfw_vulkan)
         target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
-        # M7: the default Slug font is the TTF when the parser is built in and
+        # The default Slug font is the TTF when the parser is built in and
         # the committed packed asset otherwise (the no-parser demo runs entirely
         # from baked data; the stock atlas font still uses ImGui's own parser).
         if(IMSLUG_TTF_PARSER)
@@ -323,7 +322,7 @@ if(IMSLUG_BUILD_EXAMPLES)
 endif()
 
 # ---------------------------------------------------------------------------
-# Offline tools (M7): the `.imslug` asset writer + the imslug_gen CLI.
+# Offline tools: the `.imslug` asset writer + the imslug_gen CLI.
 # The writer consumes the same runtime core code as the renderer (font handle,
 # band construction, packer), so generated assets cannot diverge from runtime
 # generation. It needs the TTF parser; a no-parser build has no generator.
@@ -352,7 +351,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# C example (M6): a pure-C11 consumer of imslug_c.h. The CPU smoke (context,
+# C example: a pure-C11 consumer of imslug_c.h. The CPU smoke (context,
 # init, add font, one headless frame, shutdown) builds and runs everywhere;
 # when Vulkan is available the headless offscreen frame is compiled in too
 # (`--vulkan`, exit 77 without a device). CI: the default build on Windows +

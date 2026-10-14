@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem ===========================================================================
 rem imslug - scripts\bench.bat
 rem
-rem Benchmark harness (M4): builds imslug_tests_bench and runs it.
+rem Benchmark harness: builds imslug_tests_bench and runs it.
 rem
 rem   scripts\bench.bat              CPU pre-pass + GPU (headless) with a report
 rem   scripts\bench.bat --cpu        CPU-side numbers only (no Vulkan device)

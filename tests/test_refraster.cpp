@@ -1,8 +1,8 @@
-// imslug M1 tests — CPU reference rasterizer.
+// imslug tests — CPU reference rasterizer.
 //
 // 1. Pins the pure shader math (root eligibility table, solvers, coverage
 //    combine + fill rules) against closed-form expectations.
-// 2. The M1 acceptance gate: rasterized 'g', 'A', 'W', 'é' at 16/32/64 px are
+// 2. The coverage gate: rasterized 'g', 'A', 'W', 'é' at 16/32/64 px are
 //    compared against stbtt's anti-aliased bitmaps with concrete thresholds
 //    (mean |delta| and 99th percentile; see MeanThresholdForSize/P99ThresholdForSize
 //    and kHardPixelTolerance).
@@ -460,7 +460,7 @@ static void TestInteriorExterior()
 }
 
 // ---------------------------------------------------------------------------
-// ImSlugRasterGlyphRect convention (the frozen API M2 depends on)
+// ImSlugRasterGlyphRect convention (the frozen API the goldens depend on)
 // ---------------------------------------------------------------------------
 // Row 0 is the top row; (centerX0, centerY0) is the em coordinate of pixel
 // (0,0)'s center; x increases by 1/ppe per column and y decreases by 1/ppe per

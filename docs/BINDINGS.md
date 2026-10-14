@@ -6,13 +6,13 @@ consume imslug without the C++ API. The C++ API (`imslug.h`,
 mirror with additions only, and this file records its conventions, the ABI
 policy and the binding status.
 
-Status (M6 + M7): the C API and the C example are complete and CI-gated; the
+Status: the C API and the C example are complete and CI-gated; the
 Rust wrapper crate (`imslug-rs`, a sibling local repository) covers the smoke
 scope (link, context, font registration, clean shutdown). Full rendering through
 `imgui-rs-vulkan-renderer` is explicitly deferred — see
-[the integration answer](#imgui-rs--imgui-rs-vulkan-renderer-status). M7 added
-the `.imslug` packed-asset loader (auto-detected by content in the same
-font-add entry points) plus two additive C entries —
+[the integration answer](#imgui-rs--imgui-rs-vulkan-renderer-status). The
+`.imslug` packed-asset loader is auto-detected by content in the same
+font-add entry points and comes with two additive C entries —
 `imslug_is_packed_font_data` and `imslug_validate_packed_font_data`; the format
 is documented in `docs/PACKED_FORMAT.md`.
 
@@ -117,7 +117,7 @@ build/imslug_example_c --vulkan --screenshot out.ppm   # headless offscreen fram
 exists; the environment variables `IMSLUG_VALIDATION=0` and
 `IMSLUG_VK_DEVICE=<n>` mirror the C++ example.
 
-## Packed `.imslug` assets (M7)
+## Packed `.imslug` assets
 
 `imslug_add_font_from_file_ttf` and `imslug_add_font_from_memory_ttf` accept
 **both** TTF/OTF bytes and `.imslug` packed assets: the kind is auto-detected by
@@ -191,7 +191,7 @@ Debug overlay flags: `IMSLUG_VULKAN_DEBUG_OVERLAY_GLYPH_BOUNDS`,
   `PlatformIO::DrawCallback_ResetRenderState`; without a registered backend
   module the draw data is left untouched (stock rendering).
 * Color glyphs render one instance per COLR layer with per-fragment paint
-  evaluation; the documented composite approximations (M5) are in
+  evaluation; the documented composite approximations are in
   `docs/DESIGN.md` section 9. `Config::EnableColorFonts = false` disables the
   path.
 * Non-BMP emoji need `IMGUI_USE_WCHAR32` in the whole build (see above).
@@ -235,8 +235,8 @@ build changes).
 
 ## `imgui-rs` / `imgui-rs-vulkan-renderer` status
 
-**Decision (M6): the full `imgui-rs-vulkan-renderer` integration is deferred**
-(recorded in PLAN §11 D26). What it needs, precisely:
+**Decision: the full `imgui-rs-vulkan-renderer` integration is deferred.**
+What it needs, precisely:
 
 1. **A renderer-agnostic draw hook.** Today the Slug draw path
    (`ImSlugRenderIO::DrawBatch`) is bound to the stock ImGui Vulkan backend's
@@ -259,7 +259,7 @@ build changes).
    renderer.
 
 Because of (1)–(3), the integration is a dedicated follow-up effort; the C API
-and `imslug-rs` delivered in M6 are its prerequisites (they already expose the
+and `imslug-rs` are its prerequisites (they already expose the
 core + a Vulkan init that takes plain Vulkan objects).
 
 ## CI coverage

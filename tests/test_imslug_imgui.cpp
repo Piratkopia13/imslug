@@ -1,4 +1,4 @@
-// imslug M3 tests — the ImGui-facing layer: custom ImFontLoader, glyph handle
+// imslug tests — the ImGui-facing layer: custom ImFontLoader, glyph handle
 // encoding/decoding, fine-clip reconstruction and the draw-data pre-pass.
 //
 // This is a test-only build: Dear ImGui is linked from the shared target and
@@ -66,7 +66,7 @@ namespace
     const ImSlugRenderIO g_FakeIO = { "test", FakeGetFrameIndex, FakeReserve, FakeDraw };
 
     // ImGui_ImplVulkan_Init publishes these in the real app; the pre-pass
-    // refuses to run without them (R5). Each callback writes its own counter:
+    // refuses to run without them. Each callback writes its own counter:
     // empty identical functions would be folded into one address by the linker
     // (/OPT:ICF), which would make the identity checks meaningless.
     int g_FakeCallbackSink[4];
@@ -887,7 +887,7 @@ static void TestEdgeCases()
 }
 
 // ---------------------------------------------------------------------------
-// 6. Runtime FontScaleDpi changes and atlas growth/repacking (M3 acceptance).
+// 6. Runtime FontScaleDpi changes and atlas growth/repacking.
 // ---------------------------------------------------------------------------
 static void TestRuntimeDpiAndAtlasGrowth()
 {
@@ -987,7 +987,7 @@ static void TestRuntimeDpiAndAtlasGrowth()
 
 // ---------------------------------------------------------------------------
 // 7. CmdScratch growth: thousands of alternating text/geometry runs inside one
-//    source command -> > 4096 output commands (review M1).
+//    source command -> > 4096 output commands.
 // ---------------------------------------------------------------------------
 static void TestCommandScratchGrowth()
 {
@@ -1044,7 +1044,7 @@ static void TestCommandScratchGrowth()
 }
 
 // ---------------------------------------------------------------------------
-// 8. Slab lifetime across ImGui's BakedPool GC (review B1): a bake moved by
+// 8. Slab lifetime across ImGui's BakedPool GC: a bake moved by
 //    the GC must release exactly its own slabs, and discarding one bake must
 //    never free a live bake's slabs.
 // ---------------------------------------------------------------------------
@@ -1167,8 +1167,8 @@ static void TestGracefulFallbacks()
     std::printf("[test] documented fallbacks (instance ring, slab cap)\n");
 
     // --- MaxInstancesPerFrame exhaustion -> DroppedRuns, no corruption ------
-    // Release-only: the drop path deliberately asserts in debug (see the M3
-    // completion notes); the release behavior is the documented fallback.
+    // Release-only: the drop path deliberately asserts in debug; the release
+    // behavior is the documented fallback.
 #if defined(NDEBUG)
     {
         ImFont* slugFont = ImGui::GetIO().Fonts->Fonts[0];
@@ -1257,8 +1257,8 @@ static void TestGracefulFallbacks()
 // PreprocessDrawData with the same draw data must not re-commit the batches:
 // the commit rewrites batch->FirstInstance from an arena index to a ring index,
 // so a second commit would memcpy *from the ring index as an arena index*
-// (out-of-bounds read) and duplicate the ring allocation. Found by the M4
-// bench harness, whose GPU loop pre-processed twice per frame.
+// (out-of-bounds read) and duplicate the ring allocation. Found by the bench
+// harness, whose GPU loop pre-processed twice per frame.
 // ---------------------------------------------------------------------------
 static void TestPrepassIdempotence()
 {

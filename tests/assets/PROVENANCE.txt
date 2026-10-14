@@ -1,4 +1,4 @@
-# tests/assets — committed generated test assets (M7)
+# tests/assets — committed generated test assets
 
 `Roboto-ASCII.imslug` is an `.imslug` container v1 baked from
 `tests/fonts/Roboto-Regular.ttf` (Apache-2.0; license text in

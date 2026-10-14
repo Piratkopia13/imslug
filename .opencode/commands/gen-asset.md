@@ -1,12 +1,12 @@
 ---
-description: Regenerate the committed packed test asset (imslug_gen, M7)
+description: Regenerate the committed packed test asset (imslug_gen)
 ---
 
 The packed test asset regeneration just ran:
 
 !`scripts/gen_asset.bat`
 
-This runs the M7 offline generator (`build/imslug_gen`) over
+This runs the offline generator (`build/imslug_gen`) over
 `tests/fonts/Roboto-Regular.ttf` with the pinned parameters
 (`--size-range 8:72 --chars 0x20-0x7E`) and overwrites
 `tests/assets/Roboto-ASCII.imslug`. The asset is a generated artifact (like

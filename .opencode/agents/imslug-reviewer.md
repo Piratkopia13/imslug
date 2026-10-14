@@ -21,7 +21,7 @@ suggested fix. If the change is clean, say so plainly.
 
 Review focus, in order:
 
-1. Generator/shader invariants (PLAN §2.2, §4; skill `imslug-glyph-format`):
+1. Generator/shader invariants (skill `imslug-glyph-format`):
    line encoding `{p1,p2,p2}`, axis-parallel curves excluded from the matching
    bands, conservative control-point bbox membership with the 1/1024 em epsilon,
    descending max-x/max-y sort inside bands, row-wrap band offsets, em space and
@@ -39,5 +39,5 @@ Review focus, in order:
    markdown only under `.agent-docs/`).
 
 Also check: tests cover the changed behavior; comments explain "why", not "what";
-the diff is milestone-scoped. Ask (in the report) rather than assume when a
+the diff is task-scoped. Ask (in the report) rather than assume when a
 requirement is ambiguous.

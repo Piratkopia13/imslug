@@ -2,12 +2,12 @@
 //
 // imslug_glyphgen.h — the font-side core: stbtt outline extraction to em-space
 // quadratics, adaptive band construction, ImGui-parity metrics, and the font
-// handle with the lazy glyph-record cache M2 consumes.
+// handle with the lazy glyph-record cache the render path consumes.
 //
 // Everything here works in em space (1.0 = em, Y up, baseline origin) unless
 // the name says otherwise ("...Em", "bakeSizePixels"). Metrics are the one
 // deliberate exception: ImSlugGlyphMetrics pixels mirror Dear ImGui's stb
-// loader so layout stays pixel-identical (PLAN §4.1) — see the comments in
+// loader so layout stays pixel-identical — see the comments in
 // imslug_glyphgen.cpp for the exact source lines the formulas come from.
 
 #pragma once
@@ -35,7 +35,7 @@ namespace ImSlug
     int ImSlugConvertCubicToQuadratics(const ImSlugCubic* cubic, ImSlugQuad outQuads[2]);
 
     // ---------------------------------------------------------------------
-    // Band construction: moved to imslug_packer.h in M7 (the pure quad/band
+    // Band construction: declared in imslug_packer.h (the pure quad/band
     // helpers must work without an outline parser). Declarations:
     //   ImSlugCalcBandCount, ImSlugQuadControlBounds, ImSlugControlBoundsOfQuads,
     //   ImSlugAssignBands.
@@ -45,7 +45,7 @@ namespace ImSlug
     // Font
     // ---------------------------------------------------------------------
     struct ImSlugFont;       // opaque
-    struct ImSlugColorFont;  // opaque (M5; imslug_colr.h)
+    struct ImSlugColorFont;  // opaque (imslug_colr.h)
 
     // Mirrors ImGui's stb loader with OversampleH/V=1, RasterizerDensity=1,
     // ExtraSizeScale=1, GlyphOffset=0 — the configuration Slug fonts use (no
@@ -70,7 +70,7 @@ namespace ImSlug
         float Ascent, Descent;        // pixels (ImGui parity: ceil / floor)
     };
 
-    // M7: raw per-glyph source metrics. The packed-asset writer stores these so
+    // Raw per-glyph source metrics. The packed-asset writer stores these so
     // the loader can reproduce the TTF metrics (and the glyph boxes) at any
     // bake size without a parser: `Box*` is the glyf box exactly as
     // stbtt_GetGlyphBox reports it in font units (all zero when the glyph has
@@ -98,12 +98,12 @@ namespace ImSlug
     // 0 = not found (stbtt_FindGlyphIndex semantics).
     int ImSlugGetGlyphIndex(const ImSlugFont* font, unsigned int codepoint);
 
-    // M5: the font's COLR/CPAL data (parsed lazily on first use; null when the
+    // The font's COLR/CPAL data (parsed lazily on first use; null when the
     // font has no usable color tables - the monochrome path). Owned by the
     // font, destroyed with it.
     ImSlugColorFont* ImSlugFontGetColor(ImSlugFont* font);
 
-    // Number of glyphs in the font (stbtt_fontinfo::numGlyphs). M3 uses it to
+    // Number of glyphs in the font (stbtt_fontinfo::numGlyphs). Used to
     // size per-bake slot tables.
     int ImSlugGetGlyphCount(const ImSlugFont* font);
 
@@ -114,11 +114,11 @@ namespace ImSlug
     bool ImSlugGetGlyphOutlineQuads(const ImSlugFont* font, int glyphIndex, ImSlugQuad* outQuads, int quadCapacity,
                                     int* outCount);
 
-    // Raw source metrics of one glyph (M7; see ImSlugGlyphSourceMetrics).
+    // Raw source metrics of one glyph (see ImSlugGlyphSourceMetrics).
     // Fails for glyphIndex <= 0.
     bool ImSlugGetGlyphSourceMetrics(const ImSlugFont* font, int glyphIndex, ImSlugGlyphSourceMetrics* outMetrics);
 
-    // M3: build a glyph record from em-space quads that do not come from the
+    // Build a glyph record from em-space quads that do not come from the
     // font (the composite ellipsis is three translated dot outlines). The pools
     // receive the curves/bands exactly like a font glyph; a failed build is
     // transactional (the pools are rolled back) and the caller's record is left

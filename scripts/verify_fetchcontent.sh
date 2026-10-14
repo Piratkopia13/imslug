@@ -2,7 +2,7 @@
 # ============================================================================
 # imslug - scripts/verify_fetchcontent.sh
 #
-# Clean-project verification (M8): a throwaway CMake project consumes this
+# Clean-project verification: a throwaway CMake project consumes this
 # repository via FetchContent (a git clone of the committed state), builds the
 # GLFW+Vulkan example and a minimal consumer executable, and runs both.
 #

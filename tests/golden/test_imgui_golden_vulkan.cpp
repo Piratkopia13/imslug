@@ -1,9 +1,9 @@
-// tests/golden/test_imgui_golden_vulkan.cpp — M3 integration golden test.
+// tests/golden/test_imgui_golden_vulkan.cpp — ImGui-integration golden test.
 //
 // Renders one fixed ImGui scene twice in a headless offscreen Vulkan pass: once
 // with the Slug font (our ImFontLoader + callbacks + Slug pipeline) and once
 // with the same font through ImGui's own stb loader (atlas path, stock
-// pipeline), then compares the two frames. This is the end-to-end M3 check:
+// pipeline), then compares the two frames. This is the end-to-end check:
 //
 //   * everything except the font's glyphs goes through the stock backend in
 //     both variants, so any difference is text rendering;
@@ -13,8 +13,8 @@
 //     differences stay within documented budgets (Slug solves coverage
 //     analytically, the atlas samples a rasterized bitmap).
 //
-// The scene covers the M3 acceptance surface: several sizes, tables with narrow
-// cells (CPU fine clip on the right), shrinking children (window clip), a
+// The default scene covers the acceptance surface: several sizes, tables with
+// narrow cells (CPU fine clip on the right), shrinking children (window clip), a
 // horizontally scrolled child, bold-ish long labels, shapes next to text and
 // ellipsized text. Validation layers are enabled by default and any *error*
 // fails the test; SKIP_RETURN_CODE 77 (no usable Vulkan device) lets it skip on
@@ -49,18 +49,18 @@ namespace
     const uint32_t kHeight = 640;
     const uint32_t kFrames = 3;  // let the atlas finish building/baking
 
-    // M4: golden scenes. 0 = the M3 acceptance scene, 1 = 5k-glyph stress
+    // Golden scenes. 0 = the default acceptance scene, 1 = 5k-glyph stress
     // (multi-line, filled frame), 2 = CJK subset (skipped when the fetched
     // font is absent; see tests/fonts/cjk/PROVENANCE.txt).
     const int kSceneCount = 3;
 
-    // Comparison budgets (measured on the RTX 5080; see the M3 notes and the
-    // M4 report):
+    // Comparison budgets (measured on the RTX 5080):
     //   * the ink masks must agree after a 1 px dilation (layout exactness);
     //   * mean per-channel difference over the whole frame stays small;
     //   * per-pixel differences above the AA band are budgeted *relative to
     //     the ink area* (a fully-filled 5k-glyph frame has 3.7x the ink of the
-    //     M3 scene, so a frame-relative budget would be meaningless): at most
+    //     default scene, so a frame-relative budget would be meaningless): at
+    //     most
     //     15% of ink pixels may differ by more than 64 LSB (unhinted analytic
     //     coverage vs hinted atlas bitmaps shifts stem AA, not layout), and at
     //     most 2% may exceed 128 LSB (a structural/artifact tripwire).
@@ -684,7 +684,7 @@ namespace
     // ---------------------------------------------------------------------
     // Rendering one variant
     // ---------------------------------------------------------------------
-    // M4: `overlayFlags` is applied with ImSlug_ImplVulkan_SetDebugOverlay
+    // `overlayFlags` is applied with ImSlug_ImplVulkan_SetDebugOverlay
     // after the module is up (Slug variants only); the default sentinel leaves
     // whatever Config::DebugDrawBounds seeded (`seedConfigBounds` passes that
     // config flag to ImSlug::Init). `outOverlayAfterInit` (when non-null)
@@ -925,7 +925,7 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // M4 debug overlay checks
+    // Debug overlay checks
     // ---------------------------------------------------------------------
     // The outline color of ImSlugVulkanDebugOverlay_GlyphBounds
     // (1.0, 0.45, 0.05) written with alpha 1, so it lands on the target almost
@@ -969,7 +969,7 @@ namespace
         return count;
     }
 
-    // Renders the M3 acceptance scene with the overlay off, with the
+    // Renders the default acceptance scene with the overlay off, with the
     // config-seeded bounds view, and with the two band views; every check is a
     // regression test of the overlay plumbing (Config -> adapter -> push
     // constants -> shaders).
@@ -1222,7 +1222,7 @@ int main(int argc, char** argv)
         }
     }
 
-    // M4: the debug overlay views (also pins the Config seeding + toggle).
+    // The debug overlay views (also pins the Config seeding + toggle).
     RunDebugOverlayChecks(&failures);
 
     if (g_State.ValidationErrors > 0)

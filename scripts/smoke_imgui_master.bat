@@ -3,7 +3,7 @@ setlocal EnableExtensions
 rem ===========================================================================
 rem imslug - scripts\smoke_imgui_master.bat
 rem
-rem ImGui master smoke job (PLAN 8 / M3 brief 6, risk R1: internal-API drift).
+rem ImGui master smoke job: detects internal-API drift against ImGui master.
 rem Configures a separate build directory against a *fetched Dear ImGui master*
 rem instead of the pinned release tag and runs the full test suite. The suite is
 rem exactly the code that touches imgui_internal.h (the custom ImFontLoader, the

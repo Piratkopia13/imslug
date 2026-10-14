@@ -2,19 +2,20 @@
 #
 # Entry points are the scripts/ in the repository (never ad-hoc cmake commands):
 # build -> test -> check_docs on Windows (MSVC) and Linux (GCC/Clang).
-# M2 adds: the shader-staleness check (every job) and golden-image tests on
-# Linux with lavapipe (a software Vulkan device, so no GPU is required).
-# M6 adds: the C API ABI gate (C11 TU, strict warnings) and the C example
-# (CPU smoke in every job; the headless Vulkan frame in the lavapipe job -
-# the Windows runner image has no Vulkan SDK, so the Vulkan part of the C
-# example is only compile-tested on Linux).
-# M7 adds: the offline generator + packed `.imslug` suites in every job
-# (imslug_packed_loader, imslug_packed_roundtrip, imslug_asset_fresh,
-# imslug_golden_packed*) and a dedicated no-parser job
-# (IMSLUG_TTF_PARSER=OFF) proving the packed path without stb_truetype.
-# M8 adds: the clean-project FetchContent job (a throwaway CMake project
-# consumes this repository as a dependency, builds the example + a minimal
-# consumer and runs them) and the release-polish docs/templates.
+# Coverage beyond the default build/test:
+#   * the shader-staleness check (every job) and golden-image tests on Linux
+#     with lavapipe (a software Vulkan device, so no GPU is required);
+#   * the C API ABI gate (C11 TU, strict warnings) and the C example (CPU smoke
+#     in every job; the headless Vulkan frame in the lavapipe job - the Windows
+#     runner image has no Vulkan SDK, so the Vulkan part of the C example is
+#     only compile-tested on Linux);
+#   * the offline generator + packed `.imslug` suites in every job
+#     (imslug_packed_loader, imslug_packed_roundtrip, imslug_asset_fresh,
+#     imslug_golden_packed*) and a dedicated no-parser job
+#     (IMSLUG_TTF_PARSER=OFF) proving the packed path without stb_truetype;
+#   * the clean-project FetchContent job (a throwaway CMake project consumes
+#     this repository as a dependency, builds the example + a minimal consumer
+#     and runs them).
 
 name: CI
 
@@ -24,7 +25,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '17 4 * * *'  # daily ImGui-master smoke (drift check, R1)
+    - cron: '17 4 * * *'  # daily ImGui-master smoke (drift check)
   workflow_dispatch:
 
 permissions:
@@ -95,18 +96,18 @@ jobs:
         run: vulkaninfo --summary || true
       - name: Build
         run: ./scripts/build.sh
-      - name: Golden images (M2/M3 scenes + M5 emoji, both render paths)
+      - name: Golden images (monochrome scenes + Slug-vs-atlas + emoji, both render paths)
         run: ./scripts/golden.sh
-      - name: C example - headless Vulkan frame through the C API (M6)
+      - name: C example - headless Vulkan frame through the C API
         run: ./build/imslug_example_c --vulkan --screenshot build/golden/c_example.ppm
 
-  # M7: the no-parser configuration (IMSLUG_TTF_PARSER=OFF) proves the packed
+  # The no-parser configuration (IMSLUG_TTF_PARSER=OFF) proves the packed
   # `.imslug` path without any stb_truetype in the build: the packed loader
   # suite, the packed goldens (lavapipe, headless) and the example binary
   # (built without the parser, default font = the committed baked asset) run
   # from generated data only. Rendering from the asset is compared GPU-vs-CPU
   # by imslug_golden_packed; the example's window needs a display, so CI runs
-  # its --help path (the manual screenshot evidence is in the M7 report).
+  # its --help path.
   no-parser:
     name: No-parser build (packed .imslug assets only)
     runs-on: ubuntu-latest
@@ -134,7 +135,7 @@ jobs:
       - name: Example runs without a parser
         run: ./build-noparser/imslug_example_glfw_vulkan --help
 
-  # M8: clean-project verification - a throwaway CMake project consumes this
+  # Clean-project verification - a throwaway CMake project consumes this
   # repository via FetchContent (a git clone of the checked-out commit), builds
   # the GLFW+Vulkan example + a minimal consumer executable and runs both.
   # Vulkan headers are required at configure time (the example target); GLFW is
@@ -156,7 +157,7 @@ jobs:
       - name: Clean-project FetchContent build + run
         run: ./scripts/verify_fetchcontent.sh
 
-  # M4: the benchmark harness report is a build artifact (numbers are
+  # The benchmark harness report is a build artifact (numbers are
   # informational; no budgets are enforced in CI - runner hardware is too
   # variable and the report records the machine it ran on).
   linux-bench:
@@ -179,7 +180,7 @@ jobs:
 
   # Optional, informational: does the internal-API layer still work against
   # Dear ImGui master? Daily (see `on.schedule`) and on demand; a failure here
-  # means upstream moved something imslug relies on (R1) - pin or adapt, but do
+  # means upstream moved something imslug relies on - pin or adapt, but do
   # not block the release train on it (the pinned v1.92.9b jobs are the gate).
   imgui-master-smoke:
     name: Dear ImGui master smoke (informational)

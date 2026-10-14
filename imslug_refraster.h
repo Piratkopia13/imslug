@@ -1,7 +1,7 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
 // imslug_refraster.h — CPU coverage rasterizer: the ground truth/arbiter for
-// the M2+ golden tests. It mirrors the reference pixel shader
+// the golden tests. It mirrors the reference pixel shader
 // (EricLengyel/Slug, SlugPixelShader.hlsl, Copyright 2017 Eric Lengyel,
 // MIT OR Apache-2.0) function by function — CalcRootCode, SolveHorizPoly,
 // SolveVertPoly, CalcBandLoc, CalcCoverage, the banded curve walk and its

@@ -1,6 +1,6 @@
 # imslug - scripts/fetchcontent_smoke/CMakeLists.txt
 #
-# Skeleton of the clean-project verification (M8): a throwaway CMake project
+# Skeleton of the clean-project verification: a throwaway CMake project
 # that consumes the imslug repository via FetchContent (a git clone of the
 # current commit), builds the GLFW+Vulkan example plus a minimal consumer
 # executable against the public headers.

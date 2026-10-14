@@ -1,5 +1,5 @@
 ---
-description: Run the benchmark harness (M4+)
+description: Run the benchmark harness
 ---
 
 Benchmark entry point just ran:
@@ -7,7 +7,7 @@ Benchmark entry point just ran:
 !`scripts/bench.bat`
 
 The harness prints and records machine-specific numbers (CPU pre-pass, pool
-uploads, lazy glyph build, R8 small-size table; GPU timestamp queries with
+uploads, lazy glyph build, small-size table; GPU timestamp queries with
 `--gpu`); the markdown report lands in `<build dir>\bench\bench_report.md`.
 Budgets are informational — a red number is a finding, not a build failure.
 

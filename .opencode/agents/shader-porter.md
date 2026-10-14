@@ -34,7 +34,8 @@ Rules:
   `// Slug shader code Copyright 2017 by Eric Lengyel.`
   plus a short note saying what was ported/adapted and from which reference
   (MIT or Apache-2.0 - see `NOTICE`; the skill `imslug-shaders` has details).
-- Keep the port checklist in sync (PLAN Appendix B): `SlugUnpack`/`SlugDilate`,
+- Keep the port checklist in sync (see the `imslug-shaders` skill):
+  `SlugUnpack`/`SlugDilate`,
   `CalcBandLoc` with log2 width 12, `CalcRootCode` equivalence classes with the
   `|a| < 1/65536` linear fallback, winding accumulation with coverage weights,
   even-odd flag from bit 12 of the packed bandMax word, instance-mode vertex

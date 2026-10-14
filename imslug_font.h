@@ -2,7 +2,7 @@
 //
 // imslug_font.h — the font handle shared by the two font kinds:
 //   * TTF fonts (imslug_glyphgen.cpp): stb_truetype outline extraction;
-//   * packed fonts (imslug_packed.cpp, M7): glyph data read from an `.imslug`
+//   * packed fonts (imslug_packed.cpp): glyph data read from an `.imslug`
 //     container — no outline parser is involved.
 // The dispatch layer (imslug_font.cpp) routes every public font API to the
 // kind-specific implementation and owns the shared glyph-record cache, the
@@ -27,13 +27,13 @@ namespace ImSlug
     enum ImSlugFontKind
     {
         ImSlugFontKind_Ttf = 0,     // stb_truetype outline extraction
-        ImSlugFontKind_Packed = 1,  // .imslug container (M7)
+        ImSlugFontKind_Packed = 1,  // .imslug container
     };
 
     // One cached glyph-record build per (glyph index, target pools). Entries are
     // individually allocated so a record pointer stays stable while more glyphs
     // are built; "Ok implies a valid stable record pointer" is unconditional
-    // (the entry is reserved before the build, M1 review fix).
+    // (the entry is reserved before the build).
     struct ImSlugGlyphCacheEntry
     {
         int GlyphIndex;
@@ -100,7 +100,7 @@ namespace ImSlug
     // Drops every cached glyph record (all target pool sets), e.g. before a
     // transient pool set is destroyed or when its address may be reused.
     // Records previously handed out for this font become dangling - call it
-    // only when no caller holds a record (the M1 contract assumes pool sets
+    // only when no caller holds a record (the contract assumes pool sets
     // are long-lived; the offline writer is the one transient-pools user).
     void ImSlugFontClearCache(ImSlugFont* font);
 
@@ -111,7 +111,7 @@ namespace ImSlug
     ImSlugBuildStatus ImSlugWriteGlyphRecordToPools(ImSlugFont* font, ImSlugPools* pools, const ImSlugQuad* quads,
                                                     int quadCount, float advanceEm, ImSlugGlyphRecord* record);
 
-    // ImSlugWriteGlyphRecordToPools with the M1 transactional contract: on any
+    // ImSlugWriteGlyphRecordToPools with the transactional contract: on any
     // failure the curve/band cursors and the dirty/used bookkeeping are rolled
     // back so a retry cannot consume pool space.
     ImSlugBuildStatus ImSlugBuildGlyphRecordToPoolsTransactional(ImSlugFont* font, ImSlugPools* pools,

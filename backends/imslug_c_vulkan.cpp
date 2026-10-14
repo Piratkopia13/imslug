@@ -1,6 +1,6 @@
 // imslug — implementation.
 //
-// imslug_c_vulkan.cpp — Vulkan C API (M6): the C entry points declared by
+// imslug_c_vulkan.cpp — Vulkan C API: the C entry points declared by
 // imslug_c.h when Vulkan headers are visible. Thin mirror of the ImGui-facing
 // backend entry points (backends/imslug_impl_vulkan.h) through the additive
 // ImSlug_ImplVulkan_InitFromVulkanInfo path, so the C API never touches an

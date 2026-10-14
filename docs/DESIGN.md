@@ -95,7 +95,7 @@ stop early. The default is
 bandCount = clamp(ceil(2 * sqrt(curveCount)), 4, 32)   // per axis
 ```
 
-chosen in M4 from `tests/bench/band_sweep.cpp` measurements (8–72 px, Roboto /
+chosen from `tests/bench/band_sweep.cpp` measurements (8–72 px, Roboto /
 Inter / CJK subset; mean references walked per pixel): the previous
 `ceil(sqrt(2n))` walked 6.86–9.25 references per pixel; the new default walks
 6.12–8.25 (~11 % fewer, ~15 % better p99/max tails) for ~25 % more band-pool
@@ -136,7 +136,7 @@ units at slot ids of a few thousand). Sliver-scale fraction spans (< 0.1) are
 therefore placed from the single-corner sample and the glyph's baked ppem
 instead of the fitted affine map; a fully collapsed fraction span is accepted
 while the quad still has extent on that axis, and a zero/inverted fine-clip
-extent on an axis (or a collapse on both axes) drops the glyph. M4 fuzz at
+extent on an axis (or a collapse on both axes) drops the glyph. Fuzz at
 100k cases: sliver pen error max 0.31 px, coverage gap max 1.26 px (bounds 1.0 /
 1.75 px), no drops outside the degenerate-extent class.
 
@@ -171,8 +171,9 @@ Steady-state pool upload is 0–10 KB/frame once the font's glyphs are built
 (Medians; the numbers move by ~5 % between runs on the same machine. The
 harness prints the raw `--all` table into `<build dir>\bench\bench_report.md`.)
 
-Release re-check (M8, 2026-10-14, same machine/harness, no algorithmic change
-after M5): 0.047 vs 0.018 ms (2.63×) text-dominated, 0.026 vs 0.015 ms (1.74×)
+Release re-check (2026-10-14, same machine/harness, no algorithmic change
+after the initial measurements): 0.047 vs 0.018 ms (2.63×) text-dominated,
+0.026 vs 0.015 ms (1.74×)
 typical UI, CPU pre-pass 0.304 ms @ 5k glyphs — the table reproduces within
 run-to-run noise.
 
@@ -205,7 +206,7 @@ Manual cross-check (any GPU):
 3. For density scaling add `--lines 50 --columns 160 --size 12` and
    `--lines 20 --columns 60 --size 32`.
 4. Quote mean/median with the device name, frame size and instance count;
-   compare only against the atlas row of the same run. The R8 small-size table
+   compare only against the atlas row of the same run. The small-size table
    (`--cpu`) compares the estimator against the atlas rasterizer at 8–32 px.
 
 Budgets in the harness are informational; CI runs the CPU mode.
@@ -213,7 +214,7 @@ Budgets in the harness are informational; CI runs the CPU mode.
 ## 5. Vertex compaction (decision)
 
 Removing the consumed text vertices/indices from the draw buffers was evaluated
-in M4 and **skipped**: the rewritten commands are callbacks with zero elements,
+and **skipped**: the rewritten commands are callbacks with zero elements,
 so the GPU never reads those vertices — compaction cannot reduce GPU time. It
 would only shrink per-frame buffers that ImGui rebuilds from scratch every
 frame (345 KB + 52 KB at 5k glyphs, ~24 MB/s of CPU writes at 60 fps) at the
@@ -242,7 +243,7 @@ covers the three views against the acceptance scene.
 ## 7. Small sizes (hinting policy)
 
 Slug is unhinted by design, and so is ImGui's stb loader: neither snaps stems
-to the pixel grid, and both anti-alias every edge. The M4 evaluation measured
+to the pixel grid, and both anti-alias every edge. The evaluation measured
 the estimator against stbtt bitmaps at 8–32 px (table printed by `--cpu`):
 at ≥ 16 px the peak (stem) coverage is exact and the mean difference is
 comparable to larger sizes; below ~12 px stems lose up to 0.14 peak coverage.
@@ -253,7 +254,7 @@ in the densest-text regime, and it cannot converge to the atlas path anyway
 filtered integer-grid bitmap). Practical advice: pick sizes ≥ 13–16 px for body
 text, prefer grid-aligned pen positions (the ImGui default; clearing
 `ImDrawListFlags_TextNoPixelSnap` makes every path softer), and measure with
-the R8 table for the specific font.
+the small-size table for the specific font.
 
 ## 8. Known limitations
 
@@ -301,7 +302,7 @@ The instance record grew by one `uint32_t` (`PaintIndex`, format v2, 96 bytes)
 and the paint records are 352 bytes (`ImSlugPaintRecord`, std430); both layouts
 are static_asserted on the C++ side and mirrored in `slug.frag`.
 
-Semantics and fallbacks (PLAN §11 D20/D21):
+Semantics and fallbacks:
 
 * COLR v0 layer lists and COLR v1 paint graphs; `PaintVar*` reads the default
   (non-variation) values; variable-font instances are not evaluated.
@@ -334,7 +335,7 @@ LSB on isolated discontinuity ties, validation clean) and the ImGui-level
 `imslug_imgui` color tests (Colored marking, per-layer instances, tint alpha,
 layout parity).
 
-## 10. Offline assets and deployment (M7)
+## 10. Offline assets and deployment
 
 Runtime font registration has two sources of glyph data, both feeding the same
 `ImSlugFont` API and the same shared pools:

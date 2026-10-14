@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_gen_writer.cpp — `.imslug` container v1 serialization (M7). See
+// imslug_gen_writer.cpp — `.imslug` container v1 serialization. See
 // imslug_gen_writer.h for the contract and imslug_packed.h for the layout.
 //
 // Pipeline (all runtime code; the writer only serializes):
@@ -124,9 +124,9 @@ namespace ImSlug
             sourceDataSize = 0;
 
         // The writer builds into a transient pool set; the font's record cache
-        // keys on the pool set address (M1 contract: pool sets are long-lived),
-        // which a later call may reuse. Clear the cache on entry and on every
-        // exit so no stale record survives the call.
+        // keys on the pool set address (pool sets are expected to be
+        // long-lived), which a later call may reuse. Clear the cache on entry
+        // and on every exit so no stale record survives the call.
         struct CacheGuard
         {
             ImSlugFont* Font;

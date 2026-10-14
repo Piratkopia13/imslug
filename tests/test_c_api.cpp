@@ -1,4 +1,4 @@
-// imslug C API — behavioral mirror checks (M6).
+// imslug C API — behavioral mirror checks.
 //
 // Compiles as C++17 against both headers at once: the C API (imslug_c.h) must
 // mirror the canonical C++ API (imslug.h) value-for-value, and the header must

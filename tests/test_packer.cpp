@@ -1,6 +1,6 @@
-// imslug M1 tests — shared pool packing.
+// imslug tests — shared pool packing.
 //
-// Covers the acceptance checks of the M1 brief: pool growth by doubling,
+// Covers: pool growth by doubling,
 // 2-texel curve pairing, band header/list row rules (the shader reads lists
 // contiguously in x with no wrap), CalcBandLoc round trips, dirty-row and
 // UsedRows bookkeeping, capacity guards and the fp16 texel round trip.
@@ -136,7 +136,7 @@ static void TestCurveBlocks()
     TEST_CHECK(pools.Bands.DirtyRowMin > pools.Bands.DirtyRowMax);
     TEST_CHECK(pools.Curves.UsedRows == 2);  // the high-water mark survives
 
-    // Per-pool clearing (M2 uploads consume one pool at a time): clearing only
+    // Per-pool clearing (uploads consume one pool at a time): clearing only
     // the curve pool must leave the band pool's pending rows untouched.
     pools.Curves.DirtyRowMin = 1;
     pools.Curves.DirtyRowMax = 3;

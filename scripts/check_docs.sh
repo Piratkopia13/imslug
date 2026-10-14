@@ -2,7 +2,7 @@
 # ============================================================================
 # imslug - scripts/check_docs.sh
 #
-# Docs-hygiene check (PLAN §12.5). Fails when:
+# Docs-hygiene check. Fails when:
 #   1. anything under .agent-docs/ is tracked by git;
 #   2. .gitignore lost its '.agent-docs/' entry;
 #   3. markdown outside the durable allowlist exists (tracked OR
@@ -38,7 +38,7 @@ fi
 
 # --- 2. .gitignore must keep the .agent-docs/ entry -------------------------
 [ -f .gitignore ] || fail ".gitignore is missing"
-grep -Eq '^[[:space:]]*/?\.agent-docs/?[[:space:]]*$' .gitignore || fail ".gitignore lost its '.agent-docs/' entry (PLAN §12.5)"
+grep -Eq '^[[:space:]]*/?\.agent-docs/?[[:space:]]*$' .gitignore || fail ".gitignore lost its '.agent-docs/' entry"
 
 # --- 3. markdown outside the durable allowlist is a violation ---------------
 files=$(git ls-files -co --exclude-standard) || fail "git ls-files -co --exclude-standard failed"

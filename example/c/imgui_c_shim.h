@@ -1,6 +1,6 @@
 // imslug — example/c/imgui_c_shim.h
 //
-// Minimal C bridge to the Dear ImGui C++ API for the C example (M6). A C app
+// Minimal C bridge to the Dear ImGui C++ API for the C example. A C app
 // that wants Dear ImGui itself normally links cimgui (generated C bindings);
 // this example does not vendor cimgui, so this shim exposes exactly the entry
 // points example/c/main.c needs. It is example-local — not part of imslug's

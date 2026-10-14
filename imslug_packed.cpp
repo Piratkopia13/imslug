@@ -1,6 +1,6 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// imslug_packed.cpp — the `.imslug` container v1 reader (M7): full structural
+// imslug_packed.cpp — the `.imslug` container v1 reader: full structural
 // validation, the packed font kind (records + metrics without an outline
 // parser) and the per-glyph copy of the baked pool data into the shared pools.
 //
@@ -507,7 +507,7 @@ namespace ImSlug
 
         // Copies one glyph's curve/band data from the asset blobs into the
         // target pools and rebases the record. Transactional: on any failure
-        // the pool cursors/bookkeeping are restored (the M1 contract).
+        // the pool cursors/bookkeeping are restored.
         ImSlugBuildStatus CopyGlyphToPools(ImSlugFont* fontBase, ImSlugPools* pools, int glyphIndex,
                                            const ImSlugPackedGlyphEntry& entry, ImSlugGlyphRecord* record)
         {
@@ -597,7 +597,7 @@ namespace ImSlug
 
             if (status != ImSlugBuildStatus_Ok)
             {
-                // Roll back (M1 transactional contract).
+                // Roll back to the pre-copy pool state.
                 pools->Curves.CursorTexels = curveCursor;
                 pools->Curves.UsedRows = curveUsedRows;
                 pools->Curves.DirtyRowMin = curveDirtyMin;

@@ -4,7 +4,7 @@ rem ===========================================================================
 rem imslug - scripts\gen_shaders.bat
 rem
 rem Compile shaders\vulkan\*.{vert,frag,comp} to SPIR-V and update the committed
-rem header shaders\imslug_shaders_vulkan.h (M2). The no-sources branch only
+rem header shaders\imslug_shaders_vulkan.h. The no-sources branch only
 rem matters on a stripped tree that removed the shader sources.
 rem
 rem   scripts\gen_shaders.bat           regenerate the header

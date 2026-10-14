@@ -1,6 +1,6 @@
 # imslug - scripts/check_docs.ps1
 #
-# Docs-hygiene check (PLAN §12.5). Fails when:
+# Docs-hygiene check. Fails when:
 #   1. anything under .agent-docs/ is tracked by git;
 #   2. .gitignore lost its '.agent-docs/' entry;
 #   3. markdown outside the durable allowlist exists (tracked OR
@@ -60,7 +60,7 @@ foreach ($line in (Get-Content -LiteralPath .gitignore)) {
     }
 }
 if (-not $hasIgnoreEntry) {
-    Fail ".gitignore lost its '.agent-docs/' entry (PLAN §12.5)"
+    Fail ".gitignore lost its '.agent-docs/' entry"
 }
 
 # --- 3. markdown outside the durable allowlist is a violation ---------------

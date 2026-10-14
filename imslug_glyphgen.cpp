@@ -2,7 +2,7 @@
 //
 // imslug_glyphgen.cpp — the font-side core:
 //   1. stbtt outline extraction -> em-space quadratics (Y up, contour order);
-//   2. adaptive band construction (PLAN §4.2) with descending max-x/max-y sort;
+//   2. adaptive band construction with descending max-x/max-y sort;
 //   3. the font handle with the lazy glyph-record cache and ImGui-parity metrics.
 //
 // Units: everything stored here is em space (1.0 = em, Y up, baseline origin).
@@ -139,7 +139,8 @@ namespace ImSlug
 
             case STBTT_vline:
             {
-                // Line rule (PLAN §2.2 rule 1): {p1, p3, p3}.
+                // Line rule: a line is stored as {p1, p3, p3} (control point
+                // and end point coincide).
                 const float x = (float)v.x * unitScale;
                 const float y = (float)v.y * unitScale;
                 if (x != currentX || y != currentY)
@@ -220,7 +221,7 @@ namespace ImSlug
         unsigned char* OwnedData;  // null when created with copyData = false
         int DataSize;              // bytes of the font buffer (FontInfo.data)
 
-        // M5: lazily parsed COLR/CPAL data (null when absent/unusable).
+        // Lazily parsed COLR/CPAL data (null when absent/unusable).
         ImSlugColorFont* ColorFont;
         bool ColorFontAttempted;
     };
@@ -352,7 +353,7 @@ namespace ImSlug
     // ImGui line 4807: an empty bitmap box leaves X0..Y1 at the ImFontGlyph
     //   constructor's zeros (invisible glyph, e.g. space).
     // ImSlugImCeil/ImSlugImFloor/ImSlugImRound live in imslug_font.h (shared
-    // with the packed metrics path, M7).
+    // with the packed metrics path).
     static float ScaleForPixelHeight1(const ImSlugFont* font)
     {
         // stbtt_ScaleForPixelHeight(font, 1.0f) == 1 / (hhea.ascent - hhea.descent).
@@ -455,7 +456,7 @@ namespace ImSlug
         return true;
     }
 
-    // M7: the raw per-glyph source metrics the packed-asset writer stores so
+    // The raw per-glyph source metrics the packed-asset writer stores so
     // the loader can reproduce this font's metrics at any bake size without a
     // parser: the glyf box exactly as stbtt_GetGlyphBox reports it (zeros when
     // the glyph has no glyf data — the runtime metrics path treats that as
@@ -492,7 +493,7 @@ namespace ImSlug
     // The shared band/curve builder lives in imslug_font.cpp
     // (ImSlugWriteGlyphRecordToPools / ...Transactional); this is the
     // TTF-specific wrapper that extracts the outline and the hmtx advance
-    // first. The transactional contract (M1): a failed build leaves the pools
+    // first. The transactional contract: a failed build leaves the pools
     // exactly as it found them, so transient failures can be retried.
     ImSlugBuildStatus ImSlugTtfBuildGlyphRecord(ImSlugFont* font, ImSlugPools* pools, int glyphIndex,
                                                 ImSlugGlyphRecord* record)

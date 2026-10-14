@@ -4,7 +4,8 @@
 // row-wrap addressing, growth by doubling and dirty-row tracking for uploads.
 // Types (ImSlugPools, ImSlugGlyphRecord, ...) are in imslug_internal.h.
 //
-// Format contract: PLAN §2.1/§4.3 and the reference pixel shader's CalcBandLoc.
+// Format contract: the imslug-glyph-format skill and the reference pixel
+// shader's CalcBandLoc.
 // Note on addresses:
 //   * curve blocks are contiguous 2-texel units starting on an even x, so the
 //     pair (curveLoc, curveLoc + 1) never crosses a row (the reference shader
@@ -37,9 +38,9 @@ namespace ImSlug
     bool ImSlugPoolEnsureCurveRows(ImSlugCurvePool* pool, int rows);
     bool ImSlugPoolEnsureBandRows(ImSlugBandPool* pool, int rows);
 
-    // Dirty rows: marked by the write helpers below, used by M2 uploads.
-    // The per-pool variants clear one pool (a partial upload that consumed
-    // only that pool must not drop the other pool's pending rows);
+    // Dirty rows: marked by the write helpers below, consumed by backend
+    // uploads. The per-pool variants clear one pool (a partial upload that
+    // consumed only that pool must not drop the other pool's pending rows);
     // ImSlugPoolClearDirtyRows resets both at once.
     void ImSlugCurvePoolClearDirtyRows(ImSlugCurvePool* pool);
     void ImSlugBandPoolClearDirtyRows(ImSlugBandPool* pool);
@@ -69,7 +70,7 @@ namespace ImSlug
 
     // Copies one curve's two texels (8 halves) verbatim into the pool at
     // (texelX, texelY); marks the touched rows dirty and updates UsedRows.
-    // Used by the packed loader (M7) so the copied pool bytes are exactly the
+    // Used by the packed loader so the copied pool bytes are exactly the
     // asset's (no float round trip).
     void ImSlugCurveWriteTexelRaw(ImSlugCurvePool* pool, int texelX, int texelY, const uint16_t source[8]);
 
@@ -144,12 +145,12 @@ namespace ImSlug
     uint32_t ImSlugPackBandMaxWord(int bandMaxX, int bandMaxY, uint32_t glyphFlags);
 
     // ---------------------------------------------------------------------
-    // Band construction (pure quad helpers; moved here in M7 so the packed
-    // loader and the synthetic builder work without an outline parser)
+    // Band construction (pure quad helpers, so the packed loader and the
+    // synthetic builder work without an outline parser)
     // ---------------------------------------------------------------------
-    // Band count per axis: clamp(ceil(2*sqrt(curveCount)), 4, 32) — the M4
-    // default (PLAN §11 D13). The single tuning point; every user of band
-    // counts calls it.
+    // Band count per axis: clamp(ceil(2*sqrt(curveCount)), 4, 32). The single
+    // tuning point; every user of band counts calls it (the measurements
+    // behind the constants are in imslug_packer.cpp).
     int ImSlugCalcBandCount(int curveCount);
 
     ImSlugQuadBounds ImSlugQuadControlBounds(const ImSlugQuad& quad);
@@ -168,12 +169,12 @@ namespace ImSlug
     // Membership rule: a curve belongs to a band when its control-point bbox,
     // inflated by kBandOverlapEpsilon on both ends, overlaps the band's em
     // range. Exactly axis-parallel curves are excluded from the matching-axis
-    // bands (PLAN §2.2 rules 1-3).
+    // bands.
     bool ImSlugAssignBands(const ImSlugQuad* quads, int quadCount, int bandMaxX, int bandMaxY, float minX, float minY,
                            float maxX, float maxY, int* counts, int* refs, int refCapacity, int* requiredRefs);
 
     // ---------------------------------------------------------------------
-    // M5 paint pool (color glyph layers)
+    // Paint pool (color glyph layers)
     // ---------------------------------------------------------------------
     // Appends `count` records to the pool and returns the index of the first
     // one, or -1 on allocation failure (the pool is unchanged). The records

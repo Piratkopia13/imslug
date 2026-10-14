@@ -3,7 +3,7 @@
 # imslug - scripts/gen_shaders.sh
 #
 # Compile shaders/vulkan/*.{vert,frag,comp} to SPIR-V and update the committed
-# header shaders/imslug_shaders_vulkan.h (M2). The no-sources branch only
+# header shaders/imslug_shaders_vulkan.h. The no-sources branch only
 # matters on a stripped tree that removed the shader sources.
 #
 #   scripts/gen_shaders.sh           regenerate the header

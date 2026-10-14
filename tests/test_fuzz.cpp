@@ -1,4 +1,4 @@
-// imslug M4 fuzz harness — fine-clip reconstruction robustness.
+// imslug fuzz harness — fine-clip reconstruction robustness.
 //
 // Deterministic, seeded, GPU-free: builds randomized ImGui frames (random
 // glyphs/strings/sizes/positions/clip rectangles, fractional scales, inverted
@@ -8,12 +8,13 @@
 //   2. the command structure stays valid: every Slug callback is followed by a
 //      reset, no Slug-looking vertex is left in a geometry command, no run is
 //      dropped (the fake ring is sized for the whole case);
-//   3. decoded placement error against an independent ground truth (the M3
-//      test font, the exact ImGui fine-clip math mirrored from imgui_draw.cpp
+//   3. decoded placement error against an independent ground truth (the test
+//      font, the exact ImGui fine-clip math mirrored from imgui_draw.cpp
 //      5809-6017, including the effective clip = draw-list clip ∩ fine clip)
 //      stays inside documented bounds per clip category, and every instance
 //      covers the quad ImGui drew;
-//   4. with Config::EnableFineClipReconstruction off (the R3 fallback) every
+//   4. with Config::EnableFineClipReconstruction off (the quad-compression
+//      fallback) every
 //      instance stays *inside* the quad ImGui drew (so no ink can escape the
 //      fine-clip rectangle), nothing is dropped in non-degenerate cases and no
 //      placement is NaN.
@@ -45,7 +46,8 @@
 //     regression phase, no warm-up dependency on the long profile).
 //
 // Deliberate exclusion: window clipping (the draw list is the background list,
-// whose clip covers every fuzz position; M3's suite owns window-edge clipping).
+// whose clip covers every fuzz position; the ImGui-integration suite owns
+// window-edge clipping).
 // Text with '\n' is walked exactly like RenderText (x resets, y advances).
 
 #include "imslug.h"
@@ -621,15 +623,15 @@ namespace
     // ---------------------------------------------------------------------
     // Statistics + bounds
     // ---------------------------------------------------------------------
-    // Placement bounds by span class (px): measured maxima in the M4 report
-    // (.agent-docs/reports/M4-<date>.md) with documented headroom. The
+    // Placement bounds by span class (px): measured maxima with documented
+    // headroom. The
     // reconstruction is exact for unclipped quads; a cropped axis carries the
     // float rounding of ImGui's interpolation and the conditioning of the
     // remaining fraction span, so the bound loosens as the visible fraction
     // shrinks. A "sliver" is a few pixels of a glyph at a clip edge.
     //
-    // The sliver bound is 1.0 px against a measured 0.31 px max (100k cases,
-    // 2026-10-14) after the M4 fix that switches sliver-scale fraction spans to
+    // The sliver bound is 1.0 px against a measured 0.31 px max (100k cases)
+    // after the fix that switches sliver-scale fraction spans to
     // the single-corner sample + baked ppem: before it the fitted map amplified
     // the encoded-UV quantization (2.71 px measured, and reconstruction could
     // drop the glyph outright). Keep the headroom: the class boundary sits at
@@ -1192,11 +1194,11 @@ namespace
         }
     }
     // ---------------------------------------------------------------------
-    // Targeted high-slot regression (M4)
+    // Targeted high-slot regression
     // ---------------------------------------------------------------------
     // The random sequence reaches high slab ids (thousands of bakes) only after
     // tens of thousands of cases; there the encoded-UV ulp exceeds the fine-clip
-    // offset of sub-pixel slivers. M4 found two failure classes in that regime:
+    // offset of sub-pixel slivers. Two failure classes were found in that regime:
     // a fully collapsed corner-fraction span dropped the glyph (the fit returned
     // "all samples equal"), and a sliver-scale span made the fitted placement up
     // to 3.2 px off (case numbers below). This phase warms the slab registry to
@@ -1280,7 +1282,7 @@ int main(int argc, char** argv)
     TEST_CHECK(fontData != nullptr);
 
     // Two passes over the same deterministic case sequence: the primary
-    // reconstruction path and the R3 fallback (Config flag off).
+    // reconstruction path and the quad-compression fallback (Config flag off).
     const int passCount = (onlyCase >= 0) ? passStart + 1 : 2;
     for (int pass = passStart; pass < passCount; ++pass)
     {
@@ -1319,7 +1321,7 @@ int main(int argc, char** argv)
                             liveStats.BoundsMismatches);
             }
         }
-        PrintStats(reconstruction ? "reconstruction" : "fallback (R3)");
+        PrintStats(reconstruction ? "reconstruction" : "fallback (quad compression)");
     }
 
     // Targeted high-slot regression (fast; skipped in the --only debug mode).

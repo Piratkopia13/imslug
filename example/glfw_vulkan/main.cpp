@@ -1,13 +1,13 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// example/glfw_vulkan/main.cpp — GLFW + Vulkan example (M3).
+// example/glfw_vulkan/main.cpp — GLFW + Vulkan example.
 //
 // An ordinary Dear ImGui application: the stock GLFW+Vulkan backends render
 // everything, imslug renders the text of the registered fonts through Slug.
-// The scene switcher exercises the M3 acceptance scenes (demo, widgets/plots/
-// tables, clipping torture, mixed fonts, runtime FontScaleDpi), the M4 stress
-// scenes (5k glyphs, the fetched CJK subset), the M5 color-emoji scene and the
-// M7 packed-asset scene (a pre-baked .imslug container). Vulkan validation
+// The scene switcher exercises the full feature set: demo, widgets/plots/
+// tables, clipping torture, mixed fonts, runtime FontScaleDpi, the 5k-glyph
+// and CJK stress scenes, color emoji and a pre-baked `.imslug` packed asset.
+// Vulkan validation
 // layers are enabled by default (set IMSLUG_VALIDATION=0 to disable); every
 // message is printed and the error count is reported on exit.
 //
@@ -105,14 +105,14 @@ namespace
         VkDescriptorPool ImGuiDescriptorPool;
         ImFont* SlugFont;    // rendered by Slug
         ImFont* StockFont;   // rendered through the atlas (mixed-font scene)
-        ImFont* CjkFont;     // fetched CJK subset (M4 stress scene; may stay null)
-        ImFont* EmojiFont;   // fetched Noto Color Emoji (M5 scene; may stay null)
-        ImFont* PackedFont;  // M7: pre-baked .imslug asset (packed scene; may stay null)
+        ImFont* CjkFont;     // fetched CJK subset (stress scene; may stay null)
+        ImFont* EmojiFont;   // fetched Noto Color Emoji (color scene; may stay null)
+        ImFont* PackedFont;  // pre-baked .imslug asset (packed scene; may stay null)
         bool CjkAttempted;
         bool EmojiAttempted;
         bool PackedAttempted;
-        float EmojiSize;  // M5 scene: emoji text size (12..96 px)
-        float EmojiZoom;  // M5 scene: single-glyph zoom (32..220 px)
+        float EmojiSize;  // emoji scene: emoji text size (12..96 px)
+        float EmojiZoom;  // emoji scene: single-glyph zoom (32..220 px)
         bool ImGuiInitialized;
         bool ImSlugBackendInitialized;
         bool FontsDirty;  // re-add fonts at the current size next frame
@@ -123,7 +123,7 @@ namespace
         int SlugGlyphCount;
         int SlugRunCount;
 
-        // M4 debug overlay flags (applied after the backend module init; see
+        // Debug overlay flags (applied after the backend module init; see
         // --overlay on the command line and the F1/F2/F3 toggles).
         uint32_t DebugOverlay;
         bool DebugOverlayGiven;  // --overlay was passed (else keep the config seed)
@@ -591,7 +591,7 @@ namespace
     }
 
     // ---------------------------------------------------------------------
-    // Scenes (the M3 acceptance scenes)
+    // Scenes
     // ---------------------------------------------------------------------
     void SceneDemo()
     {
@@ -741,7 +741,7 @@ namespace
         ImGui::End();
     }
 
-    // M4 stress scene: ~5k glyphs of long multi-line text plus a wrapped
+    // Stress scene: ~5k glyphs of long multi-line text plus a wrapped
     // paragraph, at the current base size (watch the stats: instances/runs).
     // The text is regenerated only when the layout inputs change.
     void SceneStress()
@@ -777,7 +777,7 @@ namespace
         ImGui::End();
     }
 
-    // M4 CJK scene: the fetched Noto Sans SC subset (scripts/fetch_cjk_font.*)
+    // CJK scene: the fetched Noto Sans SC subset (scripts/fetch_cjk_font.*)
     // as a second Slug font. Skipped with a message when the font is absent.
     void SceneCjk()
     {
@@ -833,7 +833,7 @@ namespace
         ImGui::End();
     }
 
-    // M5 emoji scene: the fetched Noto Color Emoji (COLR v1; scripts/fetch_emoji_font.*).
+    // Emoji scene: the fetched Noto Color Emoji (COLR v1; scripts/fetch_emoji_font.*).
     // The example's ImGui build uses the default 16-bit ImWchar, so the scene
     // sticks to BMP emoji (U+2600..U+2BFF); non-BMP codepoints (U+1F600+)
     // require IMGUI_USE_WCHAR32 in the whole app build. The scene shows the
@@ -886,7 +886,7 @@ namespace
         ImGui::End();
     }
 
-    // M7 packed-asset scene: text rendered from a pre-baked `.imslug` container
+    // Packed-asset scene: text rendered from a pre-baked `.imslug` container
     // (glyph records + curve/band texels; no outline parsing). The asset is the
     // committed test asset (tests/assets/Roboto-ASCII.imslug); the scene loads
     // it as a second Slug font, so the shared pools and the auto-detecting
@@ -895,7 +895,7 @@ namespace
     void ScenePacked()
     {
         ImGui::SetNextWindowSize(ImVec2(900.0f, 560.0f), ImGuiCond_FirstUseEver);
-        ImGui::Begin("packed asset (.imslug, M7)");
+        ImGui::Begin("packed asset (.imslug)");
         if (g_App.PackedFont == nullptr && !g_App.PackedAttempted)
         {
             g_App.PackedAttempted = true;
@@ -937,7 +937,7 @@ namespace
         ImGui::End();
     }
 
-    // M4 debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
+    // Debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
     // Returns the new state so a caller can react (keys and checkboxes share it).
     bool ToggleDebugOverlay(uint32_t flag)
     {
@@ -1434,7 +1434,7 @@ namespace
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         g_App.Window =
-            glfwCreateWindow(kDefaultWindowWidth, kDefaultWindowHeight, "imslug - Slug text (M2)", nullptr, nullptr);
+            glfwCreateWindow(kDefaultWindowWidth, kDefaultWindowHeight, "imslug - Slug text", nullptr, nullptr);
         if (g_App.Window == nullptr)
         {
             fprintf(stderr, "[imslug] glfwCreateWindow failed\n");

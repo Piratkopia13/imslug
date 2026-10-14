@@ -2,10 +2,10 @@
 # ============================================================================
 # imslug - scripts/golden.sh
 #
-# Build and run the golden-image tests (M2 scenes, M3 Slug-vs-atlas, M5 emoji):
+# Build and run the golden-image tests (monochrome scenes, Slug-vs-atlas, emoji):
 # headless offscreen Vulkan rendering
 # of fixed strings at sizes 12/16/32/64 x DPI scales 1.0/1.25/2.0, compared per
-# pixel against the M1 CPU reference rasterizer. Both render paths are
+# pixel against the CPU reference rasterizer. Both render paths are
 # exercised: a classic render pass and core Vulkan 1.3 dynamic rendering.
 #
 # Output: PPMs land in <build dir>/golden/ (<case>_gpu.ppm, <case>_cpu.ppm,

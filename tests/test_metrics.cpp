@@ -1,6 +1,6 @@
-// imslug M1 tests — glyph metrics.
+// imslug tests — glyph metrics.
 //
-// The M1 contract: layout stays pixel-identical to Dear ImGui's stb loader, so
+// The contract: layout stays pixel-identical to Dear ImGui's stb loader, so
 // every metric is re-derived here from stbtt with the formulas of ImGui
 // v1.92.9b (imgui_draw.cpp lines 4725/4761-4765/4790-4849) and compared
 // exactly against ImSlugGetGlyphMetrics. The test-only ImGui parity suite

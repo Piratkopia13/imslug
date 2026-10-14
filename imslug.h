@@ -1,11 +1,11 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
-// Public C++ header. Constraints (AGENTS.md invariant 4, PLAN §6):
+// Public C++ header. Constraints (AGENTS.md invariant 4):
 //   * must stay C++11-compatible — no C++14/17 constructs here;
 //   * must not use the C++ standard library (no <string>, no <vector>, ...);
 //   * implementation is C++17 and uses no exceptions.
 //
-// Integration shape (PLAN §3, M3): initialize the stock backend first, then
+// Integration shape: initialize the stock backend first, then
 // ImSlug, then register fonts with ImSlug::AddFont*. Ordinary ImGui code —
 // widgets, the demo window, third-party libraries — keeps working unchanged:
 // registered fonts render through Slug, everything else through the atlas.
@@ -20,8 +20,8 @@
 //   ImSlug_ImplVulkan_UploadPools(cmd);       // before the render pass
 //   ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
 //
-// The C API mirror arrives in M6; glyph generation landed in M1, the standalone
-// Vulkan core in M2 (see .agent-docs/milestones/).
+// The C API mirror lives in imslug_c.h; the standalone Vulkan core in
+// backends/imslug_impl_vulkan.h.
 
 #pragma once
 
@@ -52,7 +52,7 @@
 #define IMSLUG_VERSION "0.1.0"
 
 // Export/visibility decoration hook. Empty for the static library; a future
-// shared-library or C API build may redefine it (M6/M8).
+// shared-library build may redefine it.
 #ifndef IMSLUG_API
 #define IMSLUG_API
 #endif
@@ -72,15 +72,15 @@ namespace ImSlug
         // and report (IMSLUG_ASSERT + Statistics::BoundsMismatches) when an
         // instance does not cover its source quad. Cheap; off by default. On
         // the Vulkan backend it also seeds the glyph-bounds debug overlay
-        // (M4; toggle at runtime with ImSlug_ImplVulkan_SetDebugOverlay).
+        // (toggle at runtime with ImSlug_ImplVulkan_SetDebugOverlay).
         bool DebugDrawBounds = false;
 
         // Fine-clip reconstruction (default on): rebuild a glyph's unclipped
         // placement from the corner fractions that ImGui's CPU fine clip left
         // in the UVs, so a glyph half outside a clip edge renders at its true
-        // position (the scissor cuts it). When disabled — the R3 fallback —
-        // clipped glyphs are placed by compressing the glyph's em box into the
-        // quad ImGui actually drew, so all ink stays inside the fine-clip
+        // position (the scissor cuts it). When disabled — the quad-compression
+        // fallback — clipped glyphs are placed by compressing the glyph's em box
+        // into the quad ImGui actually drew, so all ink stays inside the fine-clip
         // rectangle at the cost of a visibly squeezed glyph near the edge;
         // unclipped glyphs are placed identically either way. Useful as a
         // safety valve and as the fuzz target of `imslug_fuzz`.
@@ -95,11 +95,11 @@ namespace ImSlug
         // bake of the same glyph at another size owns its own slab); 0 selects
         // the default (65536). Values above 65536 are clamped to the decoder's
         // slot cap (slot ids >= 65536 would decode as non-Slug geometry).
-        // Glyphs beyond the cap fall back to ImGui's fallback glyph (M3 scope:
-        // the cap is far above typical UI usage).
+        // Glyphs beyond the cap fall back to ImGui's fallback glyph (the cap
+        // is far above typical UI usage).
         uint32_t MaxGlyphSlabs = 0;
 
-        // M5: render COLR color glyphs (one Slug instance per layer, gradients
+        // Render COLR color glyphs (one Slug instance per layer, gradients
         // evaluated in the fragment shader). When false, color glyphs draw
         // through the monochrome path (their glyf outline, often empty for
         // emoji fonts). Read when a glyph is first baked, so it must be set at
@@ -130,7 +130,7 @@ namespace ImSlug
     // glyphs are rect-less — the atlas never rasterizes or packs them, and
     // their UVs are imslug's glyph handles.
     //
-    // M7: the font kind is auto-detected by content. Bytes starting with the
+    // The font kind is auto-detected by content. Bytes starting with the
     // `.imslug` magic (see docs/PACKED_FORMAT.md) are a pre-baked packed asset
     // and load without any outline parsing — the path for deployments built
     // without the runtime TTF parser (IMSLUG_TTF_PARSER=OFF) and for faster
@@ -179,7 +179,7 @@ namespace ImSlug
     IMSLUG_API void DrawCallback(const ImDrawList* parentList, const ImDrawCmd* cmd);
 
     // ---------------------------------------------------------------------
-    // Diagnostics (tests, M4 fuzzing/perf)
+    // Diagnostics (tests, fuzzing/perf)
     // ---------------------------------------------------------------------
     struct Statistics
     {
@@ -188,7 +188,7 @@ namespace ImSlug
         uint32_t Instances;         // glyph instances produced in the last pre-pass
         uint32_t DroppedRuns;       // text runs dropped (no instance capacity)
         uint32_t BoundsMismatches;  // debug placement checks that failed (DebugDrawBounds)
-        uint32_t ColorLayers;       // M5: of Instances, how many are color layers
+        uint32_t ColorLayers;       // of Instances, how many are color layers
     };
 
     IMSLUG_API void GetStatistics(Statistics* out);

@@ -1,6 +1,6 @@
-// imslug M1 tests — outline extraction, cubic conversion, band construction.
+// imslug tests — outline extraction, cubic conversion, band construction.
 //
-// Covers the acceptance checks of the M1 brief: extraction into em-space
+// Covers: extraction into em-space
 // quadratics (orientation, line encoding, contour continuity), the
 // cubic->quadratic utility, adaptive band counts, and the band membership
 // superset/sort invariants checked against an independent re-derivation of the
@@ -287,9 +287,8 @@ static void TestExtractionForFont(const char* fontName)
 }
 
 // ---------------------------------------------------------------------------
-// Adaptive band counts (M4 default: clamp(ceil(2*sqrt(n)), 4, 32); the
-// candidate sweep and the measured cost/memory trade-off are in the M4 report
-// and tests/bench/band_sweep.cpp)
+// Adaptive band counts (clamp(ceil(2*sqrt(n)), 4, 32); the candidate sweep and
+// the measured cost/memory trade-off are in tests/bench/band_sweep.cpp)
 // ---------------------------------------------------------------------------
 static void TestBandCounts()
 {
@@ -454,7 +453,7 @@ static void TestBandsForFont(const char* fontName)
 }
 
 // ---------------------------------------------------------------------------
-// fp16-quantized band admission (M2 review R1)
+// fp16-quantized band admission
 // ---------------------------------------------------------------------------
 // Band generation evaluates the axis-parallel exclusion on the fp32 outline,
 // but the pools store binary16. A curve can therefore become all-equal on one
@@ -609,7 +608,7 @@ static void TestQuantizedBandCurves(const char* fontName)
 // refuses before touching Texels (the fake cursor is never dereferenced), and
 // the curve block allocated before it must be rolled back.
 //
-// The OOM branches (realloc/malloc failures) have no fault injection in the M1
+// The OOM branches (realloc/malloc failures) have no fault injection in the
 // core, so they are not exercised directly; instead GetOrBuildGlyphRecord
 // reserves the cache entry *before* building, so a successful build always has
 // a slot to publish into and "Ok implies a non-null record" holds

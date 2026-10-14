@@ -1,12 +1,12 @@
 # imslug tests (ctest).
 #
-# M0 suites: smoke + the C++11 public-header check.
-# M1 suites: glyph generation, packing, metrics, CPU reference rasterizer
-# (imslug_tests_*), plus an optional test-only build of Dear ImGui that pins
-# metric parity against its stb loader.
+# CPU-only suites: smoke + the C++11 public-header check, glyph generation,
+# packing, metrics, CPU reference rasterizer (imslug_tests_*), plus an
+# optional test-only build of Dear ImGui that pins metric parity against its
+# stb loader.
 
 # ---------------------------------------------------------------------------
-# M0 smoke tests
+# Smoke tests
 # ---------------------------------------------------------------------------
 add_executable(imslug_tests test_imslug.cpp)
 target_link_libraries(imslug_tests PRIVATE imslug)
@@ -23,7 +23,7 @@ imslug_target_defaults(imslug_header_cxx11)
 add_test(NAME imslug_header_cxx11 COMMAND imslug_header_cxx11)
 
 # ---------------------------------------------------------------------------
-# M6: C API. The ABI gate is a C11 translation unit compiled with strict
+# C API. The ABI gate is a C11 translation unit compiled with strict
 # warnings (the header must be C11-clean and the struct layouts must match
 # tests/test_c_api.cpp); the behavioral mirror test compiles both headers in
 # one C++17 TU.
@@ -55,7 +55,7 @@ if(IMSLUG_TTF_PARSER)
 endif()
 
 # ---------------------------------------------------------------------------
-# M7: packed-asset (`.imslug` container v1) tests.
+# Packed-asset (`.imslug` container v1) tests.
 #   * imslug_packed_loader: container validation, corrupt/truncated inputs,
 #     packed metrics/records/raster - no TTF parser needed, so it also runs in
 #     the no-parser configuration (IMSLUG_TTF_PARSER=OFF);
@@ -117,13 +117,13 @@ function(imslug_add_cpu_test target source test_name)
 endfunction()
 
 imslug_add_cpu_test(imslug_tests_packer test_packer.cpp imslug_packer)
-# M2: the frozen glyph-instance record + placement mapping (no GPU needed).
+# The frozen glyph-instance record + placement mapping (no GPU needed).
 imslug_add_cpu_test(imslug_tests_instance test_instance.cpp imslug_instance)
 if(IMSLUG_TTF_PARSER)
     imslug_add_cpu_test(imslug_tests_glyphgen test_glyphgen.cpp imslug_glyphgen)
     imslug_add_cpu_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
     imslug_add_cpu_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
-    # M5: COLR/CPAL reader, color-glyph cache and the CPU paint sampler. The emoji
+    # COLR/CPAL reader, color-glyph cache and the CPU paint sampler. The emoji
     # font is a fetched, gitignored asset; the real-font checks skip when absent.
     add_executable(imslug_tests_colr test_colr.cpp test_util.h)
     target_link_libraries(imslug_tests_colr PRIVATE imslug)
@@ -139,8 +139,8 @@ if(IMSLUG_TTF_PARSER)
     add_test(NAME imslug_colr COMMAND imslug_tests_colr)
 endif()
 # ---------------------------------------------------------------------------
-# M2 golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so
-# they run on lavapipe in CI; the comparison arbiter is the M1 CPU rasterizer,
+# Golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so
+# they run on lavapipe in CI; the comparison arbiter is the CPU rasterizer,
 # not a committed image. SKIP_RETURN_CODE 77 = no usable Vulkan device.
 # ---------------------------------------------------------------------------
 if(IMSLUG_HAVE_VULKAN)
@@ -162,7 +162,7 @@ if(IMSLUG_HAVE_VULKAN)
     add_test(NAME imslug_golden_dynamic
         COMMAND imslug_tests_golden --dynamic-rendering
         WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
-    # M7: the same matrix from the committed packed asset (no outline parsing).
+    # The same matrix from the committed packed asset (no outline parsing).
     # This is the render proof for the no-parser configuration; in normal builds
     # it additionally pins packed-loader vs TTF-generator rendering.
     add_test(NAME imslug_golden_packed
@@ -174,7 +174,7 @@ if(IMSLUG_HAVE_VULKAN)
     set_tests_properties(imslug_golden_packed imslug_golden_packed_dynamic PROPERTIES SKIP_RETURN_CODE 77)
 
     if(IMSLUG_TTF_PARSER)
-        # M3: the same ImGui scene rendered with the Slug font and with the atlas
+        # The same ImGui scene rendered with the Slug font and with the atlas
         # font, compared end to end (layout exact within 1 px, AA perceptual).
         add_executable(imslug_tests_imgui_golden golden/test_imgui_golden_vulkan.cpp test_util.h)
         target_link_libraries(imslug_tests_imgui_golden PRIVATE imslug imslug_vulkan)
@@ -191,7 +191,7 @@ if(IMSLUG_HAVE_VULKAN)
             COMMAND imslug_tests_imgui_golden --dynamic-rendering
             WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
 
-        # M5: color-font (COLR v1) goldens: emoji strings rendered as one instance
+        # Color-font (COLR v1) goldens: emoji strings rendered as one instance
         # per layer and compared against the CPU arbiter (coverage + paint
         # sampling). The emoji font is a fetched, gitignored asset; the suite skips
         # (77) when it is absent.
@@ -211,7 +211,7 @@ if(IMSLUG_HAVE_VULKAN)
         set_tests_properties(imslug_imgui_golden imslug_imgui_golden_dynamic imslug_emoji_golden
             imslug_emoji_golden_dynamic PROPERTIES SKIP_RETURN_CODE 77)
 
-        # M4: the perf harness (scripts/bench.*). Not a ctest suite: it prints and
+        # The perf harness (scripts/bench.*). Not a ctest suite: it prints and
         # records machine-specific numbers.
         add_executable(imslug_tests_bench bench/bench_main.cpp test_util.h)
         target_link_libraries(imslug_tests_bench PRIVATE imslug imslug_vulkan)
@@ -230,13 +230,13 @@ else()
 endif()
 
     # ---------------------------------------------------------------------------
-    # M3/M4: TTF-parser-dependent suites (ImGui integration, fuzz, stress, bench
+    # TTF-parser-dependent suites (ImGui integration, fuzz, stress, bench
     # tools). The no-parser configuration (IMSLUG_TTF_PARSER=OFF) builds only the
     # packed-asset tests above.
     # ---------------------------------------------------------------------------
     if(IMSLUG_TTF_PARSER)
         # ---------------------------------------------------------------------------
-        # M3: ImGui-facing tests (loader, handle encoding, pre-pass). Dear ImGui is
+        # ImGui-facing tests (loader, handle encoding, pre-pass). Dear ImGui is
         # linked from the shared target; it is compiled with third-party settings.
         # ---------------------------------------------------------------------------
         add_executable(imslug_tests_imgui test_imslug_imgui.cpp test_util.h)
@@ -259,8 +259,8 @@ endif()
     add_test(NAME imslug_metrics_imgui_parity COMMAND imslug_tests_imgui_parity)
 
     # ---------------------------------------------------------------------------
-    # M4: fine-clip fuzz harness (deterministic; no GPU). Runs the same case
-    # sequence through the reconstruction path and the R3 fallback.
+    # Fine-clip fuzz harness (deterministic; no GPU). Runs the same case
+    # sequence through the reconstruction path and the quad-compression fallback.
     # ---------------------------------------------------------------------------
     add_executable(imslug_tests_fuzz test_fuzz.cpp test_util.h)
     target_link_libraries(imslug_tests_fuzz PRIVATE imslug ${IMSLUG_IMGUI_TARGET})
@@ -279,7 +279,7 @@ endif()
         ENVIRONMENT "IMSLUG_FUZZ_ITERATIONS=${IMSLUG_FUZZ_ITERATIONS}")
 
     # ---------------------------------------------------------------------------
-    # M4: stress suite (5k glyphs, wrapped text, CJK, degenerate outlines, pool
+    # Stress suite (5k glyphs, wrapped text, CJK, degenerate outlines, pool
     # limits, atlas repack). The CJK font is a fetched, gitignored asset
     # (scripts/fetch_cjk_font.*); the suite skips it when absent.
     # ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ endif()
     add_test(NAME imslug_stress COMMAND imslug_tests_stress)
 
     # ---------------------------------------------------------------------------
-    # M4: benchmark tools (not ctest suites). Band tuning sweep (CPU-only) and the
+    # Benchmark tools (not ctest suites). Band tuning sweep (CPU-only) and the
     # perf harness (GPU, headless Vulkan). scripts/bench.* build and run them.
     # ---------------------------------------------------------------------------
     add_executable(imslug_tests_band_sweep bench/band_sweep.cpp test_util.h)

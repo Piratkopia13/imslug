@@ -3,7 +3,7 @@
 # imslug - scripts/gen_asset.sh
 #
 # Regenerate the committed packed test asset (tests/assets/Roboto-ASCII.imslug)
-# with the M7 offline generator CLI. The asset is a generated artifact: never
+# with the offline generator CLI. The asset is a generated artifact: never
 # edit it by hand, and commit it together with any generator/format/version
 # change that made it stale. imslug_packed_roundtrip and imslug_asset_fresh
 # compare against it and fail when it is stale.

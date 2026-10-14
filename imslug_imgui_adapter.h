@@ -2,7 +2,7 @@
 //
 // imslug_imgui_adapter.h — internal interface between the core (imslug.cpp)
 // and the ImGui-facing adapter (imslug_imgui_adapter.cpp). Every use of
-// imgui_internal.h lives in that one translation unit (PLAN R1); the core sees
+// imgui_internal.h lives in that one translation unit; the core sees
 // only these declarations, which use public ImGui types or plain data.
 //
 // The adapter owns:

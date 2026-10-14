@@ -1,10 +1,10 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
 // imslug_impl_vulkan.h — standalone Vulkan rendering core for the Slug
-// pipeline (M2). ImGui-free by design: it takes explicit Vulkan objects and
-// records draws into a caller-provided command buffer. The M3 ImGui backend
-// (backends/imslug_imgui_*.*) is an adapter on top of this API; the init
-// config maps 1:1 from ImGui_ImplVulkan_InitInfo.PipelineInfoMain.
+// pipeline. ImGui-free by design: it takes explicit Vulkan objects and
+// records draws into a caller-provided command buffer. The ImSlug_Impl*
+// adapter at the bottom of this header bridges to the stock ImGui Vulkan
+// backend; the init config maps 1:1 from ImGui_ImplVulkan_InitInfo.PipelineInfoMain.
 //
 // What the module owns:
 //   * the two pool textures (curve RGBA16F + band R16G16_UINT), their views,
@@ -31,9 +31,9 @@
 
 #include <vulkan/vulkan.h>
 
-// Forward declarations only: the M2 core stays ImGui-free, so this header does
-// not include imgui.h / imgui_impl_vulkan.h. Include those before this header
-// to use the ImSlug_ImplVulkan_* adapter (M3).
+// Forward declarations only: the Vulkan core stays ImGui-free, so this header
+// does not include imgui.h / imgui_impl_vulkan.h. Include those before this
+// header to use the ImSlug_ImplVulkan_* adapter.
 struct ImDrawData;
 struct ImGui_ImplVulkan_InitInfo;
 
@@ -132,7 +132,7 @@ namespace ImSlug
         float ViewportHeight = 0.0f;  // (SlugDilate's `dim`, in pixels)
         VkRect2D Scissor = {};
 
-        // M4 debug overlay flags (ImSlugVulkanDebugOverlay; 0 = off). The
+        // Debug overlay flags (ImSlugVulkanDebugOverlay; 0 = off). The
         // value rides the push constants into the shaders; it never changes
         // geometry, placement or the fallback behavior.
         uint32_t DebugFlags = 0;
@@ -152,7 +152,7 @@ namespace ImSlug
     void ImSlugVulkanDraw(VkCommandBuffer cmd, const ImSlugVulkanDrawInfo* drawInfo);
 
     // ---------------------------------------------------------------------
-    // M4 debug overlay
+    // Debug overlay
     // ---------------------------------------------------------------------
     // Renders every Slug glyph with a diagnostic visualization on top of the
     // normal text:
@@ -166,7 +166,7 @@ namespace ImSlug
     //     visible per glyph;
     //   * RefHeat: a heatmap of the band-reference walk cost of every pixel
     //     (blue = lowest, red = >= 16 references fetched), i.e. the fragment
-    //     work the band tuning (PLAN section 11 D13) balances against memory.
+    //     work the band tuning balances against memory.
     // Flags combine; RefHeat takes precedence over BandGrid when both are set.
     // The overlay is a rendering aid only: it never changes geometry,
     // placement, draw order or the atlas fallback.
@@ -179,7 +179,7 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
-    // M3 ImGui adapter (implements the bridge to the stock ImGui Vulkan
+    // ImGui adapter (implements the bridge to the stock ImGui Vulkan
     // backend). Usage, in this order:
     //   ImGui_ImplVulkan_Init(&init_info);      // stock backend, unchanged
     //   ImSlug::Init();                         // core
@@ -190,8 +190,8 @@ namespace ImSlug
     //   ImGui_ImplVulkan_RenderDrawData / ImSlug_ImplVulkan_RenderDrawData
     // ---------------------------------------------------------------------
     // Mirrors ImGui_ImplVulkan_InitInfo.PipelineInfoMain (render pass, subpass,
-    // MSAA, dynamic rendering) onto ImSlugVulkanInitInfo, initializes the M2
-    // core and registers the callback render interface. Requires ImSlug::Init()
+    // MSAA, dynamic rendering) onto ImSlugVulkanInitInfo, initializes the
+    // Vulkan core and registers the callback render interface. Requires ImSlug::Init()
     // and a renderer with ImGuiBackendFlags_RendererHasTextures.
     IMSLUG_API bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo* initInfo);
 
@@ -208,8 +208,8 @@ namespace ImSlug
     // from Config::DebugDrawBounds, shutdown of a previous module).
     IMSLUG_API bool ImSlug_ImplVulkan_InitFromVulkanInfo(const ImSlugVulkanInitInfo* initInfo);
 
-    // Unregisters the render interface and shuts the M2 core down (waits for
-    // the device). ImSlug::Shutdown() is separate and owned by the app.
+    // Unregisters the render interface and shuts the Vulkan core down (waits
+    // for the device). ImSlug::Shutdown() is separate and owned by the app.
     IMSLUG_API void ImSlug_ImplVulkan_Shutdown();
 
     // Records this frame's glyph-pool uploads (dirty rows only) into `cmd`.
@@ -226,7 +226,7 @@ namespace ImSlug
     IMSLUG_API void ImSlug_ImplVulkan_RenderDrawData(ImDrawData* drawData, VkCommandBuffer cmd,
                                                      VkPipeline mainPipeline = VK_NULL_HANDLE);
 
-    // Runtime toggle for the M4 debug overlay (ImSlugVulkanDebugOverlay flags;
+    // Runtime toggle for the debug overlay (ImSlugVulkanDebugOverlay flags;
     // 0 = off). The initial value comes from Config::DebugDrawBounds (glyph
     // bounds), so an app that never calls this still gets the overlay the
     // config asked for. Takes effect on the next RenderDrawData; the overlay

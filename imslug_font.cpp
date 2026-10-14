@@ -2,7 +2,7 @@
 //
 // imslug_font.cpp — the font-handle dispatch layer shared by the TTF kind
 // (imslug_glyphgen.cpp, stb_truetype) and the packed kind (imslug_packed.cpp,
-// `.imslug` container v1; M7). It owns:
+// `.imslug` container v1). It owns:
 //
 //   * the shared glyph-record cache (one entry per glyph index and target
 //     pool set) and the "Ok implies a valid stable record pointer" contract;
@@ -76,7 +76,8 @@ namespace ImSlug
     // Shared body of the font and synthetic record builders: assigns bands and
     // writes the curves/bands into the pools using the font's scratch buffers.
     // `quads` come from the font's extraction, from the packed loader's curve
-    // blobs or from a caller-provided synthetic outline (M3 ellipsis). The
+    // blobs or from a caller-provided synthetic outline (the ellipsis glyph).
+    // The
     // pools are left untouched only when this returns Ok; callers that need
     // the transactional contract use the wrapper below.
     ImSlugBuildStatus ImSlugWriteGlyphRecordToPools(ImSlugFont* font, ImSlugPools* pools, const ImSlugQuad* quads,
@@ -87,7 +88,7 @@ namespace ImSlug
         record->Flags = ImSlugGlyphFlags_None;  // nonzero fill rule
         record->Advance = advanceEm;
 
-        // Robustness (M4): reject outlines that are not finite, or whose
+        // Robustness: reject outlines that are not finite, or whose
         // coordinates dwarf any sane em box, before they reach the bbox, the
         // band math or the fp16 pool texels (a NaN bbox would poison the band
         // scales and put NaN positions into the vertex stream). TTF extraction
@@ -430,7 +431,7 @@ namespace ImSlug
         return ImSlugGetOrBuildGlyphRecord(font, pools, glyphIndex, outRecord);
     }
 
-    // M3: same contract as the font record builders, from quads that did not
+    // Same contract as the font record builders, from quads that did not
     // come from the font (the synthetic ellipsis). `pools` is owned by the
     // caller; the record embeds pool locations, so it must be freed/never
     // reused if the pools are destroyed. `font` supplies the build scratch only

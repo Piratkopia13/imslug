@@ -1,4 +1,4 @@
-// imslug — M7 packed-asset loader test (no parser required).
+// imslug — packed-asset loader test (no parser required).
 //
 // Covers the `.imslug` container v1 reader (imslug_packed.*) without needing
 // the TTF parser: the committed test asset is loaded through the packed font

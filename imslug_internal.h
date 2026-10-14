@@ -1,25 +1,25 @@
 // imslug — Slug-based GPU text rendering for Dear ImGui.
 //
 // imslug_internal.h — implementation-only shared data contract for the glyph
-// pipeline (M1): TTF bytes -> em-space quadratics -> curve/band pools -> CPU
+// pipeline: TTF bytes -> em-space quadratics -> curve/band pools -> CPU
 // reference rasterizer. This header holds the shared *types and constants*;
 // the APIs live in the module headers included at the bottom of this file:
 //
 //   imslug_packer.h     shared curve/band pools, allocation, dirty rows
 //   imslug_glyphgen.h   outline extraction, band construction, font records
-//   imslug_refraster.h  CPU coverage rasterizer (arbiter for M2+)
+//   imslug_refraster.h  CPU coverage rasterizer (ground truth for the goldens)
 //
-// M3+ code includes this one header. See the M1 completion notes in
-// .agent-docs/milestones/M1-core-glyph-pipeline.md and the skill
-// .opencode/skills/imslug-glyph-format.
+// Every implementation file includes this one header. The full data-format
+// contract is documented in the imslug-glyph-format skill
+// (.opencode/skills/imslug-glyph-format).
 //
-// Rules for this header (AGENTS.md invariant 4, M1 brief):
+// Rules for this header (AGENTS.md invariant 4):
 //   * never include imgui.h;
 //   * no STL containers/strings — plain buffers and explicit alloc/free;
 //   * no exceptions: fallible entry points return bool / ImSlugBuildStatus.
 // The implementation is C++17.
 //
-// Data format (contract: PLAN §2.1-2.2; mirrored by the reference shaders in M2):
+// Data format (mirrored by the GPU shaders and the CPU reference rasterizer):
 //   * Em space everywhere: 1.0 = em, Y up, origin at the pen position on the
 //     baseline. Never mix font units or pixels into stored geometry.
 //   * Curve pool: RGBA16F, fixed width 4096. One quadratic = 2 texels:
@@ -34,8 +34,8 @@
 //     pixel shader reads them (SlugPixelShader.hlsl: glyphLoc.x + bandIndex.y
 //     and glyphLoc.x + bandMax.y + 1 + bandIndex.x, row glyphLoc.y).
 //   * The E (even-odd) flag is bit 28 of the packed bandMax word (tex.w), i.e.
-//     bit 12 of its high 16-bit half — see ImSlugPackBandMaxWord from the
-//     reference vertex/pixel shader comments (PLAN §2.3).
+//     bit 12 of its high 16-bit half — see ImSlugPackBandMaxWord and the
+//     reference vertex/pixel shader comments.
 //
 // References (attribution: NOTICE section 2/4):
 //   * Slug reference shaders, Copyright 2017 Eric Lengyel (MIT OR Apache-2.0):
@@ -57,7 +57,7 @@
 // stb_truetype.h is vendored unmodified under third_party/stb/ (see its
 // PROVENANCE.txt). The implementation is compiled in imslug_stb.cpp, in a
 // separate target with third-party warning settings. The no-parser build
-// (IMSLUG_NO_STBTT, M7) excludes both the header and the implementation: the
+// (IMSLUG_NO_STBTT) excludes both the header and the implementation: the
 // core then only loads packed `.imslug` assets.
 #if !defined(IMSLUG_NO_STBTT)
 #include "stb_truetype.h"
@@ -71,7 +71,7 @@
 // ---------------------------------------------------------------------
 // ImGui-style assert: active unless NDEBUG. Runtime capacity problems must
 // still be reported through return values — never rely on asserts for
-// fallback behavior (PLAN R11). Included at global scope (never inside the
+// fallback behavior. Included at global scope (never inside the
 // namespace below): the UCRT headers pull in typedefs that must stay in the
 // global namespace for later system includes.
 #if !defined(IMSLUG_ASSERT)
@@ -89,14 +89,14 @@ namespace ImSlug
     struct Config;
 
     // ---------------------------------------------------------------------
-    // Format constants (must stay in sync with the future shaders)
+    // Format constants (must stay in sync with the shaders)
     // ---------------------------------------------------------------------
     static const int kPoolWidth = 4096;  // texels per row, both pools
     static const int kPoolWidthLog2 = 12;
     static const int kPoolMaxHeight = 65536;                  // 16-bit texel y coordinate
-    static const int kMaxBandCountPerAxis = 32;               // adaptive cap (M4 re-tunes)
+    static const int kMaxBandCountPerAxis = 32;               // adaptive cap
     static const int kGlyphMaxBlockTexels = 65535;            // u16 band offsets
-    static const float kBandOverlapEpsilon = 1.0f / 1024.0f;  // em (PLAN §2.2)
+    static const float kBandOverlapEpsilon = 1.0f / 1024.0f;  // em
 
     // ---------------------------------------------------------------------
     // Pools (one curve pool + one band pool shared by every Slug font)
@@ -124,7 +124,7 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
-    // M5: paint pool (COLR color layers)
+    // Paint pool (COLR color layers)
     // ---------------------------------------------------------------------
     // One ImSlugPaintRecord per *drawn layer* of a color glyph (flat v0
     // layers, v1 fills/gradients). Records are built once when the color
@@ -200,7 +200,7 @@ namespace ImSlug
     {
         ImSlugCurvePool Curves;
         ImSlugBandPool Bands;
-        // M5: per-layer paint records for COLR color glyphs (one record per
+        // Per-layer paint records for COLR color glyphs (one record per
         // drawn layer: solid fills and gradient definitions). GPU-visible as a
         // storage buffer (ImSlugPaintRecord); the CPU mirror is what tests and
         // the offscreen golden's expected image read through
@@ -255,7 +255,7 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
-    // M5: color glyphs (COLR/CPAL)
+    // Color glyphs (COLR/CPAL)
     // ---------------------------------------------------------------------
     // A color glyph is a flattened, draw-order list of layers. Each layer is
     // one Slug glyph record plus a paint record in the pool. Layer `i` is
@@ -295,7 +295,7 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
-    // Glyph instance (frozen M2 layout; mirrored by shaders/vulkan/slug.vert)
+    // Glyph instance (frozen layout; mirrored by shaders/vulkan/slug.vert)
     // ---------------------------------------------------------------------
     // One instance per glyph quad. The vertex shader builds the quad corners
     // from gl_VertexIndex (4 vertices, triangle strip) and reads this record
@@ -306,9 +306,9 @@ namespace ImSlug
     //   loc 2  vec4   Jac         inverse Jacobian rows: em += (dot(d, .xy), dot(d, .zw))
     //   loc 3  vec4   Banding     (BandScaleX, BandScaleY, BandOffsetX, BandOffsetY)
     //   loc 4  uvec2  GlyphLoc    band pool glyph location (x, y)
-    //   loc 5  uint   BandMaxWord bandMaxX | bandMaxY << 16 | E << 28 (D8(g))
+    //   loc 5  uint   BandMaxWord bandMaxX | bandMaxY << 16 | E << 28
     //   loc 6  vec4   Color       straight alpha (r, g, b, a)
-    //   loc 7  uint   PaintIndex  M5: ImSlugPools::Paints index, or
+    //   loc 7  uint   PaintIndex  ImSlugPools::Paints index, or
     //                             kNoPaintIndex (0xFFFFFFFF) for plain glyphs
     //
     // ScreenRect corners correspond to EmBBox corners with the Y flip applied
@@ -324,16 +324,16 @@ namespace ImSlug
         uint32_t GlyphLocX, GlyphLocY;
         uint32_t BandMaxWord;
         float ColorR, ColorG, ColorB, ColorA;
-        uint32_t PaintIndex;  // M5 (instance format v2); see kNoPaintIndex
+        uint32_t PaintIndex;  // instance format v2; see kNoPaintIndex
     };
-    static_assert(sizeof(ImSlugGlyphInstance) == 96, "frozen M5 instance layout (shaders + vertex input)");
+    static_assert(sizeof(ImSlugGlyphInstance) == 96, "frozen instance layout v2 (shaders + vertex input)");
     static_assert(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16, "frozen instance layout");
     static_assert(offsetof(ImSlugGlyphInstance, Jac00) == 32, "frozen instance layout");
     static_assert(offsetof(ImSlugGlyphInstance, BandScaleX) == 48, "frozen instance layout");
     static_assert(offsetof(ImSlugGlyphInstance, GlyphLocX) == 64, "frozen instance layout");
     static_assert(offsetof(ImSlugGlyphInstance, BandMaxWord) == 72, "frozen instance layout");
     static_assert(offsetof(ImSlugGlyphInstance, ColorR) == 76, "frozen instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, PaintIndex) == 92, "frozen M5 instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, PaintIndex) == 92, "frozen instance layout v2");
     static const uint32_t kNoPaintIndex = 0xFFFFFFFFu;  // instance.PaintIndex sentinel
 
     // Fills one instance for `record` placed by an axis-aligned transform:
@@ -345,7 +345,7 @@ namespace ImSlug
     void ImSlugBuildGlyphInstance(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEm, float r,
                                   float g, float b, float a, ImSlugGlyphInstance* outInstance);
 
-    // M5 generalization of the above with per-axis scale (used by color layers
+    // Generalization of the above with per-axis scale (used by color layers
     // whose transform is a positive axis-aligned scale):
     //   screen = (penX + emX * pixelsPerEmX, penY - emY * pixelsPerEmY)
     // The vertex shader keeps this mapping affine through Jac, so the
@@ -355,7 +355,7 @@ namespace ImSlug
                                         ImSlugGlyphInstance* outInstance);
 
     // ---------------------------------------------------------------------
-    // Glyph handle (M3): the ImDrawVert UV payload that identifies a baked
+    // Glyph handle: the ImDrawVert UV payload that identifies a baked
     // glyph in the draw data.
     // ---------------------------------------------------------------------
     // One baked glyph (per font source, glyph index and bake size) owns a slot;
@@ -392,7 +392,7 @@ namespace ImSlug
     struct ImSlugGlyphSlab
     {
         const ImSlugGlyphRecord* Record;  // may be null while unused/being freed
-        // M5: the resolved color glyph (layers + paint records) when this baked
+        // The resolved color glyph (layers + paint records) when this baked
         // glyph is a COLR color glyph and Config::EnableColorFonts was set when
         // it was loaded; null for monochrome glyphs. The pre-pass emits one
         // instance per layer instead of one for Record. Owned by the font.
@@ -412,7 +412,7 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
-    // Backend render interface (M3): registered by a backend module (e.g.
+    // Backend render interface: registered by a backend module (e.g.
     // ImSlug_ImplVulkan_Init) so the core can write instances and the draw
     // callback can record draws without knowing the backend.
     // ---------------------------------------------------------------------
@@ -472,7 +472,7 @@ namespace ImSlug
     const Config* ImSlugGetConfig();
 
     // ---------------------------------------------------------------------
-    // Build status (capacity guards feed the graceful fallback of PLAN R11)
+    // Build status (capacity guards feed the graceful fallback)
     // ---------------------------------------------------------------------
     enum ImSlugBuildStatus
     {
@@ -487,8 +487,8 @@ namespace ImSlug
                                            // padded block > 65535 texels (u16
                                            // offsets) -- definitive fallback
         ImSlugBuildStatus_InvalidOutline   // non-finite or out-of-range control
-                                           // points (M4 robustness; synthetic
-                                           // callers only) -- definitive fallback
+                                           // points (synthetic callers only)
+                                           // -- definitive fallback
     };
 }  // namespace ImSlug
 

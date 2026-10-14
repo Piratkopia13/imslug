@@ -2,7 +2,7 @@
 //
 // No external test framework: each suite is a plain main() that uses the
 // TEST_CHECK macros, prints failures with file/line, and returns nonzero when
-// anything failed (ctest-friendly, mirrors tests/test_imslug.cpp from M0).
+// anything failed (ctest-friendly, same shape as tests/test_imslug.cpp).
 //
 // Test assets live in tests/fonts/; the directory is injected by CMake as
 // IMSLUG_TEST_FONT_DIR so suites do not depend on the working directory.
@@ -32,7 +32,7 @@
 namespace imslug_test
 {
     // Debug builds: MSVC's assert() pops a modal "Debug Error!" dialog and
-    // blocks headless test runs (the M4 Debug suite hung on the stress test's
+    // blocks headless test runs (the debug suite hung on the stress test's
     // deliberate invariant poke). Report asserts to stderr instead, so a
     // violated internal invariant fails the process instead of waiting for a
     // click. No-op outside MSVC Debug.

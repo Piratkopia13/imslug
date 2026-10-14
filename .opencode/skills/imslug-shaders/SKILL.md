@@ -14,7 +14,7 @@ description: Shader sources of truth, the glslangValidator workflow, the committ
 | `shaders/imslug_shaders_vulkan.h` | **Generated + committed** SPIR-V word arrays (`imslug_slug_vert_spv` / `imslug_slug_frag_spv` + `_len` word counts). Never edited by hand. |
 
 Generated `.spv` intermediates are gitignored; only the header is committed
-together with its sources (PLAN §5.8, AGENTS.md invariant 8).
+together with its sources (AGENTS.md invariant 8).
 
 ## Regenerate / verify
 
@@ -37,26 +37,26 @@ together with its sources (PLAN §5.8, AGENTS.md invariant 8).
   sorted inputs, no timestamps, LF, 8 words per line. A diff that churns without
   a source change is a generator bug - report it, never hand-patch the header.
 
-## Attribution rules (hard requirement: PLAN §1.2, R10)
+## Attribution rules (hard requirement)
 
 * Every shader source file starts with:
   `// Slug shader code Copyright 2017 by Eric Lengyel.`
   plus a short note on what was ported/adapted and under which license
   (the reference is dual MIT / Apache-2.0; both texts live in `NOTICE` §1).
-* Port checklist (PLAN Appendix B): `SlugUnpack`/`SlugDilate` (perspective-correct
+* Port checklist: `SlugUnpack`/`SlugDilate` (perspective-correct
   1 px dilation via MVP rows, sample coordinate re-derived through the inverse
   Jacobian), `CalcBandLoc` (log2 width 12 / 4096), band header fetch (H then V
   offsets), `CalcRootCode` equivalence classes + linear fallback when
-  `|a| < 1/65536` (with the CPU arbiter's `|b| >= 1/65536` guard, R1),
+  `|a| < 1/65536` (with the CPU arbiter's `|b| >= 1/65536` guard),
   `SolveHorizPoly`/`SolveVertPoly` winding accumulation with
   coverage weights, `CalcCoverage` combine + even-odd flag, instance-mode VS
   (corner from `gl_VertexIndex`, normal = corner direction), ImGui-exact blend
-  state, discard below `fill < 0.001`. All of these are implemented as of M2.
+  state, discard below `fill < 0.001`. All of these are implemented.
 * Do not copy code from projects without a license (`osgSlug`). DearWidgets is
   CC0 and Slughorn is MIT - adapting anything requires a `NOTICE` entry and a
   credit line in the file header.
 
-## Implemented interface (M2; keep in sync with the code)
+## Implemented interface (keep in sync with the code)
 
 **Object space = screen pixels (Y down).** The instance carries a screen rect
 (px) and an em bbox; the VS corner `c = (gl_VertexIndex & 1, (gl_VertexIndex >>
@@ -81,30 +81,30 @@ axis in the ortho case (fragment region = rect ± 0.5 px per axis).
 | 5 | uint | R32_UINT | BandMaxWord (bandMaxX \| bandMaxY<<16 \| E<<28) |
 | 6 | vec4 | R32G32B32A32_SFLOAT | Color (straight alpha) |
 
-**Push constants** (72 bytes → **76 bytes in M4**): 4 MVP rows (`vec4`) mapping
+**Push constants** (**76 bytes**): 4 MVP rows (`vec4`) mapping
 *object space (screen px) to clip*, then `vec2 Viewport` = framebuffer size in
-pixels (SlugDilate's `dim`), then `uint DebugFlags` (M4 debug overlay,
+pixels (SlugDilate's `dim`), then `uint DebugFlags` (debug overlay,
 `ImSlugVulkanDebugOverlay`; 0 = off). The block is declared in **both** stages
 (the fragment shader reads only `DebugFlags`), so the pipeline layout's push
 constant range uses `VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT`
 and `vkCmdPushConstants` must name both (VUID-...-07987 / 01796 - a vertex-only
-range or a vertex-only push is a validation error since M4).
+range or a vertex-only push is a validation error).
 
 **Varyings**: location 0 `vec2 vTexCoord` (em sample coordinate, interpolated),
 1 `flat vec4 vBanding`, 2 `flat uvec2 vGlyphLoc`, 3 `flat uint vBandMaxWord`,
-4 `vec4 vColor`, 5 `vec2 vScreenPos` (undilated object-space position, M4 -
+4 `vec4 vColor`, 5 `vec2 vScreenPos` (undilated object-space position -
 drives the glyph-bounds outline), 6 `flat vec4 vScreenRect` (the instance's
-source quad, M4). Locations 5/6 are only read by the debug views.
+source quad). Locations 5/6 are only read by the debug views.
 
 **Fragment shader**: `fwidth(vTexCoord)` gives `pixelsPerEm`; `texelFetch` on
 `sampler2D curveTexture` (RGBA16F) and `usampler2D bandTexture` (R16G16_UINT,
 `texelFetch` returns `uvec4`, the two u16 fields are `.xy`); `CalcCoverage`'s
 even-odd test is **bit 28 of the packed bandMax word** (= bit 12 of its high
-half, the reference's `glyphData.w` test; PLAN §11 D8(g)) - TTF glyphs use the
+half, the reference's `glyphData.w` test) - TTF glyphs use the
 nonzero rule (E = 0). Output is **unpremultiplied**:
 `vec4(vColor.rgb, vColor.a * fill)` with `discard` when `fill < 0.001`.
 
-**M5 paint records (color layers).** `slug.frag` adds binding 2, an `std430`
+**Paint records (color layers).** `slug.frag` adds binding 2, an `std430`
 `readonly buffer SlugPaintBuffer { SlugPaintRecord Paints[]; }` (352-byte
 records; the C++ mirror is `ImSlugPaintRecord`, static_asserted: `uvec4 Header`
 = (type, extend, stopCount, solidColor RGBA8), `vec4 Xform0/1` = the record-space
@@ -113,8 +113,8 @@ records; the C++ mirror is `ImSlugPaintRecord`, static_asserted: `uvec4 Header`
 record-space ClipBox (disabled when max <= min), `uvec2 Stops[32]` = (raw
 F2DOT14 offset, RGBA8 color) pairs). The instance's new flat `uint
 vPaintIndex` (loc 7) selects a record; `0xFFFFFFFF` means "plain glyph" and the
-shader takes the M2 path with one uniform compare, so color-free text never
-enters the paint code. For a color layer the shader resolves the paint at the
+shader takes the monochrome path with one uniform compare, so color-free text
+never enters the paint code. For a color layer the shader resolves the paint at the
 fragment's em coordinate (solid / linear via the spec's p2 rotation point /
 two-point conical radial per the WHATWG algorithm / sweep in counter-clockwise
 degrees with the spec's BiasedAngle) and outputs
@@ -123,9 +123,9 @@ the tint alpha only, matching ImGui's `Colored` semantics (RGB forced to 255).
 `ImSlugSamplePaintRecord()` in `imslug_colr.cpp` is the CPU mirror; the emoji
 golden compares GPU against it (the arbiter) and `tests/test_colr.cpp` unit-tests
 both against hand-computed values. Semantics and fallbacks are documented in
-`docs/DESIGN.md` section 9 (PLAN §11 D20/D21).
+`docs/DESIGN.md` section 9.
 
-**M4 debug overlay (shader side, PLAN §11 D17).** When `pc.DebugFlags != 0` the
+**Debug overlay (shader side).** When `pc.DebugFlags != 0` the
 shader returns a debug color and never discards, so the whole dilated quad
 stays visible: `RefHeat` (bit 2) maps the band-reference walk count of the
 fragment to a blue→red ramp (`refCount / 16`), `BandGrid` (bit 1) mixes a
@@ -158,8 +158,8 @@ a premultiplied blend state.)
 * The exactly-degenerate linear solve (all control-point y equal) can produce
   `c * (0.5/0)` inf/NaN in the reference form. Band generation excludes
   axis-parallel *fp32* curves from the matching-axis bands, but the pools store
-  **fp16**: quantization can make an admitted curve all-equal on one axis
-  (review R1). The GLSL therefore carries the CPU arbiter's Slughorn guard in
+  **fp16**: quantization can make an admitted curve all-equal on one axis.
+  The GLSL therefore carries the CPU arbiter's Slughorn guard in
   the identical form (`|b| >= 1/65536 ? c * (0.5/b) : 0`, see
   `imslug_refraster.cpp`) so GPU and CPU resolve that branch the same way; the
   scan in `tests/test_glyphgen.cpp` reports quantized collisions per font
@@ -171,10 +171,10 @@ a premultiplied blend state.)
 1. `scripts/gen_shaders.*` - must succeed.
 2. `scripts/gen_shaders.* --check` - must pass on a clean tree.
 3. Golden-image tests (`scripts/golden.*`): fixed strings at sizes 12/16/32/64
-   and scales 1.0/1.25/2.0 (+ a 3.5x zoom case), GPU vs the M1 CPU rasterizer,
+   and scales 1.0/1.25/2.0 (+ a 3.5x zoom case), GPU vs the CPU rasterizer,
    both the render-pass and dynamic-rendering paths, validation layers on (any
    validation error fails the run). They skip with exit 77 without a device.
-   The M5 color-font goldens (`imslug_emoji_golden`, same script) compare emoji
+   The color-font goldens (`imslug_emoji_golden`, same script) compare emoji
    layers against `ImSlugSamplePaintRecord`; they additionally skip when the
    fetched Noto Color Emoji asset is absent.
 4. Fallback check: unregistered fonts still render through ImGui's texture path

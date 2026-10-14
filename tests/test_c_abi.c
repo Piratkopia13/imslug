@@ -1,4 +1,4 @@
-// imslug C API — C11 compilation + ABI gate (M6).
+// imslug C API — C11 compilation + ABI gate.
 //
 // This translation unit is compiled as C11 with strict warnings
 // (-Wall -Wextra -Werror on GCC/Clang, /W4 /WX on MSVC) and includes only

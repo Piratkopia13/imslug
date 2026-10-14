@@ -9,7 +9,7 @@ shader plus a word-count constant:
     static const uint32_t imslug_slug_vert_spv_len = 123;
 
 Output is deterministic (sorted inputs, no timestamps, no absolute paths). The
-generated header is committed on purpose (PLAN §5.8) and must never be edited
+generated header is committed on purpose and must never be edited
 by hand (AGENTS.md invariant 1).
 """
 

@@ -3,9 +3,9 @@ setlocal EnableExtensions
 rem ===========================================================================
 rem imslug - scripts\golden.bat
 rem
-rem Build and run the M2 golden-image tests: headless offscreen Vulkan
+rem Build and run the golden-image tests: headless offscreen Vulkan
 rem rendering of fixed strings at sizes 12/16/32/64 x DPI scales 1.0/1.25/2.0,
-rem compared per pixel against the M1 CPU reference rasterizer. Both render
+rem compared per pixel against the CPU reference rasterizer. Both render
 rem paths are exercised: a classic render pass and core Vulkan 1.3 dynamic
 rem rendering.
 rem

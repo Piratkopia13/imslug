@@ -3,7 +3,7 @@ setlocal EnableExtensions
 rem ===========================================================================
 rem imslug - scripts\verify_fetchcontent.bat
 rem
-rem Clean-project verification (M8): a throwaway CMake project consumes this
+rem Clean-project verification: a throwaway CMake project consumes this
 rem repository via FetchContent (a git clone of the committed state), builds
 rem the GLFW+Vulkan example and a minimal consumer executable, and runs both.
 rem

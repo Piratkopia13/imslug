@@ -32,14 +32,14 @@ layout(location = 3) flat in uint vBandMaxWord;  // bandMaxX | bandMaxY << 16 | 
 layout(location = 4) in vec4 vColor;
 layout(location = 5) in vec2 vScreenPos;         // screen pixels (Y down), undilated (debug)
 layout(location = 6) flat in vec4 vScreenRect;   // source quad (debug bounds)
-layout(location = 7) flat in uint vPaintIndex;   // M5: paint record index, 0xFFFFFFFF = plain
+layout(location = 7) flat in uint vPaintIndex;   // paint record index, 0xFFFFFFFF = plain
 
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D curveTexture;  // RGBA16F control points
 layout(set = 0, binding = 1) uniform usampler2D bandTexture;  // R16G16_UINT headers/refs
 
-// M5: one paint record per color layer (ImSlugPaintRecord in imslug_internal.h,
+// One paint record per color layer (ImSlugPaintRecord in imslug_internal.h,
 // 352 bytes, std430). The instance's vPaintIndex selects one; plain glyphs use
 // 0xFFFFFFFF and never touch the buffer.
 //   Header.x Type (0 solid, 1 linear, 2 radial, 3 sweep)
@@ -86,7 +86,7 @@ layout(push_constant) uniform PushConstants
 const int kLogBandTextureWidth = 12;  // fixed pool width 4096 (imslug_internal.h)
 const float kSolverEpsilon = 1.0 / 65536.0;
 
-// M4 debug overlay flags (mirror ImSlugVulkanDebugOverlay in
+// Debug overlay flags (mirror ImSlugVulkanDebugOverlay in
 // backends/imslug_impl_vulkan.h). RefHeat takes precedence over BandGrid.
 const uint kDebugFlagGlyphBounds = 1u;  // 1px outline of the drawn quad
 const uint kDebugFlagBandGrid = 2u;     // H/V band checkerboard per glyph
@@ -115,8 +115,7 @@ uint CalcRootCode(float y1, float y2, float y3)
 // inf/NaN. The guard is reachable because the packer's axis-parallel exclusion
 // runs on the fp32 outline while the GPU reads fp16 pool texels: quantization
 // can make an admitted curve all-equal on one axis. Keeping the GPU exactly on
-// the CPU side of this branch is what the goldens compare; see R1 in the M2
-// review notes.
+// the CPU side of this branch is what the goldens compare.
 vec2 SolveHorizPoly(vec4 p12, vec2 p3)
 {
     vec2 a = p12.xy - p12.zw * 2.0 + p3;
@@ -163,7 +162,7 @@ ivec2 CalcBandLoc(ivec2 glyphLoc, uint offset)
 // Reference CalcCoverage(): weighted mean of the two ray coverages vs the
 // weaker ray, then the fill rule. The E flag lives at bit 28 of the packed
 // bandMax word (= bit 12 of its high 16-bit half, the reference's
-// glyphData.w test; see PLAN section 11 D8(g)).
+// glyphData.w test).
 float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, uint bandMaxWord)
 {
     float coverage = max(abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, kSolverEpsilon),
@@ -181,7 +180,7 @@ float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, uint bandMaxW
 }
 
 // ============================================================================
-// M5 color layer evaluation (mirror of ImSlugSamplePaintRecord in
+// Color layer evaluation (mirror of ImSlugSamplePaintRecord in
 // imslug_colr.cpp; the CPU mirror is the arbiter the goldens compare against).
 // Only reached when the instance carries a valid PaintIndex, so color-free
 // text never enters this code (the caller's branch is uniform per instance).
@@ -429,17 +428,18 @@ void main()
 
     float fill = CalcCoverage(xcov, ycov, xwgt, ywgt, vBandMaxWord);
 
-    // M5: a color layer resolves its own straight-alpha color (solid or
+    // A color layer resolves its own straight-alpha color (solid or
     // gradient); the instance color then only contributes the tint alpha
     // (ImGui forces RGB=255 for Colored glyphs, so a tint fades the layer
-    // colors instead of recoloring them). Plain glyphs keep the M2 path:
+    // colors instead of recoloring them). Plain glyphs keep the monochrome
+    // path:
     // paintColor = 1, so glyphColor/glyphAlpha are exactly vColor.
     const bool isColored = vPaintIndex != kNoPaintIndex;
     vec4 paintColor = isColored ? SamplePaint(vPaintIndex, vTexCoord) : vec4(1.0);
     vec3 glyphColor = isColored ? paintColor.rgb : vColor.rgb;
     float glyphAlpha = vColor.a * paintColor.a;
 
-    // M4 debug overlay: rebuild the fragment color for the requested views.
+    // Debug overlay: rebuild the fragment color for the requested views.
     // Debug views never discard and keep the whole dilated quad visible, so
     // the band/ref diagnostics show up outside the glyph body as well.
     if (pc.DebugFlags != 0u)
