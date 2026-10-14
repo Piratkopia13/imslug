@@ -8,8 +8,9 @@
 #   3. markdown outside the durable allowlist exists (tracked OR
 #      untracked-not-ignored).
 #
-# Allowlist: README.md, AGENTS.md, docs/**, .opencode/**, .github/**.
-# Vendored trees (third_party/**, vendor/**) are excluded from check 3.
+# Allowlist: README.md, AGENTS.md, CHANGELOG.md, docs/**, .opencode/**,
+# .github/**. Vendored trees (third_party/**, vendor/**) are excluded from
+# check 3.
 #
 # Never "fix" a violation with `git add -f`: transient plan/session/scratch
 # markdown belongs in the gitignored .agent-docs/ directory only.
@@ -45,13 +46,13 @@ count=$(printf '%s\n' "$files" | grep -c .)
 md_count=$(printf '%s\n' "$files" | grep -Ec '\.md$')
 bad=$(printf '%s\n' "$files" \
     | grep -E '\.md$' \
-    | grep -Ev '^(README\.md|AGENTS\.md)$' \
+    | grep -Ev '^(README\.md|AGENTS\.md|CHANGELOG\.md)$' \
     | grep -Ev '^(docs|\.opencode|\.github)/' \
     | grep -Ev '^(third_party|vendor)/')
 if [ -n "$bad" ]; then
     echo "[check_docs] stray markdown outside the durable allowlist:" >&2
     echo "$bad" | sed 's/^/  /' >&2
-    fail "move transient docs into .agent-docs/ (gitignored) or delete them; durable docs are README.md, AGENTS.md, docs/**, .opencode/**, .github/**"
+    fail "move transient docs into .agent-docs/ (gitignored) or delete them; durable docs are README.md, AGENTS.md, CHANGELOG.md, docs/**, .opencode/**, .github/**"
 fi
 
 echo "[check_docs] OK: $count files scanned, $md_count markdown within the allowlist; .agent-docs/ untracked and ignored."

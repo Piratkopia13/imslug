@@ -7,6 +7,7 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 
 | Path | What it is |
 |---|---|
+| `README.md` / `CHANGELOG.md` | Landing page + release history (Keep a Changelog; the `imslug-release` skill holds the release/tag checklist). |
 | `imslug.h` / `imslug.cpp` | Public API + core. Header must stay C++11-compatible and STL-free. |
 | `imslug_c.h` / `imslug_c.cpp` | C API (M6): `extern "C"` mirror of the public API, C11-clean; the Vulkan C mirror is `backends/imslug_c_vulkan.cpp`. Binding guide: `docs/BINDINGS.md`. |
 | `imslug_internal.h` | Impl-only frozen core API: pools, glyph records, font/metrics/raster declarations (M1; umbrella over the module headers). |
@@ -135,8 +136,9 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 
 ## Docs policy (PLAN §12.5)
 
-* Committed markdown allowlist: `README.md`, `AGENTS.md`, `docs/**`,
-  `.opencode/**`, `.github/**`; plus `LICENSE`/`NOTICE` (non-markdown).
+* Committed markdown allowlist: `README.md`, `AGENTS.md`, `CHANGELOG.md`,
+  `docs/**`, `.opencode/**`, `.github/**`; plus `LICENSE`/`NOTICE`
+  (non-markdown).
 * Transient plan drafts, session notes and scratch go in `.agent-docs/` **only**
   — never at the repo root or anywhere else.
 * Never commit `.agent-docs/**`; never `git add -f` ignored files.

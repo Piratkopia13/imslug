@@ -48,8 +48,8 @@
 // Numeric version for compile-time comparisons, e.g. 0.1.0 -> 100.
 #define IMSLUG_VERSION_NUM ((IMSLUG_VERSION_MAJOR * 10000) + (IMSLUG_VERSION_MINOR * 100) + (IMSLUG_VERSION_PATCH))
 
-// Version string of the library ("major.minor.patch", plus a suffix while pre-0.1).
-#define IMSLUG_VERSION "0.1.0-dev"
+// Version string of the library ("major.minor.patch").
+#define IMSLUG_VERSION "0.1.0"
 
 // Export/visibility decoration hook. Empty for the static library; a future
 // shared-library or C API build may redefine it (M6/M8).

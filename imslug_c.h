@@ -107,9 +107,9 @@ extern "C"
 #define IMSLUG_VERSION_NUM ((IMSLUG_VERSION_MAJOR * 10000) + (IMSLUG_VERSION_MINOR * 100) + (IMSLUG_VERSION_PATCH))
 #endif
 
-// Version string of the library ("major.minor.patch", plus a suffix while pre-0.1).
+// Version string of the library ("major.minor.patch").
 #ifndef IMSLUG_VERSION
-#define IMSLUG_VERSION "0.1.0-dev"
+#define IMSLUG_VERSION "0.1.0"
 #endif
 
 // Export/visibility decoration hook. Empty for the static library; a future

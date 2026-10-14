@@ -6,8 +6,9 @@
 #   3. markdown outside the durable allowlist exists (tracked OR
 #      untracked-not-ignored).
 #
-# Allowlist: README.md, AGENTS.md, docs/**, .opencode/**, .github/**.
-# Vendored trees (third_party/**, vendor/**) are excluded from check 3.
+# Allowlist: README.md, AGENTS.md, CHANGELOG.md, docs/**, .opencode/**,
+# .github/**. Vendored trees (third_party/**, vendor/**) are excluded from
+# check 3.
 #
 # Never "fix" a violation with `git add -f`: transient plan/session/scratch
 # markdown belongs in the gitignored .agent-docs/ directory only.
@@ -68,7 +69,7 @@ if ($LASTEXITCODE -ne 0) {
     Fail "git ls-files -co --exclude-standard failed"
 }
 
-$allowedRoot = '^(README\.md|AGENTS\.md)$'
+$allowedRoot = '^(README\.md|AGENTS\.md|CHANGELOG\.md)$'
 $allowedDirs = '^(docs|\.opencode|\.github)/'
 $vendored = '^(third_party|vendor)/'
 
@@ -85,7 +86,7 @@ foreach ($file in $files) {
 if ($violations.Count -gt 0) {
     Write-Host "[check_docs] stray markdown outside the durable allowlist:" -ForegroundColor Red
     $violations | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-    Fail "move transient docs into .agent-docs/ (gitignored) or delete them; durable docs are README.md, AGENTS.md, docs/**, .opencode/**, .github/**"
+    Fail "move transient docs into .agent-docs/ (gitignored) or delete them; durable docs are README.md, AGENTS.md, CHANGELOG.md, docs/**, .opencode/**, .github/**"
 }
 
 $mdCount = @($files | Where-Object { $_ -match '\.md$' }).Count
