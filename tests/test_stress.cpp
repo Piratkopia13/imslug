@@ -485,13 +485,16 @@ namespace
         {
             const int saved = pools->Curves.CursorTexels;
             const int savedBands = pools->Bands.CursorTexels;
-            pools->Curves.CursorTexels = kPoolMaxHeight * kPoolWidth + 1;  // beyond the 16-bit height
-            const ImFontGlyph* glyph = baked->FindGlyph((ImWchar)'Q');     // not baked yet at this size
+            // Beyond the 16-bit height, and 2-texel aligned: the curve cursor
+            // keeps that alignment invariant even when a test pokes it (the
+            // packer asserts it in debug builds).
+            pools->Curves.CursorTexels = kPoolMaxHeight * kPoolWidth;
+            const ImFontGlyph* glyph = baked->FindGlyph((ImWchar)'Q');  // not baked yet at this size
             TEST_CHECK(glyph != nullptr);
             ImSlugDecodedVertex decoded;
             TEST_CHECKF(glyph == baked->FindGlyph((ImWchar)0xFFFD),
                         "curve-pool overflow must fall back to ImGui's replacement glyph");
-            TEST_CHECKF(pools->Curves.CursorTexels == kPoolMaxHeight * kPoolWidth + 1,
+            TEST_CHECKF(pools->Curves.CursorTexels == kPoolMaxHeight * kPoolWidth,
                         "failed build must not advance the curve cursor");
             TEST_CHECKF(pools->Bands.CursorTexels == savedBands, "failed build advanced the band cursor");
             pools->Curves.CursorTexels = saved;
@@ -505,13 +508,13 @@ namespace
         {
             const int saved = pools->Bands.CursorTexels;
             const int savedCurves = pools->Curves.CursorTexels;
-            pools->Bands.CursorTexels = kPoolMaxHeight * kPoolWidth + 1;
+            pools->Bands.CursorTexels = kPoolMaxHeight * kPoolWidth;
             const ImFontGlyph* glyph = baked->FindGlyph((ImWchar)'R');
             TEST_CHECK(glyph != nullptr);
             TEST_CHECKF(glyph == baked->FindGlyph((ImWchar)0xFFFD),
                         "band-pool overflow must fall back to ImGui's replacement glyph");
             ImSlugDecodedVertex decoded;
-            TEST_CHECKF(pools->Bands.CursorTexels == kPoolMaxHeight * kPoolWidth + 1,
+            TEST_CHECKF(pools->Bands.CursorTexels == kPoolMaxHeight * kPoolWidth,
                         "failed build must not advance the band cursor");
             TEST_CHECKF(pools->Curves.CursorTexels == savedCurves, "failed build advanced the curve cursor");
             pools->Bands.CursorTexels = saved;

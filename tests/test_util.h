@@ -19,6 +19,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#if defined(_MSC_VER) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
+
 #ifndef IMSLUG_TEST_FONT_DIR
 #define IMSLUG_TEST_FONT_DIR "tests/fonts"
 #endif
@@ -27,6 +31,26 @@
 
 namespace imslug_test
 {
+    // Debug builds: MSVC's assert() pops a modal "Debug Error!" dialog and
+    // blocks headless test runs (the M4 Debug suite hung on the stress test's
+    // deliberate invariant poke). Report asserts to stderr instead, so a
+    // violated internal invariant fails the process instead of waiting for a
+    // click. No-op outside MSVC Debug.
+    inline void SetAssertToStderr()
+    {
+#if defined(_MSC_VER) && defined(_DEBUG)
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
+    // Static-init guard: every test translation unit that includes this header
+    // gets the behavior before any test code runs.
+    namespace detail
+    {
+        [[maybe_unused]] const bool kAssertToStderrSet = (SetAssertToStderr(), true);
+    }  // namespace detail
+
     inline int& FailureCount()
     {
         static int count = 0;
