@@ -43,6 +43,7 @@ namespace ImSlug
     // ImSlugPoolClearDirtyRows resets both at once.
     void ImSlugCurvePoolClearDirtyRows(ImSlugCurvePool* pool);
     void ImSlugBandPoolClearDirtyRows(ImSlugBandPool* pool);
+    void ImSlugPaintPoolClearDirtyRecords(ImSlugPaintPool* pool);
     void ImSlugPoolClearDirtyRows(ImSlugPools* pools);
 
     // ---------------------------------------------------------------------
@@ -135,4 +136,23 @@ namespace ImSlug
     //               diagram, confirmed against the reference PS)
     // Bits 24..27 and 29..31 are zero. Input flags are ImSlugGlyphFlags.
     uint32_t ImSlugPackBandMaxWord(int bandMaxX, int bandMaxY, uint32_t glyphFlags);
+
+    // ---------------------------------------------------------------------
+    // M5 paint pool (color glyph layers)
+    // ---------------------------------------------------------------------
+    // Appends `count` records to the pool and returns the index of the first
+    // one, or -1 on allocation failure (the pool is unchanged). The records
+    // are *not* initialized: the caller fills them through
+    // ImSlugPaintRecordAt. Growth by doubling (64-record base); the append
+    // marks the new records dirty.
+    int ImSlugAllocPaintRecords(ImSlugPaintPool* pool, int count);
+
+    // Pointer to record `index` (asserts when out of range). Writes through it
+    // are the caller's responsibility; call ImSlugPaintPoolMarkDirty after
+    // filling records allocated by ImSlugAllocPaintRecords when the records are
+    // (re)written later than the allocation.
+    ImSlugPaintRecord* ImSlugPaintRecordAt(ImSlugPaintPool* pool, int index);
+    const ImSlugPaintRecord* ImSlugPaintRecordAt(const ImSlugPaintPool* pool, int index);
+
+    void ImSlugPaintPoolMarkDirty(ImSlugPaintPool* pool, int firstIndex, int count);
 }  // namespace ImSlug

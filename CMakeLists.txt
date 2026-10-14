@@ -160,6 +160,8 @@ add_library(imslug STATIC
     imslug_packer.cpp
     imslug_refraster.h
     imslug_refraster.cpp
+    imslug_colr.h
+    imslug_colr.cpp
     imslug_imgui_adapter.h
     imslug_imgui_adapter.cpp)
 set_target_properties(imslug PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

@@ -442,6 +442,7 @@ namespace ImSlug
     {
         stbtt_fontinfo FontInfo;
         unsigned char* OwnedData;  // null when created with copyData = false
+        int DataSize;              // bytes of the font buffer (FontInfo.data)
         int UnitsPerEm;
 
         // Build scratch (grow-only; the font is single-threaded like ImGui).
@@ -460,12 +461,18 @@ namespace ImSlug
         ImSlugGlyphCacheEntry** Cache;
         int CacheCount;
         int CacheCapacity;
+
+        // M5: lazily parsed COLR/CPAL data (null when absent/unusable).
+        ImSlugColorFont* ColorFont;
+        bool ColorFontAttempted;
     };
 
     static void DestroyFont(ImSlugFont* font)
     {
         if (font == nullptr)
             return;
+        if (font->ColorFont != nullptr)
+            ImSlugColorFontDestroy(font->ColorFont);
         for (int i = 0; i < font->CacheCount; ++i)
             free(font->Cache[i]);
         free(font->Cache);
@@ -474,6 +481,21 @@ namespace ImSlug
         free(font->ScratchCurveLocs);
         free(font->OwnedData);
         free(font);
+    }
+
+    ImSlugColorFont* ImSlugFontGetColor(ImSlugFont* font)
+    {
+        if (font == nullptr)
+            return nullptr;
+        if (!font->ColorFontAttempted)
+        {
+            font->ColorFontAttempted = true;
+            // stbtt stores the resolved font offset; reuse it so ttcf
+            // collections resolve the same face.
+            font->ColorFont =
+                ImSlugColorFontCreate(font->FontInfo.data, font->DataSize, font->FontInfo.fontstart, font->UnitsPerEm);
+        }
+        return font->ColorFont;
     }
 
     ImSlugFont* ImSlugCreateFontFromMemory(const void* fontData, int fontDataSize, int fontIndex, bool copyData)
@@ -512,6 +534,7 @@ namespace ImSlug
         }
 
         font->OwnedData = copyData ? bytes : nullptr;
+        font->DataSize = fontDataSize;
         font->UnitsPerEm = ReadUnitsPerEm(&font->FontInfo);
         if (font->UnitsPerEm <= 0)
         {

@@ -31,3 +31,9 @@ tests/fonts/cjk/*.ttf
 tests/fonts/cjk/*.otf
 tests/fonts/cjk/.cache/
 tests/fonts/cjk/OFL.txt
+
+# Fetched color-emoji test font (scripts/fetch_emoji_font.*); provenance and
+# the pinned URL/SHA-256 are committed in tests/fonts/emoji/PROVENANCE.txt.
+tests/fonts/emoji/*.ttf
+tests/fonts/emoji/.cache/
+tests/fonts/emoji/OFL.txt

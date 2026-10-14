@@ -288,6 +288,7 @@ namespace ImSlug
 
             ImSlugGlyphMetrics metrics;
             const ImSlugGlyphRecord* record = nullptr;
+            const ImSlugColorGlyph* colorGlyph = nullptr;  // M5: non-null for a drawable color glyph
             if (synthetic)
             {
                 if (!ComputeEllipsisMetrics(font, bakedSrc->Source->DotGlyphIndex, baked->Size, pixelsPerEm, &metrics))
@@ -323,6 +324,33 @@ namespace ImSlug
                 const ImSlugBuildStatus status = ImSlugGetGlyphRecord(font, pools, (unsigned int)codepoint, &record);
                 if (status != ImSlugBuildStatus_Ok || record == nullptr)
                     return false;  // pool limits: ImGui uses its fallback glyph
+
+                // M5: resolve COLR color glyphs (the v0/v1 layer list + paint
+                // records). A failure falls back to the monochrome outline.
+                const Config* config = ImSlugGetConfig();
+                if (config == nullptr || config->EnableColorFonts)
+                {
+                    const ImSlugColorGlyph* resolved = nullptr;
+                    if (ImSlugGetColorGlyph(font, pools, glyphIndex, &resolved) == ImSlugBuildStatus_Ok &&
+                        resolved != nullptr && resolved->LayerCount > 0)
+                    {
+                        // Emoji base glyphs are often empty (Noto Color Emoji's
+                        // glyf has no contours): synthesize the layout box from
+                        // the layers' union so the glyph is visible and its
+                        // advance (hmtx) is unchanged - layout stays identical
+                        // to the monochrome path.
+                        if (!(metrics.X1 > metrics.X0) || !(metrics.Y1 > metrics.Y0))
+                        {
+                            const float ascentRounded = floorf(fontMetrics.Ascent + 0.5f);
+                            metrics.X0 = floorf(resolved->MinX * pixelsPerEm);
+                            metrics.X1 = ceilf(resolved->MaxX * pixelsPerEm);
+                            metrics.Y0 = floorf(-resolved->MaxY * pixelsPerEm) + ascentRounded;
+                            metrics.Y1 = ceilf(-resolved->MinY * pixelsPerEm) + ascentRounded;
+                        }
+                        colorGlyph = resolved;
+                        record = &resolved->BaseRecord;  // reconstruction uses the covering bbox
+                    }
+                }
             }
             IM_ASSERT(record != nullptr);
 
@@ -334,19 +362,25 @@ namespace ImSlug
             outGlyph->Y0 = metrics.Y0;
             outGlyph->X1 = metrics.X1;
             outGlyph->Y1 = metrics.Y1;
-            outGlyph->Colored = false;  // color fonts are M5 (monochrome for now)
+            // Colored glyphs: the pinned v1.92.9b RenderText/RenderChar force
+            // RGB=255 (col | ~IM_COL32_A_MASK) and keep the alpha, so ImGui's
+            // tint can no longer recolor them - exactly the semantic the color
+            // path needs (our layer colors are authoritative, a tint only
+            // fades).
+            outGlyph->Colored = colorGlyph != nullptr;
             outGlyph->Visible = (metrics.X0 != metrics.X1 && metrics.Y0 != metrics.Y1);
 
             if (!outGlyph->Visible)
             {
                 // Invisible (space and friends): never drawn, no slab needed.
+                outGlyph->Colored = false;
                 outGlyph->U0 = outGlyph->V0 = outGlyph->U1 = outGlyph->V1 = 0.0f;
                 return true;
             }
 
             uint32_t slot = 0;
-            if (ImSlugAllocGlyphSlab(record, metrics.X0, metrics.Y0, metrics.X1, metrics.Y1, baked->Ascent, pixelsPerEm,
-                                     baked->BakedId, &slot) == nullptr)
+            if (ImSlugAllocGlyphSlab(record, colorGlyph, metrics.X0, metrics.Y0, metrics.X1, metrics.Y1, baked->Ascent,
+                                     pixelsPerEm, baked->BakedId, &slot) == nullptr)
             {
                 // Slab cap reached: fall back to ImGui's fallback glyph. Give back
                 // the partially filled glyph state so ImGui does not publish it.

@@ -98,6 +98,13 @@ namespace ImSlug
         // Glyphs beyond the cap fall back to ImGui's fallback glyph (M3 scope:
         // the cap is far above typical UI usage).
         uint32_t MaxGlyphSlabs = 0;
+
+        // M5: render COLR color glyphs (one Slug instance per layer, gradients
+        // evaluated in the fragment shader). When false, color glyphs draw
+        // through the monochrome path (their glyf outline, often empty for
+        // emoji fonts). Read when a glyph is first baked, so it must be set at
+        // ImSlug::Init / before the atlas bakes the glyph.
+        bool EnableColorFonts = true;
     };
 
     // Creates the pools, the glyph registry and the per-frame arena. Requires a
@@ -167,6 +174,7 @@ namespace ImSlug
         uint32_t Instances;         // glyph instances produced in the last pre-pass
         uint32_t DroppedRuns;       // text runs dropped (no instance capacity)
         uint32_t BoundsMismatches;  // debug placement checks that failed (DebugDrawBounds)
+        uint32_t ColorLayers;       // M5: of Instances, how many are color layers
     };
 
     IMSLUG_API void GetStatistics(Statistics* out);

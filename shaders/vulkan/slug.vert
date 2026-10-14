@@ -32,6 +32,7 @@ precision highp int;
 // Per-instance input (VK_VERTEX_INPUT_RATE_INSTANCE; the draw uses 4 vertices
 // with no vertex-rate attributes, so gl_VertexIndex is the quad corner 0..3).
 // Layout mirrors ImSlugGlyphInstance exactly (static_assert'ed in C++).
+// loc 0..6 = M2 layout, loc 7 = M5 PaintIndex (see imslug_internal.h).
 // ----------------------------------------------------------------------------
 layout(location = 0) in vec4 InEmBBox;       // (minX, minY, maxX, maxY) em space, Y up
 layout(location = 1) in vec4 InScreenRect;   // (minX, minY, maxX, maxY) screen pixels, Y down
@@ -40,6 +41,7 @@ layout(location = 3) in vec4 InBanding;      // (bandScaleX, bandScaleY, bandOff
 layout(location = 4) in uvec2 InGlyphLoc;    // band pool glyph location (x, y)
 layout(location = 5) in uint InBandMaxWord;  // bandMaxX | bandMaxY << 16 | E << 28 (D8(g))
 layout(location = 6) in vec4 InColor;        // (r, g, b, a), straight alpha
+layout(location = 7) in uint InPaintIndex;   // M5: paint record index, 0xFFFFFFFF = plain glyph
 
 layout(push_constant) uniform PushConstants
 {
@@ -62,6 +64,7 @@ layout(location = 3) flat out uint vBandMaxWord;
 layout(location = 4) out vec4 vColor;
 layout(location = 5) out vec2 vScreenPos;                     // screen pixels (Y down), undilated
 layout(location = 6) flat out vec4 vScreenRect;               // instance ScreenRect (debug bounds)
+layout(location = 7) flat out uint vPaintIndex;               // M5 (color layers)
 
 // Reference SlugDilate(): expands the vertex along its object-space normal so
 // the quad covers every pixel whose center is within half a pixel of the glyph
@@ -120,4 +123,6 @@ void main()
     // to draw (ImSlugVulkanDebugOverlay_GlyphBounds).
     vScreenPos = pos;
     vScreenRect = InScreenRect;
+    // M5 color layers: the instance's paint record (0xFFFFFFFF = plain glyph).
+    vPaintIndex = InPaintIndex;
 }

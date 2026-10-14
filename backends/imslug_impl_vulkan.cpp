@@ -94,6 +94,12 @@ namespace ImSlug
             PoolTexture Bands;
             bool TexturesCreated;
 
+            // M5: paint records (storage buffer, binding 2). Always bound (a
+            // minimal 1-record buffer exists before the first color glyph), so
+            // the descriptor set is valid for plain text too.
+            Buffer Paints;
+            bool PaintsHasData;
+
             // One staging buffer per frame in flight (B2): the CPU memcpys for
             // frame N use slot N only, so a later frame's recording can never
             // overwrite bytes an earlier frame's recorded copy still has to
@@ -304,22 +310,33 @@ namespace ImSlug
             bandInfo.imageView = g_State.Bands.View;
             bandInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            VkWriteDescriptorSet writes[2] = {};
-            for (int i = 0; i < 2; ++i)
+            // M5: paint records (std430 array in slug.frag). The buffer always
+            // exists, even before the first color glyph.
+            VkDescriptorBufferInfo paintInfo = {};
+            paintInfo.buffer = g_State.Paints.Handle;
+            paintInfo.offset = 0;
+            paintInfo.range = VK_WHOLE_SIZE;
+
+            VkWriteDescriptorSet writes[3] = {};
+            for (int i = 0; i < 3; ++i)
             {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[i].dstBinding = (uint32_t)i;
                 writes[i].descriptorCount = 1;
-                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             }
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[0].pImageInfo = &curveInfo;
             writes[1].pImageInfo = &bandInfo;
+            writes[2].pBufferInfo = &paintInfo;
 
             for (uint32_t frame = 0; frame < g_State.FramesInFlight; ++frame)
             {
                 writes[0].dstSet = g_State.DescriptorSets[frame];
                 writes[1].dstSet = g_State.DescriptorSets[frame];
-                vkUpdateDescriptorSets(g_State.Info.Device, 2, writes, 0, nullptr);
+                writes[2].dstSet = g_State.DescriptorSets[frame];
+                vkUpdateDescriptorSets(g_State.Info.Device, 3, writes, 0, nullptr);
             }
         }
 
@@ -358,7 +375,7 @@ namespace ImSlug
             binding.stride = sizeof(ImSlugGlyphInstance);
             binding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-            VkVertexInputAttributeDescription attributes[7] = {};
+            VkVertexInputAttributeDescription attributes[8] = {};
             attributes[0] = { 0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ImSlugGlyphInstance, EmMinX) };
             attributes[1] = { 1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ImSlugGlyphInstance, ScreenMinX) };
             attributes[2] = { 2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ImSlugGlyphInstance, Jac00) };
@@ -366,13 +383,14 @@ namespace ImSlug
             attributes[4] = { 4, 0, VK_FORMAT_R32G32_UINT, offsetof(ImSlugGlyphInstance, GlyphLocX) };
             attributes[5] = { 5, 0, VK_FORMAT_R32_UINT, offsetof(ImSlugGlyphInstance, BandMaxWord) };
             attributes[6] = { 6, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ImSlugGlyphInstance, ColorR) };
+            attributes[7] = { 7, 0, VK_FORMAT_R32_UINT, offsetof(ImSlugGlyphInstance, PaintIndex) };
 
             VkPipelineVertexInputStateCreateInfo vertexInput = {
                 VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
             };
             vertexInput.vertexBindingDescriptionCount = 1;
             vertexInput.pVertexBindingDescriptions = &binding;
-            vertexInput.vertexAttributeDescriptionCount = 7;
+            vertexInput.vertexAttributeDescriptionCount = 8;
             vertexInput.pVertexAttributeDescriptions = attributes;
 
             VkPipelineInputAssemblyStateCreateInfo inputAssembly = {
@@ -603,6 +621,7 @@ namespace ImSlug
             for (uint32_t i = 0; i < kMaxFramesInFlight; ++i)
                 DestroyBuffer(&g_State.Staging[i]);
             DestroyBuffer(&g_State.Instances);
+            DestroyBuffer(&g_State.Paints);
         }
 
         // Init failure path (R2): frees anything already created and clears the
@@ -653,8 +672,9 @@ namespace ImSlug
         if ((bandProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
             return FailInit();
 
-        // Descriptor set layout: curve (sampler2D) + band (usampler2D).
-        VkDescriptorSetLayoutBinding bindings[2] = {};
+        // Descriptor set layout: curve (sampler2D) + band (usampler2D) + paint
+        // records (M5 storage buffer read by slug.frag).
+        VkDescriptorSetLayoutBinding bindings[3] = {};
         for (int i = 0; i < 2; ++i)
         {
             bindings[i].binding = (uint32_t)i;
@@ -662,8 +682,12 @@ namespace ImSlug
             bindings[i].descriptorCount = 1;
             bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         VkDescriptorSetLayoutCreateInfo setLayoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        setLayoutInfo.bindingCount = 2;
+        setLayoutInfo.bindingCount = 3;
         setLayoutInfo.pBindings = bindings;
         CheckVk(vkCreateDescriptorSetLayout(initInfo->Device, &setLayoutInfo, initInfo->Allocator,
                                             &g_State.DescriptorSetLayout),
@@ -684,14 +708,16 @@ namespace ImSlug
                 "vkCreatePipelineLayout");
 
         // Own pool, one set per frame in flight (static after upload).
-        VkDescriptorPoolSize poolSize = {};
-        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSize.descriptorCount = 2 * g_State.FramesInFlight;
+        VkDescriptorPoolSize poolSizes[2] = {};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[0].descriptorCount = 2 * g_State.FramesInFlight;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[1].descriptorCount = g_State.FramesInFlight;
         VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         poolInfo.maxSets = g_State.FramesInFlight;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
         CheckVk(vkCreateDescriptorPool(initInfo->Device, &poolInfo, initInfo->Allocator, &g_State.DescriptorPool),
                 "vkCreateDescriptorPool");
 
@@ -740,6 +766,14 @@ namespace ImSlug
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_State.Instances);
         if (g_State.Instances.Mapped == nullptr)
             return FailInit();
+
+        // M5: the paint record storage buffer always exists (at least one
+        // record) so binding 2 is valid for plain text as well.
+        CreateBuffer(sizeof(ImSlugPaintRecord), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g_State.Paints);
+        if (g_State.Paints.Handle == VK_NULL_HANDLE)
+            return FailInit();
+        g_State.PaintsHasData = false;
 
         g_State.Initialized = true;
         return true;
@@ -803,7 +837,47 @@ namespace ImSlug
                                            pools->Bands.DirtyRowMin, pools->Bands.DirtyRowMax);
         }
 
-        const VkDeviceSize totalBytes = curveRange.Bytes + bandRange.Bytes;
+        // M5: paint records. The buffer grows with the pool (device wait: rare);
+        // the first upload covers every record, later frames only the dirty ones.
+        const VkDeviceSize paintBytes = (VkDeviceSize)pools->Paints.Count * sizeof(ImSlugPaintRecord);
+        bool paintChanged = false;
+        if (paintBytes > g_State.Paints.Size)
+        {
+            if (g_State.Paints.Handle != VK_NULL_HANDLE)
+            {
+                CheckVk(vkDeviceWaitIdle(g_State.Info.Device), "vkDeviceWaitIdle");
+                DestroyBuffer(&g_State.Paints);
+            }
+            const VkDeviceSize newSize = paintBytes < 1024 ? 1024 : paintBytes;
+            CreateBuffer(newSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g_State.Paints);
+            if (g_State.Paints.Handle == VK_NULL_HANDLE)
+                return false;
+            g_State.PaintsHasData = false;
+            paintChanged = true;
+        }
+
+        int paintFirst = 0;
+        int paintLast = -1;
+        if (!g_State.PaintsHasData)
+        {
+            if (pools->Paints.Count > 0)
+                paintLast = pools->Paints.Count - 1;
+        }
+        else if (pools->Paints.DirtyRecordMin <= pools->Paints.DirtyRecordMax)
+        {
+            paintFirst = pools->Paints.DirtyRecordMin < 0 ? 0 : pools->Paints.DirtyRecordMin;
+            paintLast = pools->Paints.DirtyRecordMax >= pools->Paints.Count ? pools->Paints.Count - 1
+                                                                            : pools->Paints.DirtyRecordMax;
+        }
+        const bool paintValid = paintLast >= paintFirst && pools->Paints.Bytes != nullptr;
+        const VkDeviceSize paintUploadBytes =
+            paintValid ? (VkDeviceSize)(paintLast - paintFirst + 1) * sizeof(ImSlugPaintRecord) : 0;
+
+        if (paintChanged && g_State.TexturesCreated)
+            WriteDescriptorSets();
+
+        const VkDeviceSize totalBytes = curveRange.Bytes + bandRange.Bytes + paintUploadBytes;
         if (totalBytes > 0 && !EnsureStaging(frameIndex, totalBytes))
             return false;
 
@@ -814,7 +888,11 @@ namespace ImSlug
             offset += curveRange.Bytes;
         }
         if (bandRange.Valid)
+        {
             bandRange.Offset = offset;
+            offset += bandRange.Bytes;
+        }
+        const VkDeviceSize paintStagingOffset = offset;
 
         if (curveRange.Valid)
         {
@@ -827,6 +905,41 @@ namespace ImSlug
             RecordUpload(cmd, &g_State.Bands, pools->Bands.Texels, bandRange, bandRange.Offset,
                          g_State.Staging[frameIndex]);
             ImSlugBandPoolClearDirtyRows(&pools->Bands);
+        }
+        if (paintValid)
+        {
+            memcpy((unsigned char*)g_State.Staging[frameIndex].Mapped + paintStagingOffset,
+                   pools->Paints.Bytes + (size_t)paintFirst * sizeof(ImSlugPaintRecord), (size_t)paintUploadBytes);
+
+            // The buffer is either freshly created (no readers) or holds data a
+            // previous frame read (SHADER_READ_ONLY via FRAGMENT_SHADER).
+            const VkPipelineStageFlags srcStage =
+                g_State.PaintsHasData ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            const VkAccessFlags srcAccess = g_State.PaintsHasData ? VK_ACCESS_SHADER_READ_BIT : 0;
+
+            VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+            barrier.srcAccessMask = srcAccess;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer = g_State.Paints.Handle;
+            barrier.offset = 0;
+            barrier.size = VK_WHOLE_SIZE;
+            vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+
+            VkBufferCopy region = {};
+            region.srcOffset = paintStagingOffset;
+            region.dstOffset = (VkDeviceSize)paintFirst * sizeof(ImSlugPaintRecord);
+            region.size = paintUploadBytes;
+            vkCmdCopyBuffer(cmd, g_State.Staging[frameIndex].Handle, g_State.Paints.Handle, 1, &region);
+
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                 nullptr, 1, &barrier, 0, nullptr);
+
+            g_State.PaintsHasData = true;
+            ImSlugPaintPoolClearDirtyRecords(&pools->Paints);
         }
         return true;
     }

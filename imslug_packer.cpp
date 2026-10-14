@@ -181,11 +181,21 @@ namespace ImSlug
         pool->DirtyRowMax = 0;
     }
 
+    static void InitPaintPool(ImSlugPaintPool* pool)
+    {
+        pool->Bytes = NULL;
+        pool->Capacity = 0;
+        pool->Count = 0;
+        pool->DirtyRecordMin = 1;
+        pool->DirtyRecordMax = 0;
+    }
+
     void ImSlugInitPools(ImSlugPools* pools)
     {
         IMSLUG_ASSERT(pools != NULL);
         InitCurvePool(&pools->Curves);
         InitBandPool(&pools->Bands);
+        InitPaintPool(&pools->Paints);
     }
 
     void ImSlugDestroyPools(ImSlugPools* pools)
@@ -194,6 +204,7 @@ namespace ImSlug
             return;
         free(pools->Curves.Texels);
         free(pools->Bands.Texels);
+        free(pools->Paints.Bytes);
         ImSlugInitPools(pools);
     }
 
@@ -215,11 +226,86 @@ namespace ImSlug
         pool->DirtyRowMax = 0;
     }
 
+    void ImSlugPaintPoolClearDirtyRecords(ImSlugPaintPool* pool)
+    {
+        IMSLUG_ASSERT(pool != NULL);
+        if (pool == NULL)
+            return;
+        pool->DirtyRecordMin = 1;
+        pool->DirtyRecordMax = 0;
+    }
+
     void ImSlugPoolClearDirtyRows(ImSlugPools* pools)
     {
         IMSLUG_ASSERT(pools != NULL);
         ImSlugCurvePoolClearDirtyRows(&pools->Curves);
         ImSlugBandPoolClearDirtyRows(&pools->Bands);
+        ImSlugPaintPoolClearDirtyRecords(&pools->Paints);
+    }
+
+    // ---------------------------------------------------------------------
+    // M5 paint pool
+    // ---------------------------------------------------------------------
+    static const int kInitialPaintRecords = 64;
+
+    void ImSlugPaintPoolMarkDirty(ImSlugPaintPool* pool, int firstIndex, int count)
+    {
+        IMSLUG_ASSERT(pool != NULL && firstIndex >= 0 && count >= 0 && firstIndex + count <= pool->Count);
+        if (pool == NULL || count <= 0)
+            return;
+        const int lastIndex = firstIndex + count - 1;
+        if (pool->DirtyRecordMin > pool->DirtyRecordMax)
+        {
+            pool->DirtyRecordMin = firstIndex;
+            pool->DirtyRecordMax = lastIndex;
+        }
+        else
+        {
+            if (firstIndex < pool->DirtyRecordMin)
+                pool->DirtyRecordMin = firstIndex;
+            if (lastIndex > pool->DirtyRecordMax)
+                pool->DirtyRecordMax = lastIndex;
+        }
+    }
+
+    int ImSlugAllocPaintRecords(ImSlugPaintPool* pool, int count)
+    {
+        IMSLUG_ASSERT(pool != NULL && count > 0);
+        if (pool == NULL || count <= 0)
+            return -1;
+        if (pool->Count + count > pool->Capacity)
+        {
+            int newCapacity = pool->Capacity > 0 ? pool->Capacity : kInitialPaintRecords;
+            while (newCapacity < pool->Count + count)
+                newCapacity *= 2;
+            void* grown = realloc(pool->Bytes, (size_t)newCapacity * sizeof(ImSlugPaintRecord));
+            if (grown == NULL)
+                return -1;
+            memset((unsigned char*)grown + (size_t)pool->Capacity * sizeof(ImSlugPaintRecord), 0,
+                   (size_t)(newCapacity - pool->Capacity) * sizeof(ImSlugPaintRecord));
+            pool->Bytes = (uint8_t*)grown;
+            pool->Capacity = newCapacity;
+        }
+        const int first = pool->Count;
+        pool->Count += count;
+        ImSlugPaintPoolMarkDirty(pool, first, count);
+        return first;
+    }
+
+    ImSlugPaintRecord* ImSlugPaintRecordAt(ImSlugPaintPool* pool, int index)
+    {
+        IMSLUG_ASSERT(pool != NULL && index >= 0 && index < pool->Count);
+        if (pool == NULL || index < 0 || index >= pool->Count)
+            return NULL;
+        return (ImSlugPaintRecord*)(pool->Bytes + (size_t)index * sizeof(ImSlugPaintRecord));
+    }
+
+    const ImSlugPaintRecord* ImSlugPaintRecordAt(const ImSlugPaintPool* pool, int index)
+    {
+        IMSLUG_ASSERT(pool != NULL && index >= 0 && index < pool->Count);
+        if (pool == NULL || index < 0 || index >= pool->Count)
+            return NULL;
+        return (const ImSlugPaintRecord*)(pool->Bytes + (size_t)index * sizeof(ImSlugPaintRecord));
     }
 
     // ---------------------------------------------------------------------

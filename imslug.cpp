@@ -135,6 +135,9 @@ namespace ImSlug
             int CmdScratchCapacity;
             uint8_t* TriActions;
             int TriActionsCapacity;
+            // M5: per-glyph color layer instances (one glyph's layers at a time).
+            ImSlugGlyphInstance* ColorInstances;
+            int ColorInstancesCapacity;
 
             const ImSlugRenderIO* RenderIO;
 
@@ -173,6 +176,7 @@ namespace ImSlug
             g_Core.Stats.Instances = 0;
             g_Core.Stats.DroppedRuns = 0;
             g_Core.Stats.BoundsMismatches = 0;
+            g_Core.Stats.ColorLayers = 0;
         }
 
         // Registration order contract (imslug.h): ImSlug::Init first, fonts after.
@@ -599,62 +603,145 @@ namespace ImSlug
             }
 
             const ImU32 col = verts[vtxOffset + m].col;
-            ImSlugGlyphInstance instance;
-            ImSlugBuildGlyphInstance(slab->Record, penX, penY, pixelsPerEm, (float)(col & 0xFFu) / 255.0f,
-                                     (float)((col >> 8) & 0xFFu) / 255.0f, (float)((col >> 16) & 0xFFu) / 255.0f,
-                                     (float)((col >> 24) & 0xFFu) / 255.0f, &instance);
+            const float tintR = (float)(col & 0xFFu) / 255.0f;
+            const float tintG = (float)((col >> 8) & 0xFFu) / 255.0f;
+            const float tintB = (float)((col >> 16) & 0xFFu) / 255.0f;
+            const float tintA = (float)((col >> 24) & 0xFFu) / 255.0f;
 
-            if (g_Core.Cfg.DebugDrawBounds)
+            // M5: a color glyph draws one instance per layer (draw order), each
+            // with the layer's paint record; the color/tint rides the instance
+            // alpha only (ImGui forces RGB=255 for Colored glyphs, so layer
+            // colors are authoritative and a text tint only fades them).
+            const bool useColor = slab->ColorGlyph != nullptr && g_Core.Cfg.EnableColorFonts;
+            const ImSlugGlyphInstance* instances = nullptr;
+            int instanceCount = 0;
+
+            if (useColor)
             {
-                // Reconstruction: the instance must cover the drawn (possibly
-                // cropped) quad. Fallback: the instance must stay inside it
-                // (PlaceGlyphFromQuad compresses the em box into the quad).
-                bool valid;
-                if (cropped && !g_Core.Cfg.EnableFineClipReconstruction)
-                    valid = instance.ScreenMinX >= quadL - kPlacementSlack &&
-                            instance.ScreenMaxX <= quadR + kPlacementSlack &&
-                            instance.ScreenMinY >= quadT - kPlacementSlack &&
-                            instance.ScreenMaxY <= quadB + kPlacementSlack;
+                const int layerCount = slab->ColorGlyph->LayerCount;
+                if (!EnsureCapacity((void**)&g_Core.ColorInstances, &g_Core.ColorInstancesCapacity, layerCount,
+                                    sizeof(ImSlugGlyphInstance)))
+                    return false;
+                instanceCount = ImSlugBuildColorGlyphInstances(slab->ColorGlyph, penX, penY, pixelsPerEm, tintA,
+                                                               g_Core.ColorInstances, layerCount, nullptr);
+                instances = g_Core.ColorInstances;
+                g_Core.Stats.ColorLayers += (uint32_t)instanceCount;
+            }
+            else
+            {
+                ImSlugGlyphInstance instance;
+                ImSlugBuildGlyphInstance(slab->Record, penX, penY, pixelsPerEm, tintR, tintG, tintB, tintA, &instance);
+
+                if (g_Core.Cfg.DebugDrawBounds)
+                {
+                    // Reconstruction: the instance must cover the drawn (possibly
+                    // cropped) quad. Fallback: the instance must stay inside it
+                    // (PlaceGlyphFromQuad compresses the em box into the quad).
+                    // Color glyphs are skipped: their instances are the layer
+                    // outlines, which do not need to cover the base glyph's box.
+                    bool valid;
+                    if (cropped && !g_Core.Cfg.EnableFineClipReconstruction)
+                        valid = instance.ScreenMinX >= quadL - kPlacementSlack &&
+                                instance.ScreenMaxX <= quadR + kPlacementSlack &&
+                                instance.ScreenMinY >= quadT - kPlacementSlack &&
+                                instance.ScreenMaxY <= quadB + kPlacementSlack;
+                    else
+                        valid = instance.ScreenMinX <= quadL + kPlacementSlack &&
+                                instance.ScreenMaxX >= quadR - kPlacementSlack &&
+                                instance.ScreenMinY <= quadT + kPlacementSlack &&
+                                instance.ScreenMaxY >= quadB - kPlacementSlack;
+                    if (!valid)
+                        g_Core.Stats.BoundsMismatches++;
+                    IMSLUG_ASSERT(valid && "imslug: reconstructed glyph bounds do not cover the source quad");
+                }
+
+                // The arena holds the instances; CommitBatches() moves them into
+                // the backend ring once the whole draw data has been classified.
+                ImSlugGlyphInstance singleInstance = instance;
+                if (state.Batch == nullptr)
+                {
+                    state.Batch = AppendBatch();
+                    if (state.Batch == nullptr)
+                        return false;
+                    state.Batch->FrameIndex = g_Core.RenderIO != nullptr ? g_Core.RenderIO->GetFrameIndex() : 0u;
+                    state.Batch->ClipMinX = quadL;
+                    state.Batch->ClipMinY = quadT;
+                    state.Batch->ClipMaxX = quadR;
+                    state.Batch->ClipMaxY = quadB;
+                }
                 else
-                    valid = instance.ScreenMinX <= quadL + kPlacementSlack &&
-                            instance.ScreenMaxX >= quadR - kPlacementSlack &&
-                            instance.ScreenMinY <= quadT + kPlacementSlack &&
-                            instance.ScreenMaxY >= quadB - kPlacementSlack;
-                if (!valid)
-                    g_Core.Stats.BoundsMismatches++;
-                IMSLUG_ASSERT(valid && "imslug: reconstructed glyph bounds do not cover the source quad");
+                {
+                    state.Batch->ClipMinX = ImSlugMin(state.Batch->ClipMinX, quadL);
+                    state.Batch->ClipMinY = ImSlugMin(state.Batch->ClipMinY, quadT);
+                    state.Batch->ClipMaxX = ImSlugMax(state.Batch->ClipMaxX, quadR);
+                    state.Batch->ClipMaxY = ImSlugMax(state.Batch->ClipMaxY, quadB);
+                }
+                int firstInstance = 0;
+                if (!AppendInstances(&singleInstance, 1, &firstInstance))
+                    return false;
+                if (state.Batch->InstanceCount == 0)
+                    state.Batch->FirstInstance = (uint32_t)firstInstance;
+                state.Batch->InstanceCount++;
+
+                if (croppedL)
+                    state.ClipL = quadL;
+                if (croppedT)
+                    state.ClipT = quadT;
+                if (croppedR)
+                    state.ClipR = quadR;
+                if (croppedB)
+                    state.ClipB = quadB;
+                state.RunOpen = true;
+                return true;
             }
 
-            // Open or extend the run, then append the instance. The arena holds the
-            // instances; CommitBatches() moves them into the backend ring once the
-            // whole draw data has been classified.
+            if (instanceCount <= 0)
+                return false;  // no drawable layer: drop the glyph (not a run break)
+
+            // Open or extend the run. The scissor union covers the drawn layers
+            // (a layer's outline can extend past the base glyph's box); for a
+            // fine-clipped glyph the pinned clip edges stay authoritative, so
+            // the layer extents are only folded in for uncropped glyphs.
+            float clipL = quadL, clipT = quadT, clipR = quadR, clipB = quadB;
+            if (!cropped)
+            {
+                for (int i = 0; i < instanceCount; ++i)
+                {
+                    const ImSlugGlyphInstance& layerInstance = instances[i];
+                    clipL = ImSlugMin(clipL, layerInstance.ScreenMinX);
+                    clipT = ImSlugMin(clipT, layerInstance.ScreenMinY);
+                    clipR = ImSlugMax(clipR, layerInstance.ScreenMaxX);
+                    clipB = ImSlugMax(clipB, layerInstance.ScreenMaxY);
+                }
+            }
             if (state.Batch == nullptr)
             {
                 state.Batch = AppendBatch();
                 if (state.Batch == nullptr)
                     return false;
                 state.Batch->FrameIndex = g_Core.RenderIO != nullptr ? g_Core.RenderIO->GetFrameIndex() : 0u;
-                state.Batch->ClipMinX = quadL;
-                state.Batch->ClipMinY = quadT;
-                state.Batch->ClipMaxX = quadR;
-                state.Batch->ClipMaxY = quadB;
+                state.Batch->ClipMinX = clipL;
+                state.Batch->ClipMinY = clipT;
+                state.Batch->ClipMaxX = clipR;
+                state.Batch->ClipMaxY = clipB;
             }
             else
             {
-                state.Batch->ClipMinX = ImSlugMin(state.Batch->ClipMinX, quadL);
-                state.Batch->ClipMinY = ImSlugMin(state.Batch->ClipMinY, quadT);
-                state.Batch->ClipMaxX = ImSlugMax(state.Batch->ClipMaxX, quadR);
-                state.Batch->ClipMaxY = ImSlugMax(state.Batch->ClipMaxY, quadB);
+                state.Batch->ClipMinX = ImSlugMin(state.Batch->ClipMinX, clipL);
+                state.Batch->ClipMinY = ImSlugMin(state.Batch->ClipMinY, clipT);
+                state.Batch->ClipMaxX = ImSlugMax(state.Batch->ClipMaxX, clipR);
+                state.Batch->ClipMaxY = ImSlugMax(state.Batch->ClipMaxY, clipB);
             }
 
             int firstInstance = 0;
-            if (!AppendInstances(&instance, 1, &firstInstance))
+            if (!AppendInstances(instances, instanceCount, &firstInstance))
                 return false;
             if (state.Batch->InstanceCount == 0)
                 state.Batch->FirstInstance = (uint32_t)firstInstance;
-            state.Batch->InstanceCount++;
+            state.Batch->InstanceCount += (uint32_t)instanceCount;
 
-            // Pin the fine-clip edges this glyph revealed.
+            // Pin the fine-clip edges this glyph revealed (the base quad's
+            // clip governs every layer).
             if (croppedL)
                 state.ClipL = quadL;
             if (croppedT)
@@ -894,10 +981,18 @@ namespace ImSlug
     void ImSlugBuildGlyphInstance(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEm, float r,
                                   float g, float b, float a, ImSlugGlyphInstance* outInstance)
     {
-        IMSLUG_ASSERT(record != nullptr && outInstance != nullptr);
-        IMSLUG_ASSERT(pixelsPerEm > 0.0f);
+        ImSlugBuildGlyphInstanceScaled(record, penX, penY, pixelsPerEm, pixelsPerEm, r, g, b, a, outInstance);
+    }
 
-        const float inverse = 1.0f / pixelsPerEm;
+    void ImSlugBuildGlyphInstanceScaled(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEmX,
+                                        float pixelsPerEmY, float r, float g, float b, float a,
+                                        ImSlugGlyphInstance* outInstance)
+    {
+        IMSLUG_ASSERT(record != nullptr && outInstance != nullptr);
+        IMSLUG_ASSERT(pixelsPerEmX > 0.0f && pixelsPerEmY > 0.0f);
+
+        const float inverseX = 1.0f / pixelsPerEmX;
+        const float inverseY = 1.0f / pixelsPerEmY;
 
         outInstance->EmMinX = record->MinX;
         outInstance->EmMinY = record->MinY;
@@ -906,16 +1001,16 @@ namespace ImSlug
 
         // Screen rect (Y down): the em bbox with the Y flip applied, so the
         // screen rect corner that matches em (MinX, MinY) is (MinX, ScreenMaxY).
-        outInstance->ScreenMinX = penX + record->MinX * pixelsPerEm;
-        outInstance->ScreenMinY = penY - record->MaxY * pixelsPerEm;
-        outInstance->ScreenMaxX = penX + record->MaxX * pixelsPerEm;
-        outInstance->ScreenMaxY = penY - record->MinY * pixelsPerEm;
+        outInstance->ScreenMinX = penX + record->MinX * pixelsPerEmX;
+        outInstance->ScreenMinY = penY - record->MaxY * pixelsPerEmY;
+        outInstance->ScreenMaxX = penX + record->MaxX * pixelsPerEmX;
+        outInstance->ScreenMaxY = penY - record->MinY * pixelsPerEmY;
 
         // Inverse Jacobian: screen delta -> em delta (em Y up, screen Y down).
-        outInstance->Jac00 = inverse;
+        outInstance->Jac00 = inverseX;
         outInstance->Jac01 = 0.0f;
         outInstance->Jac10 = 0.0f;
-        outInstance->Jac11 = -inverse;
+        outInstance->Jac11 = -inverseY;
 
         outInstance->BandScaleX = record->BandScaleX;
         outInstance->BandScaleY = record->BandScaleY;
@@ -930,6 +1025,7 @@ namespace ImSlug
         outInstance->ColorG = g;
         outInstance->ColorB = b;
         outInstance->ColorA = a;
+        outInstance->PaintIndex = kNoPaintIndex;  // M5: plain glyph unless a color layer sets it
     }
 
     bool Init(const Config& config)
@@ -972,6 +1068,7 @@ namespace ImSlug
         free(g_Core.Batches.Data);
         free(g_Core.CmdScratch);
         free(g_Core.TriActions);
+        free(g_Core.ColorInstances);
         memset(&g_Core, 0, sizeof(g_Core));
         g_Core.ArenaFrameCount = -1;
     }
@@ -1044,8 +1141,9 @@ namespace ImSlug
         return g_Core.Initialized ? &g_Core.Cfg : nullptr;
     }
 
-    ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
-                                          float ascent, float pixelsPerEm, uint64_t bakeId, uint32_t* outSlot)
+    ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, const ImSlugColorGlyph* colorGlyph, float x0,
+                                          float y0, float x1, float y1, float ascent, float pixelsPerEm,
+                                          uint64_t bakeId, uint32_t* outSlot)
     {
         IMSLUG_ASSERT(record != nullptr && outSlot != nullptr);
         if (!g_Core.Initialized || record == nullptr)
@@ -1068,6 +1166,7 @@ namespace ImSlug
         ImSlugGlyphSlab* slab = &g_Core.Slabs[slot];
         memset(slab, 0, sizeof(*slab));
         slab->Record = record;
+        slab->ColorGlyph = colorGlyph;
         slab->BakeId = bakeId;
         slab->X0 = x0;
         slab->Y0 = y0;
@@ -1090,6 +1189,7 @@ namespace ImSlug
             return;
         slab->Alive = false;
         slab->Record = nullptr;
+        slab->ColorGlyph = nullptr;
         slab->BakeId = 0;
         if (!EnsureCapacity((void**)&g_Core.FreeSlots, &g_Core.FreeCapacity, g_Core.FreeCount + 1, sizeof(uint32_t)))
             return;  // leak one slot rather than corrupting the registry

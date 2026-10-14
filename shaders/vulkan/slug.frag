@@ -32,11 +32,44 @@ layout(location = 3) flat in uint vBandMaxWord;  // bandMaxX | bandMaxY << 16 | 
 layout(location = 4) in vec4 vColor;
 layout(location = 5) in vec2 vScreenPos;         // screen pixels (Y down), undilated (debug)
 layout(location = 6) flat in vec4 vScreenRect;   // source quad (debug bounds)
+layout(location = 7) flat in uint vPaintIndex;   // M5: paint record index, 0xFFFFFFFF = plain
 
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D curveTexture;  // RGBA16F control points
 layout(set = 0, binding = 1) uniform usampler2D bandTexture;  // R16G16_UINT headers/refs
+
+// M5: one paint record per color layer (ImSlugPaintRecord in imslug_internal.h,
+// 352 bytes, std430). The instance's vPaintIndex selects one; plain glyphs use
+// 0xFFFFFFFF and never touch the buffer.
+//   Header.x Type (0 solid, 1 linear, 2 radial, 3 sweep)
+//   Header.y Extend (0 pad, 1 repeat, 2 reflect)
+//   Header.z StopCount
+//   Header.w SolidColor (RGBA8: r | g<<8 | b<<16 | a<<24)
+//   Xform0/1: record em -> paint-local affine rows (a, b, tx, -) / (c, d, ty, -)
+//   Geo0/Geo1: linear (p0.xy, p1.xy) + (p2.xy, -, -); radial (c0.xy, r0, -) +
+//              (c1.xy, r1, -); sweep (center.xy, startDeg, endDeg)
+//   Clip: record-space ClipBox (minX, minY, maxX, maxY; disabled when max <= min)
+//   Stops: two u32 per stop: .x = raw F2Dot14 offset, .y = RGBA8 color
+struct SlugPaintRecord
+{
+    uvec4 Header;
+    vec4 Xform0;
+    vec4 Xform1;
+    vec4 Geo0;
+    vec4 Geo1;
+    vec4 Clip;
+    uvec2 Stops[32];
+};
+
+layout(std430, set = 0, binding = 2) readonly buffer SlugPaintBuffer
+{
+    SlugPaintRecord Paints[];
+};
+
+const uint kNoPaintIndex = 0xFFFFFFFFu;
+const int kMaxPaintStops = 32;
+const float kPaintTiny = 1.0e-12;
 
 // The push constant block mirrors shaders/vulkan/slug.vert; only the debug
 // flags are read here, but the offsets must stay in sync (Viewport at 64).
@@ -147,6 +180,161 @@ float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, uint bandMaxW
     return coverage;
 }
 
+// ============================================================================
+// M5 color layer evaluation (mirror of ImSlugSamplePaintRecord in
+// imslug_colr.cpp; the CPU mirror is the arbiter the goldens compare against).
+// Only reached when the instance carries a valid PaintIndex, so color-free
+// text never enters this code (the caller's branch is uniform per instance).
+// ============================================================================
+float PaintStopOffset(uvec2 stop)
+{
+    int raw = int(stop.x & 0xFFFFu);
+    if (raw >= 0x8000)
+        raw -= 0x10000;  // F2DOT14 sign extension
+    return float(raw) * (1.0 / 16384.0);
+}
+
+vec4 UnpackPaintColor(uint packed)
+{
+    return vec4(float(packed & 0xFFu), float((packed >> 8) & 0xFFu), float((packed >> 16) & 0xFFu),
+                float((packed >> 24) & 0xFFu)) * (1.0 / 255.0);
+}
+
+float ExtendPaintParameter(float t, uint extend)
+{
+    if (extend == 1u)
+        return t - floor(t);  // repeat
+    if (extend == 2u)
+    {
+        float h = t * 0.5;
+        return 1.0 - abs((h - floor(h)) * 2.0 - 1.0);  // reflect
+    }
+    return clamp(t, 0.0, 1.0);  // pad
+}
+
+vec4 SamplePaintColorLine(SlugPaintRecord paint, float t)
+{
+    uint count = paint.Header.z;
+    if (count == 0u)
+        return vec4(0.0);
+    uint upper = 1u;
+    while (upper < count && PaintStopOffset(paint.Stops[upper]) < t)
+        ++upper;
+    if (upper >= count)
+        return UnpackPaintColor(paint.Stops[count - 1u].y);
+    uint lower = upper - 1u;
+    float t0 = PaintStopOffset(paint.Stops[lower]);
+    float t1 = PaintStopOffset(paint.Stops[upper]);
+    float f = (t1 > t0) ? clamp((t - t0) / (t1 - t0), 0.0, 1.0) : 0.0;
+    return mix(UnpackPaintColor(paint.Stops[lower].y), UnpackPaintColor(paint.Stops[upper].y), f);
+}
+
+vec4 SamplePaint(uint index, vec2 emCoord)
+{
+    SlugPaintRecord paint = Paints[index];
+
+    // ClipBox (record em space); disabled when max <= min.
+    if (paint.Clip.z > paint.Clip.x && paint.Clip.w > paint.Clip.y)
+    {
+        if (emCoord.x < paint.Clip.x || emCoord.x > paint.Clip.z || emCoord.y < paint.Clip.y ||
+            emCoord.y > paint.Clip.w)
+            return vec4(0.0);
+    }
+
+    uint type = paint.Header.x;
+    if (type == 0u)  // solid
+        return UnpackPaintColor(paint.Header.w);
+
+    float localX = paint.Xform0.x * emCoord.x + paint.Xform0.y * emCoord.y + paint.Xform0.z;
+    float localY = paint.Xform1.x * emCoord.x + paint.Xform1.y * emCoord.y + paint.Xform1.z;
+
+    float t = 0.0;
+    if (type == 1u)  // linear: iso-color lines parallel to line p0p2
+    {
+        vec2 p0 = paint.Geo0.xy;
+        vec2 p1 = paint.Geo0.zw;
+        vec2 p2 = paint.Geo1.xy;
+        vec2 e1 = p1 - p0;
+        vec2 e2 = p2 - p0;
+        float cross = e1.x * e2.y - e1.y * e2.x;
+        float scale = (abs(e1.x) + abs(e1.y)) * (abs(e2.x) + abs(e2.y));
+        if ((e1.x == 0.0 && e1.y == 0.0) || (e2.x == 0.0 && e2.y == 0.0) || abs(cross) < kPaintTiny * scale)
+            return vec4(0.0);  // ill-formed per the spec: not rendered
+        vec2 d = vec2(localX, localY) - p0;
+        t = (d.x * e2.y - d.y * e2.x) / cross;
+    }
+    else if (type == 2u)  // two-point conical (WHATWG radial algorithm)
+    {
+        vec2 c0 = paint.Geo0.xy;
+        float r0 = paint.Geo0.z;
+        vec2 c1 = paint.Geo1.xy;
+        float r1 = paint.Geo1.z;
+        vec2 d = c1 - c0;
+        float dr = r1 - r0;
+        vec2 q = vec2(localX, localY) - c0;
+        float a = dot(d, d) - dr * dr;
+        float b = -2.0 * (dot(q, d) + r0 * dr);
+        float c = dot(q, q) - r0 * r0;
+        bool found = false;
+        float best = 0.0;
+        if (abs(a) <= 1.0e-9 * (dot(d, d) + dr * dr + 1.0))
+        {
+            if (abs(b) > 1.0e-20)
+            {
+                best = -c / b;
+                found = r0 + best * dr > 0.0;
+            }
+        }
+        else
+        {
+            float disc = b * b - 4.0 * a * c;
+            if (disc >= 0.0)
+            {
+                float root = sqrt(disc);
+                float candidate0 = (-b + root) / (2.0 * a);
+                float candidate1 = (-b - root) / (2.0 * a);
+                for (int i = 0; i < 2; ++i)
+                {
+                    float candidate = (i == 0) ? candidate0 : candidate1;
+                    if (r0 + candidate * dr <= 0.0)
+                        continue;  // the algorithm draws circles with r(omega) > 0
+                    if (!found || candidate > best)
+                    {
+                        best = candidate;
+                        found = true;
+                    }
+                }
+            }
+        }
+        if (!found)
+            return vec4(0.0);  // outside the cone / both radii zero
+        t = best;
+    }
+    else  // sweep: counter-clockwise degrees from +x
+    {
+        vec2 center = paint.Geo0.xy;
+        float startAngle = paint.Geo0.z;
+        float endAngle = paint.Geo0.w;
+        float span = endAngle - startAngle;
+        if (abs(span) < 1.0e-4)
+        {
+            if (paint.Header.y != 0u)
+                return vec4(0.0);  // repeat/reflect with equal angles: nothing
+            t = 0.0;
+        }
+        else
+        {
+            float theta = degrees(atan(localY - center.y, localX - center.x));
+            if (theta < 0.0)
+                theta += 360.0;
+            t = (theta - startAngle) / span;
+        }
+    }
+
+    t = ExtendPaintParameter(t, paint.Header.y);
+    return SamplePaintColorLine(paint, t);
+}
+
 void main()
 {
     // Reference SlugRender(): effective pixel size of the em square from
@@ -154,7 +342,6 @@ void main()
     // this is exactly the instance's pixels-per-em on both axes).
     vec2 emsPerPixel = fwidth(vTexCoord);
     vec2 pixelsPerEm = 1.0 / emsPerPixel;
-
     ivec2 bandMax = ivec2(int(vBandMaxWord & 0xFFFFu), int((vBandMaxWord >> 16) & 0xFFu));
     ivec2 glyphLoc = ivec2(vGlyphLoc);
 
@@ -239,12 +426,22 @@ void main()
 
     float fill = CalcCoverage(xcov, ycov, xwgt, ywgt, vBandMaxWord);
 
+    // M5: a color layer resolves its own straight-alpha color (solid or
+    // gradient); the instance color then only contributes the tint alpha
+    // (ImGui forces RGB=255 for Colored glyphs, so a tint fades the layer
+    // colors instead of recoloring them). Plain glyphs keep the M2 path:
+    // paintColor = 1, so glyphColor/glyphAlpha are exactly vColor.
+    const bool isColored = vPaintIndex != kNoPaintIndex;
+    vec4 paintColor = isColored ? SamplePaint(vPaintIndex, vTexCoord) : vec4(1.0);
+    vec3 glyphColor = isColored ? paintColor.rgb : vColor.rgb;
+    float glyphAlpha = vColor.a * paintColor.a;
+
     // M4 debug overlay: rebuild the fragment color for the requested views.
     // Debug views never discard and keep the whole dilated quad visible, so
     // the band/ref diagnostics show up outside the glyph body as well.
     if (pc.DebugFlags != 0u)
     {
-        vec4 debugColor = vec4(vColor.rgb, vColor.a * fill);
+        vec4 debugColor = vec4(glyphColor, glyphAlpha * fill);
         if ((pc.DebugFlags & kDebugFlagRefHeat) != 0u)
         {
             // Walk cost of this pixel: blue (0 refs) -> red (>= kRefHeatScale).
@@ -281,5 +478,5 @@ void main()
     // src-alpha / one-minus-src-alpha, so the coverage scales the alpha only
     // (the reference returns color * coverage, which assumes a premultiplied
     // blend state; using it here would square the edge coverage).
-    outColor = vec4(vColor.rgb, vColor.a * fill);
+    outColor = vec4(glyphColor, glyphAlpha * fill);
 }

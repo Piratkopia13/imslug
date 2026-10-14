@@ -58,7 +58,8 @@ namespace ImSlug
     // ---------------------------------------------------------------------
     // Font
     // ---------------------------------------------------------------------
-    struct ImSlugFont;  // opaque
+    struct ImSlugFont;       // opaque
+    struct ImSlugColorFont;  // opaque (M5; imslug_colr.h)
 
     // Mirrors ImGui's stb loader with OversampleH/V=1, RasterizerDensity=1,
     // ExtraSizeScale=1, GlyphOffset=0 — the configuration Slug fonts use (no
@@ -97,6 +98,11 @@ namespace ImSlug
 
     // 0 = not found (stbtt_FindGlyphIndex semantics).
     int ImSlugGetGlyphIndex(const ImSlugFont* font, unsigned int codepoint);
+
+    // M5: the font's COLR/CPAL data (parsed lazily on first use; null when the
+    // font has no usable color tables - the monochrome path). Owned by the
+    // font, destroyed with it.
+    ImSlugColorFont* ImSlugFontGetColor(ImSlugFont* font);
 
     // Number of glyphs in the font (stbtt_fontinfo::numGlyphs). M3 uses it to
     // size per-bake slot tables.

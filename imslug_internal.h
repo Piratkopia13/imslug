@@ -117,10 +117,90 @@ namespace ImSlug
         int DirtyRowMax;
     };
 
+    // ---------------------------------------------------------------------
+    // M5: paint pool (COLR color layers)
+    // ---------------------------------------------------------------------
+    // One ImSlugPaintRecord per *drawn layer* of a color glyph (flat v0
+    // layers, v1 fills/gradients). Records are built once when the color
+    // glyph is first used and live for the process (like glyph records);
+    // growth by doubling, dirty-range tracking for incremental uploads. The
+    // GPU reads the array as an std430 storage buffer (shaders/vulkan/slug.frag),
+    // so the layout below is a hard contract: 16-byte aligned, offsets
+    // static_asserted and mirrored by the GLSL struct.
+    static const int kMaxColorStops = 32;         // per color line (Noto: <= 13, Segoe: <= 26)
+    static const int kMaxColorLayers = 512;       // per color glyph; beyond -> monochrome fallback
+    static const int kMaxColorGraphDepth = 32;    // paint nesting cap (fallback: truncate)
+    static const int kMaxColorGraphNodes = 4096;  // visited paints per glyph (fallback: truncate)
+
+    enum ImSlugColorPaintType
+    {
+        ImSlugColorPaintType_Solid = 0,
+        ImSlugColorPaintType_LinearGradient = 1,
+        ImSlugColorPaintType_RadialGradient = 2,
+        ImSlugColorPaintType_SweepGradient = 3,
+    };
+
+    enum ImSlugColorExtend
+    {
+        ImSlugColorExtend_Pad = 0,      // clamp to the stop offsets
+        ImSlugColorExtend_Repeat = 1,   // t = fract(t)
+        ImSlugColorExtend_Reflect = 2,  // triangle wave
+    };
+
+    struct ImSlugPaintRecord
+    {
+        // Header: (type, extend, stopCount, solidColor|clipDisabled?)
+        uint32_t Type;        // ImSlugColorPaintType
+        uint32_t Extend;      // ImSlugColorExtend (gradients)
+        uint32_t StopCount;   // 1..kMaxColorStops
+        uint32_t SolidColor;  // RGBA8, r | g<<8 | b<<16 | a<<24 (type 0)
+
+        // base-em -> paint-local affine (gradients): local = M * base.
+        float Xform0[4];  // a, b, tx, unused
+        float Xform1[4];  // c, d, ty, unused
+
+        // Gradient geometry in paint-local em. Linear: (p0.xy, p1.xy) then
+        // (p2.xy, 0, 0). Radial: (c0.xy, r0) then (c1.xy, r1). Sweep:
+        // (center.xy, startDeg, endDeg).
+        float Geo0[4];
+        float Geo1[4];
+
+        // Base-em clip rectangle (the COLR ClipBox, mapped into base space);
+        // disabled when ClipMaxX <= ClipMinX.
+        float Clip[4];  // minX, minY, maxX, maxY
+
+        // Color stops, packed two u32 per stop: [2i] = the raw F2DOT14 offset
+        // (sign-extended from its low 16 bits), [2i+1] = the color as RGBA8
+        // (r | g<<8 | b<<16 | a<<24). Offsets are ascending. One u32 per stop
+        // would overlap the offset with the color's alpha byte.
+        uint32_t Stops[2 * kMaxColorStops];
+    };
+    static_assert(sizeof(ImSlugPaintRecord) == 352, "GPU-visible paint layout (slug.frag std430)");
+    static_assert(offsetof(ImSlugPaintRecord, Xform0) == 16, "GPU-visible paint layout");
+    static_assert(offsetof(ImSlugPaintRecord, Geo0) == 48, "GPU-visible paint layout");
+    static_assert(offsetof(ImSlugPaintRecord, Clip) == 80, "GPU-visible paint layout");
+    static_assert(offsetof(ImSlugPaintRecord, Stops) == 96, "GPU-visible paint layout");
+
+    struct ImSlugPaintPool
+    {
+        uint8_t* Bytes;      // Count records of ImSlugPaintRecord
+        int Capacity;        // records (grows by doubling)
+        int Count;           // records in use
+        int DirtyRecordMin;  // inclusive; empty when Min > Max
+        int DirtyRecordMax;
+    };
+
     struct ImSlugPools
     {
         ImSlugCurvePool Curves;
         ImSlugBandPool Bands;
+        // M5: per-layer paint records for COLR color glyphs (one record per
+        // drawn layer: solid fills and gradient definitions). GPU-visible as a
+        // storage buffer (ImSlugPaintRecord); the CPU mirror is what tests and
+        // the offscreen golden's expected image read through
+        // ImSlugSamplePaintRecord. Byte-granular like the pool texels: an
+        // append-only record array with dirty-range tracking.
+        ImSlugPaintPool Paints;
     };
 
     // ---------------------------------------------------------------------
@@ -169,11 +249,51 @@ namespace ImSlug
     };
 
     // ---------------------------------------------------------------------
+    // M5: color glyphs (COLR/CPAL)
+    // ---------------------------------------------------------------------
+    // A color glyph is a flattened, draw-order list of layers. Each layer is
+    // one Slug glyph record plus a paint record in the pool. Layer `i` is
+    // drawn in list order (painter's algorithm), so COLR's src-over compositing
+    // is exactly the pipeline's straight-alpha blend; composites whose mode is
+    // not representable that way are approximated or folded into the layer
+    // alpha (see imslug_colr.cpp for the documented per-mode behavior).
+    //
+    // The record may be the plain glyph's own record (identity or positive
+    // axis-aligned scale+translate layers reuse it) or a synthetic record
+    // built from the transformed outline. ScaleX/Y/Offset*Em map record space
+    // to the base glyph's em space:
+    //   base = (OffsetXEm + recordX * ScaleX, OffsetYEm + recordY * ScaleY)
+    // and the paint record's transform/clip are already expressed relative to
+    // the *record* space, so the shader needs no extra mapping.
+    struct ImSlugColorLayer
+    {
+        const ImSlugGlyphRecord* Record;
+        float ScaleX, ScaleY;        // > 0 (baked records: 1)
+        float OffsetXEm, OffsetYEm;  // (baked records: 0)
+        uint32_t PaintIndex;         // index into ImSlugPools::Paints
+    };
+
+    struct ImSlugColorGlyph
+    {
+        int GlyphIndex;
+        int LayerCount;
+        const ImSlugColorLayer* Layers;  // draw order
+        float MinX, MinY, MaxX, MaxY;    // union of the layers' record bboxes in base em
+        // Bbox-only record covering every layer (and the base glyph's glyf box
+        // when one exists). Color glyph slabs use it for fine-clip
+        // reconstruction instead of the base glyph record: emoji base glyphs
+        // are often empty (Noto Color Emoji), so the glyf record's bbox would
+        // not cover the quad ImGui drew. CurveCount/BandMax* are zero; it is
+        // never drawn.
+        ImSlugGlyphRecord BaseRecord;
+    };
+
+    // ---------------------------------------------------------------------
     // Glyph instance (frozen M2 layout; mirrored by shaders/vulkan/slug.vert)
     // ---------------------------------------------------------------------
     // One instance per glyph quad. The vertex shader builds the quad corners
     // from gl_VertexIndex (4 vertices, triangle strip) and reads this record
-    // through VK_VERTEX_INPUT_RATE_INSTANCE attributes at locations 0..6:
+    // through VK_VERTEX_INPUT_RATE_INSTANCE attributes at locations 0..7:
     //
     //   loc 0  vec4   EmBBox      (MinX, MinY, MaxX, MaxY) em space, Y up
     //   loc 1  vec4   ScreenRect  (MinX, MinY, MaxX, MaxY) screen pixels, Y down
@@ -182,6 +302,8 @@ namespace ImSlug
     //   loc 4  uvec2  GlyphLoc    band pool glyph location (x, y)
     //   loc 5  uint   BandMaxWord bandMaxX | bandMaxY << 16 | E << 28 (D8(g))
     //   loc 6  vec4   Color       straight alpha (r, g, b, a)
+    //   loc 7  uint   PaintIndex  M5: ImSlugPools::Paints index, or
+    //                             kNoPaintIndex (0xFFFFFFFF) for plain glyphs
     //
     // ScreenRect corners correspond to EmBBox corners with the Y flip applied
     // (em Y up, screen Y down): em (MinX, MinY) maps to (ScreenMinX,
@@ -196,22 +318,35 @@ namespace ImSlug
         uint32_t GlyphLocX, GlyphLocY;
         uint32_t BandMaxWord;
         float ColorR, ColorG, ColorB, ColorA;
+        uint32_t PaintIndex;  // M5 (instance format v2); see kNoPaintIndex
     };
-    static_assert(sizeof(ImSlugGlyphInstance) == 92, "frozen M2 instance layout (shaders + vertex input)");
-    static_assert(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16, "frozen M2 instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, Jac00) == 32, "frozen M2 instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, BandScaleX) == 48, "frozen M2 instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, GlyphLocX) == 64, "frozen M2 instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, BandMaxWord) == 72, "frozen M2 instance layout");
-    static_assert(offsetof(ImSlugGlyphInstance, ColorR) == 76, "frozen M2 instance layout");
+    static_assert(sizeof(ImSlugGlyphInstance) == 96, "frozen M5 instance layout (shaders + vertex input)");
+    static_assert(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, Jac00) == 32, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, BandScaleX) == 48, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, GlyphLocX) == 64, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, BandMaxWord) == 72, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, ColorR) == 76, "frozen instance layout");
+    static_assert(offsetof(ImSlugGlyphInstance, PaintIndex) == 92, "frozen M5 instance layout");
+    static const uint32_t kNoPaintIndex = 0xFFFFFFFFu;  // instance.PaintIndex sentinel
 
     // Fills one instance for `record` placed by an axis-aligned transform:
     //   screen (pixels, Y down) = (penX + emX * pixelsPerEm, penY - emY * pixelsPerEm)
     // where (penX, penY) is the pen position on the baseline. Color is straight
-    // alpha. Empty glyphs (CurveCount == 0) are representable (coverage 0), but
-    // callers normally skip them.
+    // alpha; PaintIndex is set to kNoPaintIndex (plain glyph). Empty glyphs
+    // (CurveCount == 0) are representable (coverage 0), but callers normally
+    // skip them.
     void ImSlugBuildGlyphInstance(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEm, float r,
                                   float g, float b, float a, ImSlugGlyphInstance* outInstance);
+
+    // M5 generalization of the above with per-axis scale (used by color layers
+    // whose transform is a positive axis-aligned scale):
+    //   screen = (penX + emX * pixelsPerEmX, penY - emY * pixelsPerEmY)
+    // The vertex shader keeps this mapping affine through Jac, so the
+    // fragment's sample coordinate is still the em coordinate.
+    void ImSlugBuildGlyphInstanceScaled(const ImSlugGlyphRecord* record, float penX, float penY, float pixelsPerEmX,
+                                        float pixelsPerEmY, float r, float g, float b, float a,
+                                        ImSlugGlyphInstance* outInstance);
 
     // ---------------------------------------------------------------------
     // Glyph handle (M3): the ImDrawVert UV payload that identifies a baked
@@ -251,6 +386,11 @@ namespace ImSlug
     struct ImSlugGlyphSlab
     {
         const ImSlugGlyphRecord* Record;  // may be null while unused/being freed
+        // M5: the resolved color glyph (layers + paint records) when this baked
+        // glyph is a COLR color glyph and Config::EnableColorFonts was set when
+        // it was loaded; null for monochrome glyphs. The pre-pass emits one
+        // instance per layer instead of one for Record. Owned by the font.
+        const ImSlugColorGlyph* ColorGlyph;
         // ImFontBaked::BakedId (uint32 in ImGui; widened here) — the stable
         // lifetime key. Never key on the ImFontBaked address: ImGui documents
         // baked pointers as per-frame only and its BakedPool GC memcpys
@@ -311,8 +451,9 @@ namespace ImSlug
     // ImGui may move the ImFontBaked struct itself when its BakedPool is
     // compacted): ImSlugFreeGlyphSlabsForBake releases every slab of one bake
     // (the glyph records of a discarded bake die with it).
-    ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, float x0, float y0, float x1, float y1,
-                                          float ascent, float pixelsPerEm, uint64_t bakeId, uint32_t* outSlot);
+    ImSlugGlyphSlab* ImSlugAllocGlyphSlab(const ImSlugGlyphRecord* record, const ImSlugColorGlyph* colorGlyph, float x0,
+                                          float y0, float x1, float y1, float ascent, float pixelsPerEm,
+                                          uint64_t bakeId, uint32_t* outSlot);
     void ImSlugFreeGlyphSlab(uint32_t slot);
     void ImSlugFreeGlyphSlabsForBake(uint64_t bakeId);
     const ImSlugGlyphSlab* ImSlugGetGlyphSlab(uint32_t slot);
@@ -349,3 +490,4 @@ namespace ImSlug
 #include "imslug_packer.h"
 #include "imslug_glyphgen.h"
 #include "imslug_refraster.h"
+#include "imslug_colr.h"

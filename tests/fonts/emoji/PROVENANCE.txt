@@ -1,0 +1,42 @@
+Test font — Noto Color Emoji (fetched, never committed)
+=======================================================
+
+Why this one is different
+-------------------------
+The color-font tests need a COLR v1 font with real emoji paint graphs
+(transforms, gradients, composites). Noto Color Emoji is ~25 MB, which must not
+land in the repository, so it is fetched (whole, unmodified) by
+scripts/fetch_emoji_font.* into the gitignored directory tests/fonts/emoji/.
+Suites that need it skip cleanly when it is absent (they print a skip line and
+continue), so CI without the asset stays green.
+
+Source
+------
+File:            NotoColorEmoji-Regular.ttf  (COLR version 1; 4012 base glyphs,
+                 one CPAL palette, ClipBox for every base glyph)
+Upstream repo:   https://github.com/google/fonts (main)
+Source URL:      https://raw.githubusercontent.com/google/fonts/main/ofl/notocoloremoji/NotoColorEmoji-Regular.ttf
+SHA-256:         4d82a18d8d95f60ba883ce242bbadbf84a576e987745dd7ba38d71c67cff2d73
+                 (verified 2026-10-14; the fetch script fails on a mismatch)
+Size:            25,332,736 bytes
+License:         SIL Open Font License 1.1 (google/fonts ofl/notocoloremoji/OFL.txt;
+                 the OFL declares no Reserved Font Name). The fetch script
+                 downloads the license text next to the font when the network
+                 is available.
+
+Note: Segoe UI Emoji (C:\Windows\Fonts\seguiemj.ttf) is a COLR v1 system font
+that the local suites may use for manual comparisons, but it is proprietary and
+is never fetched, copied or committed by this repository.
+
+Usage
+-----
+    scripts\fetch_emoji_font.bat    (Windows)
+    scripts/fetch_emoji_font.sh     (Linux/macOS)
+
+Environment overrides (both scripts):
+    IMSLUG_EMOJI_URL      source URL (default: the pinned URL above)
+    IMSLUG_EMOJI_SHA256   expected SHA-256 (default: pinned above)
+    IMSLUG_EMOJI_SOURCE   use a local .ttf instead of downloading
+
+Exit codes: 0 = font ready (or the environment cannot fetch it — the tests
+skip the color-font cases then); 1 = a download/verification step failed.

@@ -43,6 +43,17 @@ imslug_add_cpu_test(imslug_tests_metrics test_metrics.cpp imslug_metrics)
 imslug_add_cpu_test(imslug_tests_refraster test_refraster.cpp imslug_refraster)
 # M2: the frozen glyph-instance record + placement mapping (no GPU needed).
 imslug_add_cpu_test(imslug_tests_instance test_instance.cpp imslug_instance)
+# M5: COLR/CPAL reader, color-glyph cache and the CPU paint sampler. The emoji
+# font is a fetched, gitignored asset; the real-font checks skip when absent.
+add_executable(imslug_tests_colr test_colr.cpp test_util.h)
+target_link_libraries(imslug_tests_colr PRIVATE imslug)
+set_target_properties(imslug_tests_colr PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+imslug_target_defaults(imslug_tests_colr)
+target_compile_definitions(imslug_tests_colr PRIVATE
+    IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/emoji/NotoColorEmoji-Regular.ttf"
+    $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+add_test(NAME imslug_colr COMMAND imslug_tests_colr)
 # ---------------------------------------------------------------------------
 # M2 golden-image tests. Headless offscreen Vulkan (no surface/swapchain), so
 # they run on lavapipe in CI; the comparison arbiter is the M1 CPU rasterizer,
@@ -85,6 +96,25 @@ if(IMSLUG_HAVE_VULKAN)
         WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
     set_tests_properties(imslug_golden imslug_golden_dynamic imslug_imgui_golden imslug_imgui_golden_dynamic
         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # M5: color-font (COLR v1) goldens: emoji strings rendered as one instance
+    # per layer and compared against the CPU arbiter (coverage + paint
+    # sampling). The emoji font is a fetched, gitignored asset; the suite skips
+    # (77) when it is absent.
+    add_executable(imslug_tests_emoji_golden golden/test_emoji_golden_vulkan.cpp test_util.h)
+    target_link_libraries(imslug_tests_emoji_golden PRIVATE imslug imslug_vulkan)
+    set_target_properties(imslug_tests_emoji_golden PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_tests_emoji_golden)
+    target_compile_definitions(imslug_tests_emoji_golden PRIVATE
+        IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/emoji/NotoColorEmoji-Regular.ttf"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+    add_test(NAME imslug_emoji_golden
+        COMMAND imslug_tests_emoji_golden
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    add_test(NAME imslug_emoji_golden_dynamic
+        COMMAND imslug_tests_emoji_golden --dynamic-rendering
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    set_tests_properties(imslug_emoji_golden imslug_emoji_golden_dynamic PROPERTIES SKIP_RETURN_CODE 77)
 
     # M4: the perf harness (scripts/bench.*). Not a ctest suite: it prints and
     # records machine-specific numbers.

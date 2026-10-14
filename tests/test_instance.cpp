@@ -55,7 +55,7 @@ namespace
 
     void TestLayout()
     {
-        TEST_CHECK(sizeof(ImSlugGlyphInstance) == 92);
+        TEST_CHECK(sizeof(ImSlugGlyphInstance) == 96);  // M5: + PaintIndex (v2)
         TEST_CHECK(offsetof(ImSlugGlyphInstance, EmMinX) == 0);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, ScreenMinX) == 16);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, Jac00) == 32);
@@ -63,6 +63,14 @@ namespace
         TEST_CHECK(offsetof(ImSlugGlyphInstance, GlyphLocX) == 64);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, BandMaxWord) == 72);
         TEST_CHECK(offsetof(ImSlugGlyphInstance, ColorR) == 76);
+        TEST_CHECK(offsetof(ImSlugGlyphInstance, PaintIndex) == 92);
+
+        // M5 paint record layout (GPU-visible std430 contract).
+        TEST_CHECK(sizeof(ImSlugPaintRecord) == 352);
+        TEST_CHECK(offsetof(ImSlugPaintRecord, Xform0) == 16);
+        TEST_CHECK(offsetof(ImSlugPaintRecord, Geo0) == 48);
+        TEST_CHECK(offsetof(ImSlugPaintRecord, Clip) == 80);
+        TEST_CHECK(offsetof(ImSlugPaintRecord, Stops) == 96);
     }
 
     void TestPackedWord()
@@ -121,6 +129,42 @@ namespace
         ScreenToEm(instance, instance.ScreenMinX + 1.0f, instance.ScreenMaxY - 1.0f, &emX, &emY);
         TEST_CHECKF(std::fabs(emX - (record.MinX + 1.0f / pixelsPerEm)) <= epsilon, "screen +1px -> em %f", emX);
         TEST_CHECKF(std::fabs(emY - (record.MinY + 1.0f / pixelsPerEm)) <= epsilon, "screen -1px -> em %f", emY);
+
+        // M5: a plain instance carries no paint record.
+        TEST_CHECK(instance.PaintIndex == kNoPaintIndex);
+    }
+
+    // M5: the per-axis scaled builder used by color layers whose transform is a
+    // positive axis-aligned scale. Same corner contract, per-axis mapping.
+    void TestInstanceBuildScaled()
+    {
+        const ImSlugGlyphRecord record = MakeRecord();
+        const float penX = 10.0f;
+        const float penY = 50.0f;
+        const float pixelsPerEmX = 20.0f;
+        const float pixelsPerEmY = 40.0f;
+        ImSlugGlyphInstance instance = {};
+        ImSlugBuildGlyphInstanceScaled(&record, penX, penY, pixelsPerEmX, pixelsPerEmY, 1.0f, 1.0f, 1.0f, 0.5f,
+                                       &instance);
+
+        TEST_CHECK(instance.ScreenMinX == penX + record.MinX * pixelsPerEmX);
+        TEST_CHECK(instance.ScreenMaxX == penX + record.MaxX * pixelsPerEmX);
+        TEST_CHECK(instance.ScreenMinY == penY - record.MaxY * pixelsPerEmY);
+        TEST_CHECK(instance.ScreenMaxY == penY - record.MinY * pixelsPerEmY);
+        TEST_CHECK(instance.Jac00 == 1.0f / pixelsPerEmX && instance.Jac11 == -1.0f / pixelsPerEmY);
+        TEST_CHECK(instance.PaintIndex == kNoPaintIndex);
+        TEST_CHECK(instance.ColorA == 0.5f);
+
+        // The inverse Jacobian maps the corners back to the record's em bbox.
+        float emX = 0.0f;
+        float emY = 0.0f;
+        const float epsilon = 1e-5f;
+        ScreenToEm(instance, instance.ScreenMinX, instance.ScreenMaxY, &emX, &emY);
+        TEST_CHECKF(std::fabs(emX - record.MinX) <= epsilon && std::fabs(emY - record.MinY) <= epsilon,
+                    "scaled em min corner -> (%f, %f)", emX, emY);
+        ScreenToEm(instance, instance.ScreenMaxX, instance.ScreenMinY, &emX, &emY);
+        TEST_CHECKF(std::fabs(emX - record.MaxX) <= epsilon && std::fabs(emY - record.MaxY) <= epsilon,
+                    "scaled em max corner -> (%f, %f)", emX, emY);
     }
 }  // namespace
 
@@ -129,5 +173,6 @@ int main()
     TestLayout();
     TestPackedWord();
     TestInstanceBuild();
+    TestInstanceBuildScaled();
     return imslug_test::Finish("imslug_instance");
 }
