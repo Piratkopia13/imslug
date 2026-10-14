@@ -1,5 +1,6 @@
 # Transient agent working documents (plan drafts, session notes, scratch).
-# Never committed. The current plan lives in .agent-docs/PLAN.md; see its §12.5.
+# Never committed. Working material (the current plan included) lives in
+# .agent-docs/; see AGENTS.md (Docs policy).
 .agent-docs/
 
 # Build directories
@@ -18,7 +19,7 @@ compile_commands.json
 .idea/
 
 # Generated shader binaries and intermediates.
-# NOTE: shaders/imslug_shaders_vulkan.h is generated but committed on purpose (PLAN §5.8).
+# NOTE: shaders/imslug_shaders_vulkan.h is generated but committed on purpose.
 *.spv
 
 # Local example-app state (Dear ImGui writes these next to the binary)

@@ -5,11 +5,11 @@
 //
 // This file is the attributed reference used for porting imslug's Vulkan GLSL
 // shaders (shaders/vulkan/slug.vert + slug.frag). It is NOT compiled and never
-// shipped; it exists so the port stays auditable (PLAN Appendix B).
+// shipped; it exists so the port stays auditable (see the mapping table below).
 //
 //   Reference: https://github.com/EricLengyel/Slug
 //     SlugVertexShader.hlsl, SlugPixelShader.hlsl (master at the time of the
-//     port; the M1 pixel-shader blob pinned by imslug_refraster.cpp is
+//     port; the pixel-shader blob pinned by imslug_refraster.cpp is
 //     170a13f0fe3ad7562877eb89c4afcd36b89bdbce).
 //   License: dual MIT OR Apache-2.0 (both texts in NOTICE section 1).
 //
@@ -480,16 +480,15 @@ float4 main(VertexStruct vresult) : SV_Target
 //                                                                reference uses).
 // Pixel shader main()           main() in slug.frag             Adds the
 //                                                                `fill < 0.001`
-//                                                                discard perf guard
-//                                                                (PLAN Appendix B).
+//                                                                discard perf guard.
 //
-// Deliberate deviations (documented in .agent-docs/PLAN.md section 11):
-//   * instance mode instead of 5 vertex streams (PLAN section 2.3/2.4);
+// Deliberate deviations (mirrored by the imslug-shaders skill):
+//   * instance mode instead of 5 vertex streams;
 //   * the even-odd flag is tested as bit 28 of the packed bandMax word
-//     (== bit 12 of its high 16-bit half, reference tex.w), see D8(g);
+//     (== bit 12 of its high 16-bit half, reference tex.w);
 //   * the reference `#if SLUG_EVENODD` compile switch is always on;
 //   * SolveHorizPoly/SolveVertPoly add the CPU arbiter's |b| >= 1/65536 guard
 //     in the degenerate-linear branch (shared with imslug_refraster.cpp)
 //     instead of the reference's unconditional c * (0.5/b), which is inf/NaN
-//     when the curve is exactly axis-parallel after fp16 quantization (R1).
+//     when the curve is exactly axis-parallel after fp16 quantization.
 // ============================================================================

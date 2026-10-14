@@ -1,4 +1,4 @@
-# imslug formatting rules — ImGui-compatible conventions (PLAN §6).
+# imslug formatting rules — ImGui-compatible conventions (AGENTS.md invariant 5).
 #
 # Apply to our own sources only. Do NOT reformat third-party code
 # (Dear ImGui, stb, GLFW, ...): upstream files keep their own style and are

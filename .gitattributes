@@ -6,7 +6,7 @@
 *.bat text eol=crlf
 *.ps1 text eol=crlf
 
-# Binary assets (fonts / test images / compiled shaders arrive in later milestones)
+# Binary assets (fonts / test images / compiled shaders)
 *.ttf binary
 *.otf binary
 *.png binary
