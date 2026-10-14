@@ -6,11 +6,15 @@ consume imslug without the C++ API. The C++ API (`imslug.h`,
 mirror with additions only, and this file records its conventions, the ABI
 policy and the binding status.
 
-Status (M6): the C API and the C example are complete and CI-gated; the Rust
-wrapper crate (`imslug-rs`, a sibling local repository) covers the smoke scope
-(link, context, font registration, clean shutdown). Full rendering through
+Status (M6 + M7): the C API and the C example are complete and CI-gated; the
+Rust wrapper crate (`imslug-rs`, a sibling local repository) covers the smoke
+scope (link, context, font registration, clean shutdown). Full rendering through
 `imgui-rs-vulkan-renderer` is explicitly deferred — see
-[the integration answer](#imgui-rs--imgui-rs-vulkan-renderer-status).
+[the integration answer](#imgui-rs--imgui-rs-vulkan-renderer-status). M7 added
+the `.imslug` packed-asset loader (auto-detected by content in the same
+font-add entry points) plus two additive C entries —
+`imslug_is_packed_font_data` and `imslug_validate_packed_font_data`; the format
+is documented in `docs/PACKED_FORMAT.md`.
 
 ## Files
 
@@ -22,6 +26,7 @@ wrapper crate (`imslug-rs`, a sibling local repository) covers the smoke scope
 | `example/c/` | Pure-C11 example: CPU smoke always, headless Vulkan frame with `--vulkan`. |
 | `tests/test_c_abi.c` | C11 + strict-warnings compilation and struct-layout gate. |
 | `tests/test_c_api.cpp` | C++ mirror checks (C API vs canonical C++ API, value for value). |
+| `tests/test_packed_loader.cpp` | Packed `.imslug` validation/loader checks incl. the new C entries (runs without the TTF parser). |
 | `imslug-rs` (sibling repo) | Rust wrapper crate: raw `sys` declarations + safe wrapper + smoke test. |
 
 The C API is compiled into the `imslug` library; the Vulkan C entry points into
@@ -112,6 +117,33 @@ build/imslug_example_c --vulkan --screenshot out.ppm   # headless offscreen fram
 exists; the environment variables `IMSLUG_VALIDATION=0` and
 `IMSLUG_VK_DEVICE=<n>` mirror the C++ example.
 
+## Packed `.imslug` assets (M7)
+
+`imslug_add_font_from_file_ttf` and `imslug_add_font_from_memory_ttf` accept
+**both** TTF/OTF bytes and `.imslug` packed assets: the kind is auto-detected by
+content (the container magic), not by file extension, so no binding code has to
+choose an entry point. A packed asset skips outline parsing entirely and works
+in builds configured without the TTF parser (`-DIMSLUG_TTF_PARSER=OFF`); the
+format and the generator CLI are documented in `docs/PACKED_FORMAT.md`.
+
+Two additive entries support tooling and defensive loaders:
+
+```c
+/* 1 when data starts with the .imslug magic (cheap sniff, no parsing). */
+int imslug_is_packed_font_data(const void* data, int data_size);
+
+/* Full structural validation of a v1 asset; 1 valid / 0 invalid, with an
+   optional NUL-terminated reason in error_message. Never crashes. */
+int imslug_validate_packed_font_data(const void* data, int data_size,
+                                     char* error_message, int error_message_capacity);
+```
+
+Both are additions (the existing ABI is unchanged); bind them freely.
+`imslug-rs`'s `sys.rs` does not declare them yet — the wrapper only exposes the
+file variant of the font-add path, so packed assets already work through it
+(`add_font_from_file_ttf("font.imslug", ...)`); the explicit validation entries
+can be bound later without a build change.
+
 ## Vulkan entry points
 
 `imslug_vulkan_init_info` is the C mirror of `ImSlugVulkanInitInfo`; fill it
@@ -163,6 +195,10 @@ Debug overlay flags: `IMSLUG_VULKAN_DEBUG_OVERLAY_GLYPH_BOUNDS`,
   `docs/DESIGN.md` section 9. `Config::EnableColorFonts = false` disables the
   path.
 * Non-BMP emoji need `IMGUI_USE_WCHAR32` in the whole build (see above).
+* Packed `.imslug` v1 assets are **monochrome only**: a packed font has no
+  COLR/CPAL payload, so color glyphs fall back to their glyf outline (empty for
+  most emoji fonts). Bake color fonts with the TTF path until a future
+  container version adds color data.
 
 ## Rust bindings (`imslug-rs`, sibling repo)
 
@@ -230,9 +266,14 @@ core + a Vulkan init that takes plain Vulkan objects).
 
 * Every job builds the C example (default `IMSLUG_BUILD_C_EXAMPLE=ON`) and runs
   `imslug_c_example` (CPU smoke) + `imslug_c_abi` + `imslug_c_api` via
-  `scripts/test.*`.
+  `scripts/test.*`. The packed-asset suites (`imslug_packed_loader`,
+  `imslug_packed_roundtrip`, `imslug_asset_fresh`, `imslug_golden_packed*`) run
+  in the same jobs.
 * The lavapipe job also runs `build/imslug_example_c --vulkan`, the full
   offscreen frame through the C API (validation layers on).
+* A dedicated no-parser job configures with `-DIMSLUG_TTF_PARSER=OFF`, runs the
+  packed suites + goldens and the example entirely from the committed asset
+  (proving the "no font parser in the app" deployment).
 * The Windows runner image has no Vulkan SDK, so there the C example compiles
   without the Vulkan path; the Vulkan C declarations are compile-gated on
   Linux (lavapipe job) and locally.

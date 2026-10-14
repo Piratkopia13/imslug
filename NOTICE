@@ -446,6 +446,11 @@ release archive (pinned in tests/fonts/PROVENANCE.txt).
 
 Both files are committed unmodified and are used only as test assets.
 
+tests/assets/Roboto-ASCII.imslug (M7) is a generated `.imslug` packed asset
+derived from Roboto-Regular.ttf (same copyright/license as above); it is
+regenerated with scripts/gen_asset.* and used only as a test/demo asset
+(provenance in tests/assets/PROVENANCE.txt).
+
 Fetched (never committed) test assets, documented with pinned URLs + SHA-256 in
 their own PROVENANCE.txt files and downloaded by scripts/fetch_*:
 

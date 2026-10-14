@@ -10,12 +10,14 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M6 (C API
-> + Rust bindings; see `docs/BINDINGS.md`). M5 delivered the full rendering
-> feature set (color fonts: COLR v0/v1 layers, gradients, emoji; see
-> `docs/DESIGN.md` section 9); M6 froze the public API for bindings — the C
-> API (`imslug_c.h`) is a mirror with additions only. M7 (offline generator +
-> interop) is next.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M7
+> (offline generator + `.imslug` interop; see `docs/PACKED_FORMAT.md`). M5
+> delivered the full rendering feature set (color fonts: COLR v0/v1 layers,
+> gradients, emoji; see `docs/DESIGN.md` section 9); M6 froze the public API
+> for bindings — the C API (`imslug_c.h`) is a mirror with additions only. M7
+> added the `imslug_gen` CLI, the versioned `.imslug` container v1 and the
+> loader path (auto-detected by content, no outline parsing), including a
+> no-parser build (`-DIMSLUG_TTF_PARSER=OFF`). M8 (release polish) is next.
 
 ## Requirements
 
@@ -36,6 +38,7 @@ humans, CI and the `.opencode/commands`:
 | Build + run tests (ctest) | `scripts\test.bat` | `scripts/test.sh` |
 | Regenerate shader header | `scripts\gen_shaders.bat` | `scripts/gen_shaders.sh` |
 | Verify committed shader header | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
+| Regenerate the packed test asset (M7) | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
 | Golden-image tests (M2+) | `scripts\golden.bat` | `scripts/golden.sh` |
 | Dear ImGui master smoke (drift check) | `scripts\smoke_imgui_master.bat` | `scripts/smoke_imgui_master.sh` |
 | Benchmarks (M4+) | `scripts\bench.bat` | `scripts/bench.sh` |
@@ -63,12 +66,31 @@ every other font, shape and texture keeps going through ImGui's own path.
 Color fonts (COLR v0/v1) render one Slug instance per layer with per-fragment
 paint evaluation (flat colors, linear/radial/sweep gradients, ClipBoxes); the
 fetched Noto Color Emoji is used by the emoji scene and the emoji goldens.
+
+**Offline generation (M7).** The same entry points also accept pre-baked
+`.imslug` assets — auto-detected by content, no outline parsing:
+
+```sh
+imslug_gen font fonts/Inter.ttf --size-range 8:72 --chars 0x20-0x7E -o inter.imslug
+```
+
+```cpp
+ImFont* font = ImSlug::AddFontFromFileTTF("inter.imslug", 18.0f);  // same API
+```
+
+The container v1 (magic `IMSLUG`, versioned, little-endian, deterministic) holds
+font metrics, glyph records and the packed curve/band texels; `imslug_gen info`
+validates and inspects an asset, `--emit-header` embeds one in C. A build with
+`-DIMSLUG_TTF_PARSER=OFF` ships **without any TrueType parser** and loads packed
+assets only (the example's scene 9 and the no-parser CI job demonstrate it).
+Format, validation rules and limits: [`docs/PACKED_FORMAT.md`](docs/PACKED_FORMAT.md).
+
 The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
 `build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
 window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts,
 a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene, the fetched
-CJK subset and the color-emoji scene (with a zoom slider for the gradients),
-plus debug overlay toggles (F1/F2/F3) and
+CJK subset, the color-emoji scene (with a zoom slider for the gradients) and the
+packed-asset scene, plus debug overlay toggles (F1/F2/F3) and
 `--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
 
 C and Rust consumers use the `extern "C"` mirror (`imslug_c.h`) instead of the

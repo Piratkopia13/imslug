@@ -288,3 +288,30 @@ at 16–64 px and 1×–3.5× zoom; measured worst mean 0.031 LSB, worst channel
 LSB on isolated discontinuity ties, validation clean) and the ImGui-level
 `imslug_imgui` color tests (Colored marking, per-layer instances, tint alpha,
 layout parity).
+
+## 10. Offline assets and deployment (M7)
+
+Runtime font registration has two sources of glyph data, both feeding the same
+`ImSlugFont` API and the same shared pools:
+
+* **TTF at runtime** (`AddFontFromFileTTF`/`AddFontFromMemoryTTF`): outline
+  extraction + band construction on first use (the default; zero deployment
+  steps);
+* **Packed `.imslug` assets** (auto-detected by content): glyph records, curve
+  texels and band texels are copied from the baked container into the shared
+  pools on first use — no outline parsing at all.
+
+The offline generator (`imslug_gen`, `tools/imslug_gen/`) runs the *same* core
+code as the runtime path (font handle, band construction, packer) and
+serializes the result; `imslug_packed_roundtrip` proves the two are bitwise
+identical, so the choice is purely a deployment trade-off. The container v1 is
+versioned, deterministic and fully validated on load
+([`PACKED_FORMAT.md`](PACKED_FORMAT.md)); `imslug_gen info` inspects and
+validates an asset, `--emit-header` embeds one in a C build.
+
+A build configured with `-DIMSLUG_TTF_PARSER=OFF` compiles the core (and the
+whole app) **without stb_truetype**: only packed assets load, TTF sources fail
+cleanly with a warning, and the example's scene 9 / the no-parser CI job
+demonstrate rendering entirely from baked data. Typical uses: shipping a font
+subset without the parser, reproducible builds, and startup-time savings
+(packed loading is a copy, not an extraction).
