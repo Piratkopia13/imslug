@@ -412,22 +412,17 @@ namespace
             DrawStats uiStats;
             for (int frame = 0; frame < g_Options.CpuFrames; ++frame)
             {
-                std::fprintf(stderr, "[ui-debug] frame %d: scene\n", frame);
                 BuildTypicalUiScene(font, g_Options.FontSize);
-                std::fprintf(stderr, "[ui-debug] frame %d: render\n", frame);
                 ImGui::Render();
                 ImDrawData* drawData = ImGui::GetDrawData();
                 g_CpuRingUsed = 0;
                 g_CpuDrawCalls = 0;
                 g_CpuFrameIndex = (uint32_t)frame;
                 const double start = NowMs();
-                std::fprintf(stderr, "[ui-debug] frame %d: pre-pass\n", frame);
                 ImSlug::PreprocessDrawData(drawData);
-                std::fprintf(stderr, "[ui-debug] frame %d: stats\n", frame);
                 if (frame >= g_Options.CpuFrames / 4)
                     uiTimes.Add(NowMs() - start);
                 uiStats = CollectDrawStats(drawData);
-                std::fprintf(stderr, "[ui-debug] frame %d: done\n", frame);
             }
             Statistics uiStatistics;
             ImSlug::GetStatistics(&uiStatistics);

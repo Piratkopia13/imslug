@@ -47,7 +47,8 @@ layout(push_constant) uniform PushConstants
     vec4 MVP1;
     vec4 MVP2;
     vec4 MVP3;
-    vec2 Viewport;  // framebuffer dimensions, in pixels (reference slug_viewport.xy)
+    vec2 Viewport;   // framebuffer dimensions, in pixels (reference slug_viewport.xy)
+    uint DebugFlags; // M4 debug overlay flags (ImSlugVulkanDebugOverlay; 0 = off)
 } pc;
 
 // ----------------------------------------------------------------------------
@@ -59,6 +60,8 @@ layout(location = 1) flat out vec4 vBanding;  // band scale and offset
 layout(location = 2) flat out uvec2 vGlyphLoc;
 layout(location = 3) flat out uint vBandMaxWord;
 layout(location = 4) out vec4 vColor;
+layout(location = 5) out vec2 vScreenPos;                     // screen pixels (Y down), undilated
+layout(location = 6) flat out vec4 vScreenRect;               // instance ScreenRect (debug bounds)
 
 // Reference SlugDilate(): expands the vertex along its object-space normal so
 // the quad covers every pixel whose center is within half a pixel of the glyph
@@ -112,4 +115,9 @@ void main()
     vGlyphLoc = InGlyphLoc;
     vBandMaxWord = InBandMaxWord;
     vColor = InColor;
+    // Debug overlay inputs (M4): the undilated quad position and the source
+    // rectangle, so the fragment shader can outline the quad the run was asked
+    // to draw (ImSlugVulkanDebugOverlay_GlyphBounds).
+    vScreenPos = pos;
+    vScreenRect = InScreenRect;
 }

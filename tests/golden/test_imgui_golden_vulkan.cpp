@@ -684,12 +684,23 @@ namespace
     // ---------------------------------------------------------------------
     // Rendering one variant
     // ---------------------------------------------------------------------
-    bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name, int scene)
+    // M4: `overlayFlags` is applied with ImSlug_ImplVulkan_SetDebugOverlay
+    // after the module is up (Slug variants only); the default sentinel leaves
+    // whatever Config::DebugDrawBounds seeded (`seedConfigBounds` passes that
+    // config flag to ImSlug::Init). `outOverlayAfterInit` (when non-null)
+    // receives GetDebugOverlay() right after Init, so the config-seeded
+    // default can be verified.
+    const uint32_t kOverlayUnchanged = 0xFFFFFFFFu;
+    bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name, int scene,
+                       uint32_t overlayFlags = kOverlayUnchanged, bool seedConfigBounds = false,
+                       uint32_t* outOverlayAfterInit = nullptr)
     {
         ImGui::CreateContext();
         // ImSlug::Init requires a live context (imslug.h); the module lives per
         // variant because each variant owns its contexts/atlas.
-        if (!ImSlug::Init())
+        Config imslugConfig;
+        imslugConfig.DebugDrawBounds = seedConfigBounds;
+        if (!ImSlug::Init(imslugConfig))
         {
             std::printf("  [imslug-golden] ImSlug::Init failed (%s)\n", name);
             return false;
@@ -756,6 +767,18 @@ namespace
         {
             std::printf("  [imslug-golden] ImSlug_ImplVulkan_Init failed (%s)\n", name);
             return false;
+        }
+        if (outOverlayAfterInit != nullptr)
+            *outOverlayAfterInit = ImSlug_ImplVulkan_GetDebugOverlay();
+        if (slugVariant && overlayFlags != kOverlayUnchanged)
+        {
+            ImSlug_ImplVulkan_SetDebugOverlay(overlayFlags);
+            // Round-trip: the toggle must report exactly what was set.
+            if (ImSlug_ImplVulkan_GetDebugOverlay() != overlayFlags)
+            {
+                std::printf("  [imslug-golden] debug overlay round-trip failed (%s)\n", name);
+                return false;
+            }
         }
 
         bool ok = true;
@@ -899,6 +922,149 @@ namespace
                     (*outMissB)++;
             }
         return true;
+    }
+
+    // ---------------------------------------------------------------------
+    // M4 debug overlay checks
+    // ---------------------------------------------------------------------
+    // The outline color of ImSlugVulkanDebugOverlay_GlyphBounds
+    // (1.0, 0.45, 0.05) written with alpha 1, so it lands on the target almost
+    // exactly (8-bit rounding only).
+    int CountGlyphBoundsPixels(const unsigned char* pixels)
+    {
+        int count = 0;
+        for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+        {
+            const int r = pixels[i * 4 + 0];
+            const int g = pixels[i * 4 + 1];
+            const int b = pixels[i * 4 + 2];
+            if (r > 230 && g > 80 && g < 160 && b < 60)
+                ++count;
+        }
+        return count;
+    }
+
+    int CountNonBackgroundPixels(const unsigned char* pixels)
+    {
+        int count = 0;
+        for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+        {
+            if (pixels[i * 4 + 0] + pixels[i * 4 + 1] + pixels[i * 4 + 2] > 3 * 20)
+                ++count;
+        }
+        return count;
+    }
+
+    int CountDifferentPixels(const unsigned char* a, const unsigned char* b)
+    {
+        int count = 0;
+        for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+        {
+            const int da = std::abs((int)a[i * 4 + 0] - (int)b[i * 4 + 0]) +
+                           std::abs((int)a[i * 4 + 1] - (int)b[i * 4 + 1]) +
+                           std::abs((int)a[i * 4 + 2] - (int)b[i * 4 + 2]);
+            if (da > 8)
+                ++count;
+        }
+        return count;
+    }
+
+    // Renders the M3 acceptance scene with the overlay off, with the
+    // config-seeded bounds view, and with the two band views; every check is a
+    // regression test of the overlay plumbing (Config -> adapter -> push
+    // constants -> shaders).
+    void RunDebugOverlayChecks(int* failures)
+    {
+        unsigned char* plain = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
+        unsigned char* bounds = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
+        unsigned char* grid = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
+        unsigned char* heat = (unsigned char*)std::malloc((size_t)kWidth * kHeight * 4);
+        if (plain == nullptr || bounds == nullptr || grid == nullptr || heat == nullptr)
+        {
+            std::printf("imslug_tests_imgui_golden: FAIL (out of memory, overlay checks)\n");
+            ++(*failures);
+        }
+        else
+        {
+            std::printf("  debug overlay (scene 0):\n");
+            uint32_t overlayAfterInit = 0xFFFFFFFFu;
+            bool ok = RenderVariant(true, plain, "overlay-plain", 0, /*overlayFlags=*/kOverlayUnchanged,
+                                    /*seedConfigBounds=*/false, &overlayAfterInit);
+            TEST_CHECKF(overlayAfterInit == 0, "Config::DebugDrawBounds=false seeded overlay 0x%X", overlayAfterInit);
+            if (ok)
+                ok = RenderVariant(true, bounds, "overlay-bounds", 0, /*overlayFlags=*/kOverlayUnchanged,
+                                   /*seedConfigBounds=*/true, &overlayAfterInit);
+            TEST_CHECKF(overlayAfterInit == (uint32_t)ImSlugVulkanDebugOverlay_GlyphBounds,
+                        "Config::DebugDrawBounds=true seeded overlay 0x%X (expected GlyphBounds)", overlayAfterInit);
+            if (ok)
+                ok =
+                    RenderVariant(true, grid, "overlay-grid", 0,
+                                  (uint32_t)(ImSlugVulkanDebugOverlay_GlyphBounds | ImSlugVulkanDebugOverlay_BandGrid));
+            if (ok)
+                ok = RenderVariant(true, heat, "overlay-refs", 0,
+                                   (uint32_t)(ImSlugVulkanDebugOverlay_GlyphBounds | ImSlugVulkanDebugOverlay_RefHeat));
+            if (!ok)
+            {
+                std::printf("imslug_tests_imgui_golden: FAIL (overlay variant render)\n");
+                ++(*failures);
+            }
+            else
+            {
+                const int plainBoundsPixels = CountGlyphBoundsPixels(plain);
+                const int boundsPixels = CountGlyphBoundsPixels(bounds);
+                const int gridBoundsPixels = CountGlyphBoundsPixels(grid);
+                const int gridDifferent = CountDifferentPixels(bounds, grid);
+                const int heatDifferent = CountDifferentPixels(bounds, heat);
+                const int plainInk = CountNonBackgroundPixels(plain);
+                const int gridInk = CountNonBackgroundPixels(grid);
+                std::printf("  bounds pixels: plain %d, seeded %d, grid %d; grid diffs %d, ref-heat diffs %d\n",
+                            plainBoundsPixels, boundsPixels, gridBoundsPixels, gridDifferent, heatDifferent);
+                std::printf("  non-background pixels: plain %d, grid %d\n", plainInk, gridInk);
+                // The plain frame must not contain the outline color; the
+                // seeded and explicit variants must (a dense text frame has
+                // tens of thousands of outline pixels).
+                TEST_CHECKF(plainBoundsPixels < 50, "overlay off still drew %d bounds pixels", plainBoundsPixels);
+                TEST_CHECKF(boundsPixels > 3000, "config-seeded bounds outline only %d pixels", boundsPixels);
+                TEST_CHECKF(gridBoundsPixels > 3000, "bounds outline lost with the band grid (%d pixels)",
+                            gridBoundsPixels);
+                // Both band views must change a large part of the text area and
+                // keep the glyph ink (the grid paints the quad; ink never
+                // shrinks below the plain frame's ink).
+                TEST_CHECKF(gridDifferent > 10000, "band grid changed only %d pixels", gridDifferent);
+                TEST_CHECKF(heatDifferent > 10000, "ref heat changed only %d pixels", heatDifferent);
+                TEST_CHECKF(gridInk > plainInk, "band grid reduced non-background pixels (%d -> %d)", plainInk,
+                            gridInk);
+
+                // No text lost: every ink pixel of the plain frame must exist
+                // in the bounds frame (the outline only adds pixels; the other
+                // direction is expected to add outline ink outside the glyphs,
+                // so it is reported, not asserted).
+                unsigned char* maskPlain = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+                unsigned char* maskBounds = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+                if (maskPlain != nullptr && maskBounds != nullptr)
+                {
+                    BuildInkMask(plain, maskPlain);
+                    BuildInkMask(bounds, maskBounds);
+                    int missPlain = 0, missBounds = 0;
+                    MasksAgree(maskPlain, maskBounds, &missPlain, &missBounds);
+                    std::printf("  ink mask: plain->bounds misses %d, bounds->plain %d (outline ink)\n", missPlain,
+                                missBounds);
+                    TEST_CHECKF(missPlain == 0, "overlay bounds removed %d ink pixels of the plain frame", missPlain);
+                }
+                std::free(maskPlain);
+                std::free(maskBounds);
+
+                WritePpm("overlay_plain.ppm", plain);
+                WritePpm("overlay_bounds.ppm", bounds);
+                WritePpm("overlay_grid.ppm", grid);
+                WritePpm("overlay_refs.ppm", heat);
+                std::printf("  frames: overlay_{plain,bounds,grid,refs}.ppm\n");
+            }
+        }
+        std::free(plain);
+        std::free(bounds);
+        std::free(grid);
+        std::free(heat);
     }
 }  // namespace
 
@@ -1055,6 +1221,9 @@ int main(int argc, char** argv)
             std::printf("  frames: imgui_golden_s%d_slug.ppm / imgui_golden_s%d_atlas.ppm\n", scene, scene);
         }
     }
+
+    // M4: the debug overlay views (also pins the Config seeding + toggle).
+    RunDebugOverlayChecks(&failures);
 
     if (g_State.ValidationErrors > 0)
     {

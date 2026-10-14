@@ -131,6 +131,11 @@ namespace ImSlug
         float ViewportWidth = 0.0f;   // framebuffer pixels; must match the bound viewport
         float ViewportHeight = 0.0f;  // (SlugDilate's `dim`, in pixels)
         VkRect2D Scissor = {};
+
+        // M4 debug overlay flags (ImSlugVulkanDebugOverlay; 0 = off). The
+        // value rides the push constants into the shaders; it never changes
+        // geometry, placement or the fallback behavior.
+        uint32_t DebugFlags = 0;
     };
 
     // Records one Slug draw call: binds the pipeline (created lazily for
@@ -145,6 +150,33 @@ namespace ImSlug
     // The caller owns the viewport dynamic state: bind a viewport matching
     // ViewportWidth/Height before drawing (the example sets it once per frame).
     void ImSlugVulkanDraw(VkCommandBuffer cmd, const ImSlugVulkanDrawInfo* drawInfo);
+
+    // ---------------------------------------------------------------------
+    // M4 debug overlay
+    // ---------------------------------------------------------------------
+    // Renders every Slug glyph with a diagnostic visualization on top of the
+    // normal text:
+    //   * GlyphBounds: a 1px outline of each glyph's *drawn* quad (the rect
+    //     ImGui's text logic produced, after fine clipping) - the same input
+    //     Config::DebugDrawBounds validates the reconstructed instance
+    //     against, so a generator/placement bug shows up as an instance whose
+    //     ink does not fill its outline;
+    //   * BandGrid: a checkerboard of the glyph's H/V band grid (adjacent
+    //     bands alternate tint), so band assignment and band boundaries are
+    //     visible per glyph;
+    //   * RefHeat: a heatmap of the band-reference walk cost of every pixel
+    //     (blue = lowest, red = >= 16 references fetched), i.e. the fragment
+    //     work the band tuning (PLAN section 11 D13) balances against memory.
+    // Flags combine; RefHeat takes precedence over BandGrid when both are set.
+    // The overlay is a rendering aid only: it never changes geometry,
+    // placement, draw order or the atlas fallback.
+    enum ImSlugVulkanDebugOverlay
+    {
+        ImSlugVulkanDebugOverlay_None = 0,
+        ImSlugVulkanDebugOverlay_GlyphBounds = 1 << 0,
+        ImSlugVulkanDebugOverlay_BandGrid = 1 << 1,
+        ImSlugVulkanDebugOverlay_RefHeat = 1 << 2,
+    };
 
     // ---------------------------------------------------------------------
     // M3 ImGui adapter (implements the bridge to the stock ImGui Vulkan
@@ -180,6 +212,14 @@ namespace ImSlug
     // one); `mainPipeline` mirrors ImGui_ImplVulkan_RenderDrawData's argument.
     IMSLUG_API void ImSlug_ImplVulkan_RenderDrawData(ImDrawData* drawData, VkCommandBuffer cmd,
                                                      VkPipeline mainPipeline = VK_NULL_HANDLE);
+
+    // Runtime toggle for the M4 debug overlay (ImSlugVulkanDebugOverlay flags;
+    // 0 = off). The initial value comes from Config::DebugDrawBounds (glyph
+    // bounds), so an app that never calls this still gets the overlay the
+    // config asked for. Takes effect on the next RenderDrawData; the overlay
+    // is per-module (not per viewport) and does not survive Shutdown.
+    IMSLUG_API void ImSlug_ImplVulkan_SetDebugOverlay(uint32_t overlayFlags);
+    IMSLUG_API uint32_t ImSlug_ImplVulkan_GetDebugOverlay();
 
     // ---------------------------------------------------------------------
     // Helpers shared by the example and the golden harness

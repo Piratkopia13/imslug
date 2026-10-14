@@ -30,14 +30,35 @@ layout(location = 1) flat in vec4 vBanding;  // (bandScaleX, bandScaleY, bandOff
 layout(location = 2) flat in uvec2 vGlyphLoc;
 layout(location = 3) flat in uint vBandMaxWord;  // bandMaxX | bandMaxY << 16 | E << 28
 layout(location = 4) in vec4 vColor;
+layout(location = 5) in vec2 vScreenPos;         // screen pixels (Y down), undilated (debug)
+layout(location = 6) flat in vec4 vScreenRect;   // source quad (debug bounds)
 
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D curveTexture;  // RGBA16F control points
 layout(set = 0, binding = 1) uniform usampler2D bandTexture;  // R16G16_UINT headers/refs
 
+// The push constant block mirrors shaders/vulkan/slug.vert; only the debug
+// flags are read here, but the offsets must stay in sync (Viewport at 64).
+layout(push_constant) uniform PushConstants
+{
+    vec4 MVP0;
+    vec4 MVP1;
+    vec4 MVP2;
+    vec4 MVP3;
+    vec2 Viewport;
+    uint DebugFlags;
+} pc;
+
 const int kLogBandTextureWidth = 12;  // fixed pool width 4096 (imslug_internal.h)
 const float kSolverEpsilon = 1.0 / 65536.0;
+
+// M4 debug overlay flags (mirror ImSlugVulkanDebugOverlay in
+// backends/imslug_impl_vulkan.h). RefHeat takes precedence over BandGrid.
+const uint kDebugFlagGlyphBounds = 1u;  // 1px outline of the drawn quad
+const uint kDebugFlagBandGrid = 2u;     // H/V band checkerboard per glyph
+const uint kDebugFlagRefHeat = 4u;      // band reference walk cost heatmap
+const float kRefHeatScale = 16.0;       // refs walked -> [0,1] heat
 
 // Reference CalcRootCode(): root eligibility code from the signs of the three
 // control-point y values. Eligibility is returned in bits 0 and 8.
@@ -142,6 +163,7 @@ void main()
 
     float xcov = 0.0;
     float xwgt = 0.0;
+    uint refCount = 0u;  // debug overlay: band references whose curve was fetched
 
     // Horizontal band header: (curveCount, offset), then the reference list.
     // (texelFetch on a usampler2D returns uvec4; the R16G16_UINT pool carries
@@ -151,6 +173,7 @@ void main()
     for (int curveIndex = 0; curveIndex < int(hbandData.x); ++curveIndex)
     {
         ivec2 curveLoc = ivec2(texelFetch(bandTexture, ivec2(hbandLoc.x + curveIndex, hbandLoc.y), 0).xy);
+        ++refCount;
 
         // Make the control points sample-relative.
         vec4 p12 = texelFetch(curveTexture, curveLoc, 0) - vec4(vTexCoord, vTexCoord);
@@ -188,6 +211,7 @@ void main()
     for (int curveIndex = 0; curveIndex < int(vbandData.x); ++curveIndex)
     {
         ivec2 curveLoc = ivec2(texelFetch(bandTexture, ivec2(vbandLoc.x + curveIndex, vbandLoc.y), 0).xy);
+        ++refCount;
         vec4 p12 = texelFetch(curveTexture, curveLoc, 0) - vec4(vTexCoord, vTexCoord);
         vec2 p3 = texelFetch(curveTexture, ivec2(curveLoc.x + 1, curveLoc.y), 0).xy - vTexCoord;
 
@@ -214,6 +238,40 @@ void main()
     }
 
     float fill = CalcCoverage(xcov, ycov, xwgt, ywgt, vBandMaxWord);
+
+    // M4 debug overlay: rebuild the fragment color for the requested views.
+    // Debug views never discard and keep the whole dilated quad visible, so
+    // the band/ref diagnostics show up outside the glyph body as well.
+    if (pc.DebugFlags != 0u)
+    {
+        vec4 debugColor = vec4(vColor.rgb, vColor.a * fill);
+        if ((pc.DebugFlags & kDebugFlagRefHeat) != 0u)
+        {
+            // Walk cost of this pixel: blue (0 refs) -> red (>= kRefHeatScale).
+            const float heat = clamp(float(refCount) / kRefHeatScale, 0.0, 1.0);
+            debugColor = vec4(heat, 0.5 - abs(heat - 0.5), 1.0 - heat, 0.55 + 0.45 * fill);
+        }
+        else if ((pc.DebugFlags & kDebugFlagBandGrid) != 0u)
+        {
+            // Checkerboard of the glyph's H/V band grid: alternating cell
+            // parity picks the tint, so every band is visibly distinct.
+            const float checker = float(((bandIndex.x >> 1) + bandIndex.y) & 1);
+            debugColor.rgb =
+                mix(debugColor.rgb, mix(vec3(0.12, 0.45, 1.0), vec3(1.0, 0.85, 0.15), checker), 0.6);
+            debugColor.a = 0.45 + 0.55 * fill;
+        }
+        if ((pc.DebugFlags & kDebugFlagGlyphBounds) != 0u)
+        {
+            // Distance to the nearest source-quad edge, in screen pixels; the
+            // position is the undilated one, so the outline sits exactly on the
+            // quad ImGui asked the run to draw (the DebugDrawBounds source).
+            const vec2 edgeDistance = min(vScreenPos - vScreenRect.xy, vScreenRect.zw - vScreenPos);
+            if (min(edgeDistance.x, edgeDistance.y) < 1.0)
+                debugColor = vec4(1.0, 0.45, 0.05, 1.0);
+        }
+        outColor = debugColor;
+        return;
+    }
 
     // Perf guard from the port checklist: nothing to blend below 0.001.
     if (fill < 0.001)

@@ -12,10 +12,12 @@
 //
 // Usage:
 //   imslug_example_glfw_vulkan [--font <path>] [--size <px>]
+//                              [--overlay <none|bounds|grid|refs>]
 //                              [--screenshot <file.ppm> [scene] [dpi_scale]]
 // Keys:
 //   1 .. 7   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk)
 //   + / -    base font size +-1 px (12 .. 48)
+//   F1/F2/F3 debug overlay: glyph bounds / band grid / reference-walk heat
 //   0        reset fonts/DPI to the defaults    Esc     quit
 //
 // Third-party: Dear ImGui (MIT, pinned v1.92.9b) and GLFW (zlib license) are
@@ -98,6 +100,11 @@ namespace
         bool ShowDemoStats;
         int SlugGlyphCount;
         int SlugRunCount;
+
+        // M4 debug overlay flags (applied after the backend module init; see
+        // --overlay on the command line and the F1/F2/F3 toggles).
+        uint32_t DebugOverlay;
+        bool DebugOverlayGiven;  // --overlay was passed (else keep the config seed)
 
         const char* FontPath;
 
@@ -834,6 +841,20 @@ namespace
         ImGui::End();
     }
 
+    // M4 debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
+    // Returns the new state so a caller can react (keys and checkboxes share it).
+    bool ToggleDebugOverlay(uint32_t flag)
+    {
+        uint32_t overlay = ImSlug_ImplVulkan_GetDebugOverlay();
+        overlay ^= flag;
+        ImSlug_ImplVulkan_SetDebugOverlay(overlay);
+        printf("[imslug] debug overlay: 0x%X%s%s%s\n", overlay,
+               (overlay & ImSlugVulkanDebugOverlay_GlyphBounds) ? " bounds" : "",
+               (overlay & ImSlugVulkanDebugOverlay_BandGrid) ? " band-grid" : "",
+               (overlay & ImSlugVulkanDebugOverlay_RefHeat) ? " ref-heat" : "");
+        return (overlay & flag) != 0;
+    }
+
     void DrawSceneSwitcher()
     {
         const char* sceneNames[kSceneCount] = { "demo window",         "widgets / plots / tables", "clipping torture",
@@ -859,6 +880,20 @@ namespace
         ImGui::Text("Slug: %u instances, %u runs\n(%u slabs, %u dropped)", stats.Instances, stats.LiveBatches,
                     stats.GlyphSlabs, stats.DroppedRuns);
         ImGui::Text("validation: %s", g_App.ValidationEnabled ? "ON" : "off");
+        ImGui::Separator();
+        ImGui::Text("debug overlay (F1/F2/F3):");
+        {
+            const uint32_t overlay = ImSlug_ImplVulkan_GetDebugOverlay();
+            bool bounds = (overlay & ImSlugVulkanDebugOverlay_GlyphBounds) != 0;
+            bool bands = (overlay & ImSlugVulkanDebugOverlay_BandGrid) != 0;
+            bool refs = (overlay & ImSlugVulkanDebugOverlay_RefHeat) != 0;
+            if (ImGui::Checkbox("glyph bounds", &bounds))
+                ToggleDebugOverlay(ImSlugVulkanDebugOverlay_GlyphBounds);
+            if (ImGui::Checkbox("band grid", &bands))
+                ToggleDebugOverlay(ImSlugVulkanDebugOverlay_BandGrid);
+            if (ImGui::Checkbox("ref heat", &refs))
+                ToggleDebugOverlay(ImSlugVulkanDebugOverlay_RefHeat);
+        }
         ImGui::End();
     }
 
@@ -1059,6 +1094,12 @@ namespace
             g_App.Scene = g_App.Scene < kSceneCount - 1 ? g_App.Scene + 1 : kSceneCount - 1;
         else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT)
             g_App.Scene = g_App.Scene > 0 ? g_App.Scene - 1 : 0;
+        else if (key == GLFW_KEY_F1)
+            ToggleDebugOverlay(ImSlugVulkanDebugOverlay_GlyphBounds);
+        else if (key == GLFW_KEY_F2)
+            ToggleDebugOverlay(ImSlugVulkanDebugOverlay_BandGrid);
+        else if (key == GLFW_KEY_F3)
+            ToggleDebugOverlay(ImSlugVulkanDebugOverlay_RefHeat);
         else if (key == GLFW_KEY_0)
         {
             g_App.BaseSize = kDefaultSize;
@@ -1195,11 +1236,14 @@ namespace
         g_App.FontPath = nullptr;
         g_App.BaseSize = kDefaultSize;
         g_App.Scene = 0;
+        int sceneNumber = 0;  // 1-based scene number on the CLI (0 = not given)
         g_App.DpiScale = 1.0f;
         g_App.ShowDemoStats = false;
         g_App.ScreenshotPath = nullptr;
         g_App.ScreenshotFrame = 3;
         g_App.FramesRendered = 0;
+        g_App.DebugOverlay = 0;
+        g_App.DebugOverlayGiven = false;
         for (int i = 1; i < argc; ++i)
         {
             if (strcmp(argv[i], "--font") == 0 && i + 1 < argc)
@@ -1207,23 +1251,41 @@ namespace
             else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
                 g_App.BaseSize = atoi(argv[++i]);
             else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
-                g_App.Scene = atoi(argv[++i]);
+                sceneNumber = atoi(argv[++i]);
             else if (strcmp(argv[i], "--dpi") == 0 && i + 1 < argc)
                 g_App.DpiScale = (float)atof(argv[++i]);
             else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             {
                 g_App.ScreenshotPath = argv[++i];
                 if (i + 1 < argc && argv[i + 1][0] != '-')
-                    g_App.Scene = atoi(argv[++i]);
+                    sceneNumber = atoi(argv[++i]);
                 if (i + 1 < argc && argv[i + 1][0] != '-')
                     g_App.DpiScale = (float)atof(argv[++i]);
+            }
+            else if (strcmp(argv[i], "--overlay") == 0 && i + 1 < argc)
+            {
+                const char* spec = argv[++i];
+                uint32_t flags = 0;
+                if (strstr(spec, "bounds") != nullptr)
+                    flags |= ImSlugVulkanDebugOverlay_GlyphBounds;
+                if (strstr(spec, "grid") != nullptr)
+                    flags |= ImSlugVulkanDebugOverlay_BandGrid;
+                if (strstr(spec, "refs") != nullptr)
+                    flags |= ImSlugVulkanDebugOverlay_RefHeat;
+                if (flags == 0 && spec[0] >= '0' && spec[0] <= '9')
+                    flags = (uint32_t)atoi(spec);
+                if (strcmp(spec, "none") == 0)
+                    flags = 0;
+                g_App.DebugOverlay = flags;
+                g_App.DebugOverlayGiven = true;
             }
             else if (strcmp(argv[i], "--help") == 0)
             {
                 printf("usage: imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--scene <1-%d>]\n"
-                       "                                  [--dpi <scale>]\n"
-                       "                                  [--screenshot <file.ppm> [scene] [dpi_scale]]\n",
-                       kSceneCount);
+                       "                                  [--dpi <scale>] [--overlay <none|bounds|grid|refs>]\n"
+                       "                                  [--screenshot <file.ppm> [scene] [dpi_scale]]\n"
+                       "keys: 1-%d scenes, +/- scene, F1 glyph bounds, F2 band grid, F3 ref heat, 0 reset\n",
+                       kSceneCount, kSceneCount);
                 exit(0);
             }
             else
@@ -1236,14 +1298,14 @@ namespace
             g_App.BaseSize = kMinSize;
         if (g_App.BaseSize > kMaxSize)
             g_App.BaseSize = kMaxSize;
+        if (sceneNumber != 0)
+            g_App.Scene = sceneNumber - 1;  // scenes are 1-based on the CLI (the UI keys)
         if (g_App.Scene < 0 || g_App.Scene >= kSceneCount)
             g_App.Scene = 0;
         if (g_App.DpiScale < 0.5f)
             g_App.DpiScale = 0.5f;
         if (g_App.DpiScale > 3.0f)
             g_App.DpiScale = 3.0f;
-        if (g_App.ScreenshotPath != nullptr)
-            g_App.Scene = g_App.Scene;  // scenes are 1-based on the CLI, see below
     }
 
     int Run()
@@ -1360,6 +1422,10 @@ namespace
                 if (g_App.FramesInFlight == 0 || g_App.FramesInFlight > kMaxFramesInFlight)
                     g_App.FramesInFlight = 1;
                 g_App.FontsDirty = true;  // add the fonts (needs the module)
+                // --overlay applied after the module exists; without the flag
+                // the Config seed (DebugDrawBounds) stays in effect.
+                if (g_App.DebugOverlayGiven)
+                    ImSlug_ImplVulkan_SetDebugOverlay(g_App.DebugOverlay);
             }
         }
 

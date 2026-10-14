@@ -44,8 +44,9 @@ namespace ImSlug
             float MVP[4][4];
             float ViewportWidth;
             float ViewportHeight;
+            uint32_t DebugFlags;  // M4 debug overlay (ImSlugVulkanDebugOverlay)
         };
-        static_assert(sizeof(PushConstants) == 72, "push constant block must match slug.vert");
+        static_assert(sizeof(PushConstants) == 76, "push constant block must match slug.vert");
 
         struct Buffer
         {
@@ -669,7 +670,9 @@ namespace ImSlug
                 "vkCreateDescriptorSetLayout");
 
         VkPushConstantRange pushRange = {};
-        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        // Both stages declare the block in slug.vert/frag (the fragment stage
+        // reads DebugFlags), so the layout range must cover both.
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
         pushRange.size = (uint32_t)sizeof(PushConstants);
         VkPipelineLayoutCreateInfo layoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -896,7 +899,11 @@ namespace ImSlug
         memcpy(push.MVP, drawInfo->MVP, sizeof(push.MVP));
         push.ViewportWidth = drawInfo->ViewportWidth;
         push.ViewportHeight = drawInfo->ViewportHeight;
-        vkCmdPushConstants(cmd, g_State.PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+        push.DebugFlags = drawInfo->DebugFlags;
+        // Both stages own the block (the fragment shader reads DebugFlags), so
+        // the push must name every stage of the layout's range (VUID-...-01796).
+        vkCmdPushConstants(cmd, g_State.PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(push), &push);
 
         const uint64_t ringFirstInstance = (uint64_t)frameIndex * g_State.InstanceCapacity + (uint64_t)firstInstance;
         IMSLUG_ASSERT(ringFirstInstance <= UINT32_MAX);
@@ -932,6 +939,11 @@ namespace ImSlug
             bool DynamicRendering;
             VkRenderPass RenderPass;  // main viewport (multi-viewport: compatible passes)
             uint32_t Subpass;
+
+            // M4 debug overlay flags (ImSlugVulkanDebugOverlay), toggled with
+            // ImSlug_ImplVulkan_SetDebugOverlay; seeded from
+            // Config::DebugDrawBounds at Init.
+            uint32_t DebugOverlay;
 
             // Per-frame slot and the instance allocation cursor inside it.
             uint32_t FrameIndex;      // ring slot for the current frame
@@ -1011,6 +1023,7 @@ namespace ImSlug
             drawInfo.MVP = mvp;
             drawInfo.ViewportWidth = (float)g_ImGuiVulkan.FramebufferWidth;
             drawInfo.ViewportHeight = (float)g_ImGuiVulkan.FramebufferHeight;
+            drawInfo.DebugFlags = g_ImGuiVulkan.DebugOverlay;
             drawInfo.Scissor.offset.x = (int32_t)clipMinX;
             drawInfo.Scissor.offset.y = (int32_t)clipMinY;
             drawInfo.Scissor.extent.width = (uint32_t)(clipMaxX - clipMinX);
@@ -1066,6 +1079,10 @@ namespace ImSlug
         g_ImGuiVulkan.DynamicRendering = initInfo->UseDynamicRendering;
         g_ImGuiVulkan.RenderPass = initInfo->PipelineInfoMain.RenderPass;
         g_ImGuiVulkan.Subpass = initInfo->PipelineInfoMain.Subpass;
+        // Config::DebugDrawBounds seeds the glyph-bounds overlay (the runtime
+        // toggle stays available for the band views).
+        g_ImGuiVulkan.DebugOverlay = config->DebugDrawBounds ? (uint32_t)ImSlugVulkanDebugOverlay_GlyphBounds
+                                                             : (uint32_t)ImSlugVulkanDebugOverlay_None;
         ImSlugSetRenderIO(&g_ImGuiRenderIO);
         return true;
     }
@@ -1123,5 +1140,23 @@ namespace ImSlug
         ImGui_ImplVulkan_RenderDrawData(drawData, cmd, mainPipeline);
 
         g_ImGuiVulkan.FramebufferWidth = g_ImGuiVulkan.FramebufferHeight = 0;
+    }
+
+    void ImSlug_ImplVulkan_SetDebugOverlay(uint32_t overlayFlags)
+    {
+        // Valid while the module is initialized; a call before Init is ignored
+        // (debug builds assert - the caller asked for a view that cannot exist).
+        IMSLUG_ASSERT(g_ImGuiVulkan.Initialized);
+        if (!g_ImGuiVulkan.Initialized)
+            return;
+        IMSLUG_ASSERT(
+            (overlayFlags & ~(uint32_t)(ImSlugVulkanDebugOverlay_GlyphBounds | ImSlugVulkanDebugOverlay_BandGrid |
+                                        ImSlugVulkanDebugOverlay_RefHeat)) == 0);
+        g_ImGuiVulkan.DebugOverlay = overlayFlags;
+    }
+
+    uint32_t ImSlug_ImplVulkan_GetDebugOverlay()
+    {
+        return g_ImGuiVulkan.Initialized ? g_ImGuiVulkan.DebugOverlay : (uint32_t)ImSlugVulkanDebugOverlay_None;
     }
 }  // namespace ImSlug
