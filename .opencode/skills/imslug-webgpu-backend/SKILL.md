@@ -272,18 +272,22 @@ pass** -> begin pass -> `ImSlug_ImplWGPU_RenderDrawData(draw_data, pass)`.
   (`index.html`, `index.js`, `index.wasm`, `.nojekyll`). Overrides mirror the
   other scripts (`IMSLUG_BUILD_DIR`, `IMSLUG_BUILD_TYPE`, `IMSLUG_CMAKE`,
   `IMSLUG_RECONFIGURE`, `IMSLUG_CMAKE_DEFINES`, plus `IMSLUG_NATIVE_BUILD_DIR`).
-* `scripts/web_smoke.*`: Node >= 22, puppeteer-core pinned (25.13.0), headless
-  Chrome; serves the site and waits for >= 60 frames + ready, checks
-  `__imslugError` empty, console/page errors, and an ink fraction >= 0.002 in a
-  screenshot; writes `build-web/smoke.png`. `IMSLUG_SMOKE_ADAPTER=swiftshader`
-  is the default (software, CI-safe) and maps to
-  `--use-webgpu-adapter=swiftshader`; any other value uses the default adapter
-  (`force_swiftshader` is *not* a valid flag value - it silently falls back to
-  the default). `IMSLUG_SMOKE_NO_HOOKS=1` smoke-tests a foreign WebGPU page
+* `scripts/web_smoke.*`: Node >= 22, puppeteer-core pinned (25.13.0), Chrome;
+  serves the site and waits for >= 60 frames + ready, checks `__imslugError`
+  empty, console/page errors, and an ink fraction >= 0.002 in a screenshot;
+  writes `build-web/smoke.png`; retries the whole run
+  (`IMSLUG_SMOKE_RETRIES`) and prints collected console/page errors per failed
+  attempt. Adapters: `swiftshader` (default; `--use-webgpu-adapter=swiftshader`
+  - note `force_swiftshader` is *not* a valid value and silently falls back to
+  the default), `native` (default adapter), `lavapipe` (software Dawn over Mesa
+  lavapipe: `--enable-features=Vulkan --disable-vulkan-surface`, headed Chrome,
+  needs a display + `VK_DRIVER_FILES=<lvp_icd.x86_64.json>`; run under
+  `xvfb-run -a`). `IMSLUG_SMOKE_NO_HOOKS=1` smoke-tests a foreign WebGPU page
   (dwell + screenshot + pixel check only).
-* `.github/workflows/pages.yml`: build -> smoke (starts `continue-on-error: true`
-  until proven stable on the runner; fallback if SwiftShader proves unusable:
-  Mesa lavapipe + xvfb) -> deploy; Pages source = "GitHub Actions".
+* `.github/workflows/pages.yml`: build -> smoke -> deploy; Pages source =
+  "GitHub Actions". The runner uses **lavapipe + xvfb** (SwiftShader devices die
+  at startup on GitHub runners - verified: three attempts, all "device lost"),
+  and the smoke step starts `continue-on-error: true` until proven stable.
 
 ## Pitfalls (learned, keep)
 

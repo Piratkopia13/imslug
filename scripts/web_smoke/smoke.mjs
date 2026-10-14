@@ -18,7 +18,12 @@
 //   IMSLUG_SMOKE_SITE     site root to serve      (default: build-web/site)
 //   IMSLUG_SMOKE_OUT      screenshot path         (default: build-web/smoke.png)
 //   IMSLUG_SMOKE_CHROME   Chrome/Chromium executable
-//   IMSLUG_SMOKE_ADAPTER  "swiftshader" (default; software, CI-safe) or "native"
+//   IMSLUG_SMOKE_ADAPTER  "swiftshader" (default; software, local-friendly) or
+//                         "native" (real GPU) or "lavapipe" (software Dawn
+//                         over Mesa lavapipe; run under `xvfb-run -a` with
+//                         VK_DRIVER_FILES pointing at the lavapipe ICD - the
+//                         GitHub-runner recipe, since SwiftShader devices
+//                         occasionally die there)
 //   IMSLUG_SMOKE_FRAMES   frames to wait for      (default: 60)
 //   IMSLUG_SMOKE_TIMEOUT_MS  frames timeout       (default: 180000)
 //   IMSLUG_SMOKE_DWELL_MS    wait when NO_HOOKS=1 (default: 8000)
@@ -91,7 +96,7 @@ async function runAttempt({ executablePath, args, url, options }) {
 
     const browser = await puppeteer.launch({
         executablePath,
-        headless: true,
+        headless: options.headless,
         args,
         protocolTimeout: Math.max(options.framesTimeoutMs + 60000, 300000),
     });
@@ -229,12 +234,22 @@ async function main() {
         "--mute-audio",
         "--window-size=1280,800",
     ];
+    let headless = true;
     if (adapter === "swiftshader") {
-        // Software WebGPU: the CI-safe path for runner machines without a GPU.
+        // Software WebGPU: works locally; GitHub runners occasionally lose the
+        // SwiftShader device at startup - see the lavapipe mode below.
         args.push("--enable-unsafe-webgpu", "--use-webgpu-adapter=swiftshader");
+    } else if (adapter === "lavapipe") {
+        // Software Dawn over Mesa lavapipe (Vulkan): the three.js CI recipe.
+        // Run it under `xvfb-run -a` with VK_DRIVER_FILES set to the lavapipe
+        // ICD; Chrome runs headed on the virtual display.
+        args.push("--enable-unsafe-webgpu", "--enable-features=Vulkan", "--disable-vulkan-surface",
+                  "--ignore-gpu-blocklist", "--disable-gpu-driver-bug-workarounds");
+        headless = false;
     } else {
         args.push("--enable-unsafe-webgpu");
     }
+    options.headless = headless;
 
     console.log(`[web_smoke] url=${url}`);
     console.log(`[web_smoke] chrome=${executablePath} adapter=${adapter} hooks=${noHooks ? "off" : "on"} retries=${retries}`);

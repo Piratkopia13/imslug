@@ -6,13 +6,13 @@
 # so Pages' defaults work as-is. configure-pages with enablement: true sets the
 # Pages source to "GitHub Actions" on first run.
 #
-# The browser smoke (scripts/web_smoke.sh) drives headless Chrome with the
-# software WebGPU adapter. It starts as informational (continue-on-error)
-# until it is proven stable on the runner; delete that line to promote it to a
-# required gate. If SwiftShader proves unusable there, the documented fallback
-# is Mesa lavapipe + xvfb (see the imslug-webgpu-backend skill). The smoke
-# retries the whole run twice on runner hiccups (a fresh browser recovers from
-# the occasional device loss).
+# The browser smoke (scripts/web_smoke.sh) drives Chrome with a software WebGPU
+# adapter: lavapipe (Mesa's software Vulkan) under xvfb on the runner - the
+# SwiftShader path dies at startup there - and SwiftShader locally (the smoke's
+# default adapter). It starts as informational (continue-on-error) until it is
+# proven stable on the runner; delete that line to promote it to a required
+# gate. The smoke retries the whole run twice on runner hiccups (a fresh
+# browser recovers from the occasional device loss).
 
 name: Web demo (GitHub Pages)
 
@@ -49,16 +49,23 @@ jobs:
           ./scripts/fetch_emoji_font.sh
       - name: Build the web demo
         run: ./scripts/build_web.sh
-      - name: Browser smoke (headless Chrome, software WebGPU adapter)
+      - name: Install software Vulkan (lavapipe) + xvfb for the browser smoke
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers xvfb
+      - name: Browser smoke (headed Chrome on xvfb, software WebGPU via lavapipe)
         continue-on-error: true
         env:
+          IMSLUG_SMOKE_ADAPTER: lavapipe
           IMSLUG_SMOKE_TIMEOUT_MS: "300000"
-          # Software WebGPU on shared runners occasionally loses its device
-          # mid-startup; a fresh browser usually recovers. If SwiftShader
-          # proves unusable on the runner, the documented fallback is Mesa
-          # lavapipe + xvfb (see the imslug-webgpu-backend skill).
           IMSLUG_SMOKE_RETRIES: "2"
-        run: ./scripts/web_smoke.sh
+        run: |
+          # The three.js CI recipe: software Dawn over Mesa lavapipe under
+          # xvfb. SwiftShader devices die at startup on these runners, so the
+          # software adapter here is lavapipe (VK_DRIVER_FILES selects the ICD).
+          VK_DRIVER_FILES="$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json | head -1)" xvfb-run -a ./scripts/web_smoke.sh
       - name: Upload the smoke screenshot
         if: always()
         uses: actions/upload-artifact@v7
