@@ -20,17 +20,28 @@ into ImGui ≥ 1.92.8 through the documented font-loader and draw-data interface
 ImGui `master` so API drift is noticed early (1.93 is not supported yet).
 
 **Which platforms / backends?**
-Vulkan only in v0.1 (Vulkan 1.2+, the committed SPIR-V is 1.5), on any OS
+Vulkan (1.2+; the committed SPIR-V is 1.5) is the reference backend, on any OS
 Vulkan runs on (developed and CI-tested on Windows/MSVC and Linux/GCC). A
-second backend is planned after v0.1 with **GL3 first** if and when needed;
-the core, pre-pass and data formats are backend-independent, so a new backend
-is a new module, not a rewrite.
+**WebGPU backend** (WGSL shaders, `backends/imslug_impl_webgpu.*`) runs the
+same pipeline in the browser through Emscripten. The core, pre-pass and data
+formats are backend-independent, so a further backend is a new module, not a
+rewrite; a desktop GL3 backend has no plan of record (WebGPU covers the
+browser).
 
 **Does it need a specific GPU?**
 No. The device must support the two pool formats
 (`R16G16B16A16_SFLOAT`, `R16G16_UINT`) and Vulkan 1.2; if not, imslug reports
 failure at init and text stays on the stock path. The CI golden tests run on
 lavapipe (software Vulkan), and local development targets a discrete GPU.
+
+**What does the browser demo need?**
+WebGPU: Chrome/Edge 113+ (Windows/macOS/ChromeOS), 121+ (Android) or recent
+Linux; Firefox 141+ (Windows) / 145+ (macOS); Safari 26+ (macOS/iOS). The page
+checks `navigator.gpu` and shows a notice otherwise. The web build has no
+filesystem: fonts are the embedded Roboto packed asset / atlas TTF plus the
+fetched CJK subset when embedded at build time; the color-emoji scene shows
+its "font not fetched" message (the 25 MB emoji font is not shipped). See
+`docs/INTEGRATION.md` §13 and `scripts/build_web.*`.
 
 **How mature is it?**
 v0.1.0 is the first release: feature-complete (glyph pipeline, Vulkan renderer,
@@ -153,7 +164,7 @@ issues are much easier to triage with a `--screenshot` PPM from the example app
 and the validation-layer output.
 
 **What is not in v0.1?**
-OTF/CFF (above), a second backend, multi-viewport beyond compatible render
-passes, packed color assets, and the `imgui-rs-vulkan-renderer` integration
-(prerequisites documented in `docs/BINDINGS.md`). `DESIGN.md` §8 is the
-authoritative list.
+OTF/CFF (above), a desktop GL backend, multi-viewport beyond compatible render
+passes, packed color assets, emoji in the browser build, and the
+`imgui-rs-vulkan-renderer` integration (prerequisites documented in
+`docs/BINDINGS.md`). `DESIGN.md` §8 is the authoritative list.

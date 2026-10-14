@@ -33,6 +33,16 @@ imslug is three building blocks with one contract between them:
    render interface, and records Slug draws into the stock backend's render
    pass through the documented reset-render-state protocol.
 
+The **WebGPU renderer** (`backends/imslug_impl_webgpu.*`) mirrors blocks 2-3
+for the browser: the same standalone-core + ImGui-adapter split and the same
+data contracts, with the API-forced substitutions recorded in its header
+(per-batch uniform records instead of push constants,
+`queue.writeBuffer`/`writeTexture` uploads, per-slot instance buffers, growth
+without a device wait, app-installed device error callbacks). The WGSL port of
+the two shaders (`shaders/wgsl/`, kept in lockstep with the GLSL by review and
+by the browser demo) rounds it out; the Vulkan golden tests stay the numerical
+arbiter.
+
 The offline generator (`tools/imslug_gen/`) is a thin CLI over block 1 — it
 consumes the same font handle, band construction and packer, which is why
 packed assets are bitwise identical to runtime generation (§10). The C API
@@ -281,9 +291,11 @@ the small-size table for the specific font.
   rejects make `ImSlug::AddFontFrom*` return `NULL` (Dear ImGui rolls the
   source back), so they can be added through the stock atlas path instead.
   Full CFF support is planned after v0.1 with no new dependency added now.
-* Only the Vulkan backend exists in v0.1. A second backend is planned after
-  v0.1 — GL3 first if/when needed — since the core, pre-pass and formats are
-  backend-independent.
+* Two backends exist: Vulkan (desktop; the reference path, golden-tested) and
+  WebGPU (browser; WGSL shaders, Emscripten example, `docs/INTEGRATION.md`
+  §13, `scripts/build_web.*`). The core, pre-pass and data formats are
+  backend-independent, so a further backend is a new module, not a rewrite; a
+  desktop GL3 backend has no plan of record (WebGPU covers the browser).
 * Color fonts (§9) cover COLR v0/v1 with the documented paint fallbacks; a
   color glyph costs one instance per layer, so emoji-heavy frames are
   instance-hungry (the ring drops overflowing runs gracefully).
@@ -371,6 +383,13 @@ cleanly with a warning, and the example's scene 9 / the no-parser CI job
 demonstrate rendering entirely from baked data. Typical uses: shipping a font
 subset without the parser, reproducible builds, and startup-time savings
 (packed loading is a copy, not an extraction).
+
+The browser deployment is the same idea for the web build: CI configures with
+Emscripten (`scripts/build_web.*`), optionally embeds the fetched CJK subset
+with `imslug_gen embed`, and publishes the static
+`build-web/site/` (`.github/workflows/pages.yml`, GitHub Pages). The page runs
+through the WebGPU backend and the WGSL shader port; it is single-threaded and
+needs no SharedArrayBuffer, so no COOP/COEP headers are required.
 
 ## 11. Deviations from the reference
 

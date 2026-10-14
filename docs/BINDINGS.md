@@ -203,7 +203,7 @@ Debug overlay flags: `IMSLUG_VULKAN_DEBUG_OVERLAY_GLYPH_BOUNDS`,
 
 ## Rust bindings (`imslug-rs`, sibling repo)
 
-`../imslug-rs` (local git repo, branch `main`, no remote —
+`../imslug-rs` (sibling checkout; local git repo, branch `main`, no remote —
 same machine only) contains the `imslug` wrapper crate:
 
 * `src/sys.rs` — hand-written `extern "C"` declarations mirroring

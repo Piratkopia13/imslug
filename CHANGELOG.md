@@ -8,6 +8,40 @@ All notable changes to imslug are documented in this file. The format follows
 
 ### Added
 
+- **WebGPU backend and WebAssembly browser demo.** `backends/imslug_impl_webgpu.*`
+  mirrors the Vulkan module (standalone core + `ImSlug_ImplWGPU_*` ImGui
+  adapter, render-IO name `webgpu`) with its API-forced differences documented
+  in the header: per-batch 80-byte uniform records with dynamic offsets replace
+  push constants, per-slot instance buffers upload with one `queue.writeBuffer`
+  per frame, growth never waits on the device, and device error/lost callbacks
+  are installed by the app on its `WGPUDeviceDescriptor`.
+- **Hand-maintained WGSL port** of the Slug shaders (`shaders/wgsl/`), embedded
+  by `scripts/gen_shaders.*` into the committed `shaders/imslug_shaders_webgpu.h`;
+  the auditable GLSL→WGSL mapping lives in `shaders/reference/wgsl-port.txt`.
+  The SPIR-V header and the Vulkan path are unchanged.
+- **Shared example + browser shell.** The example's application (options, state,
+  scenes, switcher) lives in `example/common/example_app.*`;
+  `example/glfw_vulkan/main.cpp` is the desktop shell and
+  `example/web/main.cpp` (+ `example/web/shell.html`) the Emscripten shell. The
+  web build embeds the fetched CJK subset when present
+  (`scripts/build_web.*` + `imslug_gen embed`); the emoji scene keeps its
+  desktop-only message.
+- **Web tooling and deployment.** `IMSLUG_BACKEND_WEBGPU` (default ON under
+  Emscripten), `scripts/build_web.bat|sh` (assembles `build-web/site/`),
+  `scripts/web_smoke.sh` + `scripts/web_smoke/` (headless-Chrome smoke with a
+  software WebGPU adapter) and `.github/workflows/pages.yml` (build + smoke +
+  GitHub Pages deploy on `main`).
+
+### Changed
+
+- The example's shared application moved to `example/common/`; the two
+  generated default-font headers moved with it (`example/common/imslug_example_*.h`).
+  `--screenshot` output and CLI behavior are unchanged (verified with
+  interleaved A/B runs against the pre-refactor binary).
+- Second-backend policy: **WebGPU is the second backend** (browser); the
+  earlier "GL3 first" note is superseded (`docs/DESIGN.md` §8, `docs/FAQ.md`).
+  A desktop GL backend would be a new module if a consumer ever needs one.
+
 - **Standalone example.** The GLFW example's default fonts are now embedded in
   the executable — the committed packed Roboto ASCII asset for Slug plus the
   raw Roboto TTF for ImGui's stock atlas loader (the `M` toggle / mixed-font

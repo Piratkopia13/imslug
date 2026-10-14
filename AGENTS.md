@@ -18,10 +18,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 | `imslug_refraster.{h,cpp}` | CPU coverage rasterizer — the arbiter for the golden tests. |
 | `imslug_stb.cpp` | Single TU instantiating vendored stb_truetype; own third-party warning target. |
 | `third_party/stb/` | Vendored upstream stb (read-only; `PROVENANCE.txt` pins commit + SHA-256). |
-| `backends/` | Backend modules: `imslug_impl_vulkan.*` (standalone Vulkan core, ImGui-free; the ImGui adapter lives here too). |
-| `shaders/` | Authoritative GLSL sources + committed generated SPIR-V header `imslug_shaders_vulkan.h`. |
+| `backends/` | Backend modules: `imslug_impl_vulkan.*` (standalone Vulkan core, ImGui-free; the ImGui adapter lives here too) and `imslug_impl_webgpu.*` (the WebGPU mirror, browser/Emscripten). |
+| `shaders/` | Authoritative GLSL sources + committed generated SPIR-V header `imslug_shaders_vulkan.h`; the hand-maintained WGSL port under `wgsl/` + its committed generated header `imslug_shaders_webgpu.h`; mapping table in `reference/wgsl-port.txt`. |
 | `tools/imslug_gen/` | Offline generator CLI + `.imslug` writer. |
-| `example/` | Example applications (scene 9 is the packed-asset demo). |
+| `example/` | Example applications: the shared app `common/example_app.*` (all scenes incl. the packed-asset demo), the desktop shell `glfw_vulkan/` and the browser shell `web/` (Emscripten + WebGPU; page: `example/web/shell.html`). |
 | `tests/` | Unit tests, CPU reference rasterizer, golden images, test fonts under `tests/fonts/`, committed generated assets under `tests/assets/`. |
 | `scripts/` | Deterministic build/test/generate entry points (see Commands). |
 | `.opencode/` | Commands, repo skills and subagents for agent sessions. |
@@ -33,6 +33,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 * v0.1.0 release prepared: version macros final, `CHANGELOG.md` entry marked
   "tag pending owner"; the owner holds the `v0.1.0` tag (see the
   `imslug-release` skill for the exact preconditions and the tag command).
+* The WebGPU backend + browser demo are landed in `Unreleased`
+  (`backends/imslug_impl_webgpu.*`, `shaders/wgsl/`, `scripts/build_web.*`,
+  `scripts/web_smoke.*`); `.github/workflows/pages.yml` deploys the demo to
+  GitHub Pages on every push to `main` (the README live-demo link).
 * Work is **features and bug-fixes**, not milestone-numbered plans: name the
   change after what it does (commit subject, tests, docs) and record the
   rationale in the commit. There is no milestone queue or task brief, and new
@@ -49,6 +53,8 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 |---|---|---|
 | Configure + build | `scripts\build.bat` | `scripts/build.sh` |
 | Build + run ctest | `scripts\test.bat` | `scripts/test.sh` |
+| Build the web demo (Emscripten + Pages site) | `scripts\build_web.bat` | `scripts/build_web.sh` |
+| Browser smoke (web demo) | `node scripts\web_smoke\smoke.mjs` | `scripts/web_smoke.sh` |
 | Regenerate shader header | `scripts\gen_shaders.bat` | `scripts/gen_shaders.sh` |
 | Verify shaders are fresh | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
 | Regenerate the packed test asset | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
@@ -94,6 +100,23 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   build directory forces a reconfigure of GLFW's runtime choice. It covers the
   targets this project builds: a caller-provided `glfw`/imgui target must use
   `/MT` itself (a configure-time AUTHOR_WARNING flags that case).
+* `IMSLUG_BACKEND_WEBGPU` (configure option; default ON under Emscripten, OFF
+  elsewhere) builds the WebGPU backend module + the third-party
+  `imgui_impl_wgpu` target. `scripts\build_web.bat` / `scripts/build_web.sh` is
+  the one web entry point: it sources `emsdk_env` when the emsdk root is known
+  (emsdk ≥ 4.0.10; CI pins 5.0.1), embeds the fetched CJK subset with the
+  native `imslug_gen` when both exist
+  (`-DIMSLUG_CJK_EMBED_HEADER=<build>/include/imslug_example_cjk.h`),
+  configures `build-web/` through `emcmake` (`-G Ninja`; examples on, Vulkan,
+  tests, C example and tools off) and assembles `build-web/site/` for GitHub
+  Pages (`index.html`, `index.js`, `index.wasm`, `.nojekyll`).
+  `scripts/web_smoke.sh` / `node scripts\web_smoke\smoke.mjs` serves that site
+  and drives headless Chrome (software WebGPU adapter by default; waits for
+  `window.__imslugReady` + a frame count, checks the screenshot for ink and the
+  console for errors; pinned deps install into `scripts/web_smoke/node_modules`
+  on first use). The shell is `example/web/main.cpp` over the shared app, the
+  page is `example/web/shell.html`, the deploy workflow is
+  `.github/workflows/pages.yml`.
 * `IMSLUG_TTF_PARSER` (configure option, default ON) builds the runtime TTF
   outline parser (stb_truetype). `-DIMSLUG_TTF_PARSER=OFF` builds the core
   **without stbtt** (packed `.imslug` assets only; TTF font sources fail
@@ -104,7 +127,7 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   CLI + its writer library (`build/imslug_gen.exe`); tests use the writer for
   the round-trip suite. The committed generated artifacts are
   `tests/assets/Roboto-ASCII.imslug` and the two example headers
-  `example/glfw_vulkan/imslug_example_{asset,font}.h`, all regenerated with
+  `example/common/imslug_example_{asset,font}.h`, all regenerated with
   `scripts/gen_asset.*` (format spec: `docs/PACKED_FORMAT.md`; freshness
   enforced by `imslug_packed_roundtrip` + `imslug_asset_fresh`).
 * `IMSLUG_BUILD_C_EXAMPLE` (configure option, default ON) builds the pure-C11
@@ -119,7 +142,7 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   pinned SHA-256 live next to them in `tests/fonts/*/PROVENANCE.txt`.
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/gen-asset`, `/golden`, `/verify-fetchcontent`, `/bench`,
-  `/check-docs`.
+  `/build-web`, `/check-docs`.
 * Golden images run in a headless offscreen pass (`tests/golden/`, PPMs in
   `<build>/golden/`) and skip with exit 77 when no Vulkan device is available:
   the monochrome tests compare GPU output against the CPU reference
@@ -132,9 +155,12 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 ## Invariants (do not violate)
 
 1. **Never hand-edit generated artifacts.** `shaders/imslug_shaders_vulkan.h`
-   is generated by `scripts/gen_shaders.*` and committed; regenerate it.
-   `tests/assets/Roboto-ASCII.imslug` is generated by `scripts/gen_asset.*`
-   (`imslug_gen`) and committed; regenerate it (freshness is test-enforced).
+   (SPIR-V) and `shaders/imslug_shaders_webgpu.h` (WGSL) are generated by
+   `scripts/gen_shaders.*` and committed; regenerate them (both are
+   `--check`ed). `tests/assets/Roboto-ASCII.imslug` and the two example headers
+   `example/common/imslug_example_{asset,font}.h` are generated by
+   `scripts/gen_asset.*` (`imslug_gen`) and committed; regenerate them
+   (freshness is test-enforced).
 2. **Never modify third-party sources** (Dear ImGui, stb, GLFW): vendored or
    fetched trees are read-only. Adapt through our own files.
 3. **Never remove or weaken `NOTICE` attribution** (Lengyel credit + MIT and
@@ -146,10 +172,10 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
    `.clang-format`). Do not reformat third-party code.
 6. **The non-Slug fallback path must keep working**: fonts not registered with
    imslug, and overflow/degenerate cases, render through stock ImGui.
-7. **Core stays backend-independent** — Vulkan/ImGui-specific code lives in
-   `backends/` and adapter files only.
-8. **Shader sources and their regenerated SPIR-V header are committed together**
-   and must be deterministic.
+7. **Core stays backend-independent** — Vulkan/WebGPU/ImGui-specific code lives
+   in `backends/` and adapter files only.
+8. **Shader sources and their regenerated headers (SPIR-V + WGSL) are committed
+   together** and must be deterministic.
 9. **Record decisions durably**: the commit message states the change and its
    rationale; `docs/**`, `README.md` and `CHANGELOG.md` are updated when
    behavior, contracts, defaults or limitations change. Never park decisions in
@@ -207,6 +233,8 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   freshness check, attribution rules.
 * `imslug-vulkan-backend` — Vulkan pipeline/descriptor/callback contract and
   validation expectations.
+* `imslug-webgpu-backend` — WebGPU core/adapter contract, the WGSL port, and
+  the Emscripten build + browser smoke harness.
 * `imslug-release` — version/changelog/NOTICE/tag checklist.
 * `opencode` (built-in) — required before editing `.opencode/` or
   `opencode.jsonc`.

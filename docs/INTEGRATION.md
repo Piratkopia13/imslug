@@ -277,3 +277,42 @@ after v0.1, see `DESIGN.md` §8.
 See `DESIGN.md` §8 for the full list (GPU cost profile, multi-viewport,
 OTF/CFF, packed color fonts, non-BMP, hinting policy) and `FAQ.md` for the
 common questions.
+
+## 13. WebGPU backend (browser)
+
+`backends/imslug_impl_webgpu.*` mirrors the Vulkan module for Emscripten +
+`--use-port=emdawnwebgpu` builds (CMake option `IMSLUG_BACKEND_WEBGPU`, default
+ON under Emscripten). The flow is the same shape:
+
+```cpp
+// once, in this order:
+ImGui::CreateContext();
+ImGui_ImplWGPU_Init(&init_info);     // stock imgui_impl_wgpu backend
+ImSlug::Init();
+ImSlug_ImplWGPU_Init(&init_info);    // imslug WebGPU module + ImGui adapter
+
+ImFont* font = ImSlug::AddFontFromFileTTF("fonts/Inter.ttf", 18.0f);
+
+// per frame:
+ImGui::Render();
+ImSlug_ImplWGPU_UploadPools();       // before the render pass; once per frame
+// ... begin the render pass ...
+ImSlug_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
+```
+
+* The differences from the Vulkan module are API-forced and documented in
+  `backends/imslug_impl_webgpu.h`: WebGPU has no push constants, so each Slug
+  batch carries an 80-byte uniform record in a dynamic-offset ring (stride
+  aligned to `minUniformBufferOffsetAlignment`); growth never waits on the
+  device; the CPU instance ring uploads with one `queue.writeBuffer` per frame
+  (`ImSlugWGPUUploadInstances`, called by the adapter after the pre-pass).
+* WebGPU has no runtime error-callback setters: install
+  `uncapturedErrorCallbackInfo` / `deviceLostCallbackInfo` on your
+  `WGPUDeviceDescriptor` (the example shell does). The module brackets its own
+  creation work in validation error scopes and reports the first failure once.
+* The Slug pipeline must match the stock backend (render target format, depth
+  format, sample count) because Slug draws share ImGui's render pass.
+* Browser builds: `scripts/build_web.*` (site in `build-web/site/`, optional
+  embedded CJK subset), `scripts/web_smoke.*` (headless-Chrome smoke) and the
+  `imslug-webgpu-backend` skill hold the Emscripten flags, the page hooks and
+  the known pitfalls.

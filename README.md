@@ -8,16 +8,23 @@ DPI, with analytic antialiasing, and without per-size atlas builds.
 
 Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
-ImGui's texture pipeline.
+ImGui's texture pipeline. A **WebGPU backend renders the same pipeline in the
+browser** (WGSL port of the shaders, Emscripten example; see
+[`docs/INTEGRATION.md`](docs/INTEGRATION.md) §13).
 
 > **Status: v0.1.0 — release prepared; the `v0.1.0` tag is pending the repo
 > owner.** The feature set is complete: the Slug glyph pipeline and
 > Vulkan renderer, the ImGui integration (mixed fonts, clipping, runtime DPI),
 > color fonts (COLR v0/v1), the C API (`imslug_c.h`) and the Rust wrapper
 > (`imslug-rs`), and the offline generator + `.imslug` container v1 — including
-> a build without any TrueType parser. See [`CHANGELOG.md`](CHANGELOG.md) for
-> the release history and [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the
-> drop-in guide.
+> a build without any TrueType parser. `Unreleased` adds the WebGPU backend for
+> the browser (WGSL shaders, Emscripten example, GitHub Pages deployment). See
+> [`CHANGELOG.md`](CHANGELOG.md) for the release history and
+> [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the drop-in guide.
+>
+> **Live demo:** <https://piratkopia13.github.io/imslug/> renders the example
+> built from `main` through WebGPU (Chrome/Edge 113+, Firefox 141+ on Windows,
+> Safari 26+; the page shows a notice when WebGPU is unavailable).
 
 ## Requirements
 
@@ -38,6 +45,8 @@ humans, CI and the `.opencode/commands`:
 |---|---|---|
 | Configure + build | `scripts\build.bat` | `scripts/build.sh` |
 | Build + run tests (ctest) | `scripts\test.bat` | `scripts/test.sh` |
+| Build the web demo (Emscripten + Pages site) | `scripts\build_web.bat` | `scripts/build_web.sh` |
+| Browser smoke for the web demo | `node scripts\web_smoke\smoke.mjs` | `scripts/web_smoke.sh` |
 | Regenerate shader header | `scripts\gen_shaders.bat` | `scripts/gen_shaders.sh` |
 | Verify committed shader header | `scripts\gen_shaders.bat --check` | `scripts/gen_shaders.sh --check` |
 | Regenerate the packed test asset | `scripts\gen_asset.bat` | `scripts/gen_asset.sh` |
@@ -89,6 +98,29 @@ redistributable, configure with `IMSLUG_STATIC_CRT=ON` (MSVC only; add
 `-DIMSLUG_STATIC_CRT=ON` to `IMSLUG_CMAKE_DEFINES`) — the only remaining
 dependency is `vulkan-1.dll` from the GPU driver. (It covers the targets this
 project builds; a caller-provided `glfw`/imgui target must also use `/MT`.)
+
+### Running the web demo
+
+The same example runs in the browser through the WebGPU backend: Emscripten's
+`emdawnwebgpu` port supplies `<webgpu/webgpu.h>`, `contrib.glfw3` the window,
+and the page is exactly what CI deploys to GitHub Pages. All scenes (including
+scenes 8/9), the `M` toggle and F1–F3 overlays are the shared ones.
+
+```sh
+pip install fonttools && ./scripts/fetch_cjk_font.sh   # optional: embeds CJK
+./scripts/build_web.sh                                 # -> build-web/site/
+./scripts/web_smoke.sh                                 # headless-Chrome smoke
+python3 -m http.server 8000 --directory build-web/site # then open the URL
+```
+
+On Windows the entry points are `scripts\build_web.bat` and
+`node scripts\web_smoke\smoke.mjs`. Requirements: emsdk ≥ 4.0.10 (CI pins
+5.0.1; `scripts\build_web.bat` sources `emsdk_env.bat` when the emsdk root is
+known), CMake + Ninja, and one native `scripts\build.*` run — the CJK subset is
+embedded with the native `imslug_gen` (a cross-compiled tool cannot run during
+the web build). The browser build has no filesystem: fonts are the embedded
+Roboto packed asset/atlas TTF plus the CJK subset when fetched; the emoji scene
+shows its "font not fetched" message.
 
 ## Integration
 
