@@ -1220,7 +1220,7 @@ namespace
         std::string text;
         BuildStressText(&text, g_Options.Lines, g_Options.Columns);
         char label[256];
-        std::snprintf(label, sizeof(label), "Text-dominated stress scene (%d lines x %d chars at %.0f px, ~5k glyphs)",
+        std::snprintf(label, sizeof(label), "Text-dominated stress scene (%d lines x %d chars at %.0f px)",
                       g_Options.Lines, g_Options.Columns, (double)g_Options.FontSize);
         GpuBenchSceneReport(label, /*uiScene=*/false, text, g_Options.FontSize);
         GpuBenchSceneReport("Typical UI scene (labels, table, children, widgets, wrapped text, plot)",

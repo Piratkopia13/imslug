@@ -85,6 +85,27 @@ jobs:
       - name: Golden images (render-pass + dynamic-rendering paths, 3 scenes each)
         run: ./scripts/golden.sh
 
+  # M4: the benchmark harness report is a build artifact (numbers are
+  # informational; no budgets are enforced in CI - runner hardware is too
+  # variable and the report records the machine it ran on).
+  linux-bench:
+    name: Linux benchmark report (informational)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch the CJK test font (the CJK bench row is skipped when absent)
+        run: |
+          python3 -m pip install --quiet fonttools
+          ./scripts/fetch_cjk_font.sh
+      - name: Build + run the CPU benchmark
+        run: ./scripts/bench.sh --cpu
+      - name: Upload the benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: build/bench/bench_report.md
+
   # Optional, informational: does the internal-API layer still work against
   # Dear ImGui master? Daily (see `on.schedule`) and on demand; a failure here
   # means upstream moved something imslug relies on (R1) - pin or adapt, but do

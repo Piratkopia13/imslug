@@ -81,13 +81,20 @@ axis in the ortho case (fragment region = rect ± 0.5 px per axis).
 | 5 | uint | R32_UINT | BandMaxWord (bandMaxX \| bandMaxY<<16 \| E<<28) |
 | 6 | vec4 | R32G32B32A32_SFLOAT | Color (straight alpha) |
 
-**Push constants** (vertex stage, 72 bytes): 4 MVP rows (`vec4`) mapping
+**Push constants** (72 bytes → **76 bytes in M4**): 4 MVP rows (`vec4`) mapping
 *object space (screen px) to clip*, then `vec2 Viewport` = framebuffer size in
-pixels (SlugDilate's `dim`).
+pixels (SlugDilate's `dim`), then `uint DebugFlags` (M4 debug overlay,
+`ImSlugVulkanDebugOverlay`; 0 = off). The block is declared in **both** stages
+(the fragment shader reads only `DebugFlags`), so the pipeline layout's push
+constant range uses `VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT`
+and `vkCmdPushConstants` must name both (VUID-...-07987 / 01796 - a vertex-only
+range or a vertex-only push is a validation error since M4).
 
 **Varyings**: location 0 `vec2 vTexCoord` (em sample coordinate, interpolated),
 1 `flat vec4 vBanding`, 2 `flat uvec2 vGlyphLoc`, 3 `flat uint vBandMaxWord`,
-4 `vec4 vColor`.
+4 `vec4 vColor`, 5 `vec2 vScreenPos` (undilated object-space position, M4 -
+drives the glyph-bounds outline), 6 `flat vec4 vScreenRect` (the instance's
+source quad, M4). Locations 5/6 are only read by the debug views.
 
 **Fragment shader**: `fwidth(vTexCoord)` gives `pixelsPerEm`; `texelFetch` on
 `sampler2D curveTexture` (RGBA16F) and `usampler2D bandTexture` (R16G16_UINT,
@@ -96,6 +103,17 @@ even-odd test is **bit 28 of the packed bandMax word** (= bit 12 of its high
 half, the reference's `glyphData.w` test; PLAN §11 D8(g)) - TTF glyphs use the
 nonzero rule (E = 0). Output is **unpremultiplied**:
 `vec4(vColor.rgb, vColor.a * fill)` with `discard` when `fill < 0.001`.
+
+**M4 debug overlay (shader side, PLAN §11 D17).** When `pc.DebugFlags != 0` the
+shader returns a debug color and never discards, so the whole dilated quad
+stays visible: `RefHeat` (bit 2) maps the band-reference walk count of the
+fragment to a blue→red ramp (`refCount / 16`), `BandGrid` (bit 1) mixes a
+checkerboard of the H/V band indexes into the glyph color, `GlyphBounds` (bit 0)
+paints a ~1 px outline wherever the undilated `vScreenPos` is within 1 px of the
+source quad edges (`vScreenRect`). `RefHeat` wins over `BandGrid`. The flags
+must not change any geometry, placement or the fallback behavior - the golden
+test renders the acceptance scene with the seeded bounds and both band views
+and checks the outline/grid/heat appear while plain-frame ink never disappears.
 
 **Blend state** (pipeline, not shader): exactly stock `imgui_impl_vulkan` -
 color `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`, alpha `ONE`/`ONE_MINUS_SRC_ALPHA`, op

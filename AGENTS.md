@@ -29,10 +29,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 * Work queue/status: `.agent-docs/PLAN.md` §7. Decisions log: §11.
 * Your brief: the **lowest-numbered** file in `.agent-docs/milestones/` whose
   `Status:` line is not `done` (the initial commit shipped M0 = repo bootstrap;
-  M1 (glyph pipeline), M2 (standalone Vulkan renderer) and M3 (ImGui
-  integration) are done, so M4 = hardening/perf is next), unless the owner
-  assigned you a specific milestone. Read **only** that brief — never the whole
-  plan.
+  M1 (glyph pipeline), M2 (standalone Vulkan renderer), M3 (ImGui integration)
+  and M4 (robustness/perf/polish) are done, so M5 = color fonts is next), unless
+  the owner assigned you a specific milestone. Read **only** that brief — never
+  the whole plan.
 * `.agent-docs/` is gitignored transient material: never `git add -f` it, never
   write scratch markdown anywhere else (see Docs policy).
 

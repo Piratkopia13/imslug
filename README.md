@@ -10,10 +10,11 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M3
-> (ImGui integration: ordinary ImGui text renders through Slug for registered
-> fonts, with the stock `imgui_impl_vulkan` backend unchanged). The API, data
-> formats and handle encoding are still moving; M4 hardens and tunes.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M4
+> (robustness/perf/polish: fine-clip fuzzing, stress scenes, tuned band defaults,
+> a benchmark harness with measured numbers, a debug overlay; see
+> `docs/DESIGN.md`). The API, data formats and handle encoding are still moving;
+> M5 adds color fonts.
 
 ## Requirements
 
@@ -41,7 +42,7 @@ humans, CI and the `.opencode/commands`:
 
 Agents should start with [`AGENTS.md`](AGENTS.md).
 
-## Integration (M3)
+## Integration
 
 ```cpp
 ImGui_ImplVulkan_Init(&init_info);       // stock backend, unchanged
@@ -60,9 +61,14 @@ Registered fonts render through Slug at any size/DPI without atlas bitmaps;
 every other font, shape and texture keeps going through ImGui's own path.
 The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
 `build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
-window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts
-and a runtime `style.FontScaleDpi` slider, plus
+window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts,
+a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene and the fetched
+CJK subset, plus debug overlay toggles (F1/F2/F3) and
 `--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
+
+Design notes, the measured performance numbers and the debug-overlay /
+small-size policy live in [`docs/DESIGN.md`](docs/DESIGN.md); the benchmark
+harness is `scripts\bench.bat` / `scripts/bench.sh`.
 
 ## Credits
 

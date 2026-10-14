@@ -52,8 +52,21 @@ struct ImSlugVulkanDrawInfo
     const float* MVP;                          // 16 floats, screen px -> clip, row-major
     float ViewportWidth, ViewportHeight;       // framebuffer px (SlugDilate's dim)
     VkRect2D Scissor;                          // set by Draw (dynamic state)
+    uint32_t DebugFlags;                       // M4 overlay (ImSlugVulkanDebugOverlay), 0 = off
 };
 void ImSlugVulkanDraw(VkCommandBuffer, const ImSlugVulkanDrawInfo*);
+
+// M4 debug overlay (see docs/DESIGN.md section 6; shader side in the shaders
+// skill): flags combine, RefHeat wins over BandGrid, geometry/placement and
+// fallbacks are untouched. ImSlugVulkanDrawInfo::DebugFlags carries them into
+// the push constants.
+enum ImSlugVulkanDebugOverlay
+{
+    ImSlugVulkanDebugOverlay_None = 0,
+    ImSlugVulkanDebugOverlay_GlyphBounds = 1 << 0,  // 1px outline of the drawn quad
+    ImSlugVulkanDebugOverlay_BandGrid = 1 << 1,     // H/V band checkerboard
+    ImSlugVulkanDebugOverlay_RefHeat = 1 << 2,      // band-walk cost heatmap
+};
 
 // Shared helper: screen-pixels (Y down) -> clip ortho, row-major. No Y negation
 // (Vulkan NDC y points down); see the imslug-shaders skill.
@@ -88,7 +101,9 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   ring base. Forgetting the base silently reads slot 0 for every frame (the
   review's B1); the golden harness pins it with a `FrameIndex = 1` +
   `FirstInstance != 0` case.
-* Push constants: 4 MVP rows + viewport size (72 B, vertex stage).
+* Push constants: 4 MVP rows + viewport size + M4 `DebugFlags` (76 B; the
+  fragment shader reads the flags, so the layout range and the push itself use
+  `VERTEX | FRAGMENT` stage flags — see the shaders skill).
 * Required features: none beyond core - the pool formats
   (`R16G16B16A16_SFLOAT`, `R16G16_UINT`) must support `SAMPLED_IMAGE`
   (checked at init, else `Init` returns false). The app needs apiVersion >= 1.2
@@ -152,6 +167,10 @@ screen-space corner diagonals. `ImSlugBuildGlyphInstance()` fills one record;
   `VK_LAYER_KHRONOS_validation`; any *error* fails the golden run). Quote the
   exact VUID from the layer output; never silence a validation error.
 * Frequent failures and their real cause:
+  * `vkCreateGraphicsPipelines(): ... Push constant are used, but VkPipelineLayout ... doesn't set VK_SHADER_STAGE_FRAGMENT_BIT`
+    (VUID-VkGraphicsPipelineCreateInfo-layout-07987) / `vkCmdPushConstants(): ...` (VUID-vkCmdPushConstants-offset-01796) -
+    since M4 the fragment shader declares the push constant block (`DebugFlags`), so the layout range and every
+    `vkCmdPushConstants` call must name `VERTEX | FRAGMENT`, not vertex only.
   * `vkCreateGraphicsPipelines(): pNext<VkPipelineRenderingCreateInfo>...` /
     "not compatible with the current render pass/subpass" -
     `PipelineInfoMain` not mirrored (render pass, subpass, MSAA, dynamic
@@ -238,7 +257,21 @@ bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo*);  // maps Pipeline
 void ImSlug_ImplVulkan_Shutdown();
 void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd);        // per frame, outside the render pass
 void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline mainPipeline = VK_NULL_HANDLE);
+
+// M4 debug overlay (seeded from Config::DebugDrawBounds at Init; takes effect
+// on the next RenderDrawData; ignored/asserted before Init).
+void     ImSlug_ImplVulkan_SetDebugOverlay(uint32_t overlayFlags);  // ImSlugVulkanDebugOverlay
+uint32_t ImSlug_ImplVulkan_GetDebugOverlay();
 ```
+
+Order contract: `UploadPools` -> `RenderDrawData`. A manual
+`ImSlug::PreprocessDrawData` call is *not* needed (RenderDrawData runs it) and
+before M4's fix it was harmful: the pre-pass is idempotent per frame now
+(`Core::CommittedBatches` - a second call must not re-commit batches, because
+`batch->FirstInstance` is a ring index after the first commit; the old
+double-commit read the arena out of bounds and drew garbage instances, the M4
+bench bug of PLAN §11 D14(a); regression: `TestPrepassIdempotence`). A manual
+pre-pass before `UploadPools` also targets the previous ring slot.
 
 1. `UploadPools` advances the frames-in-flight slot, resets the instance
    allocation cursor and records the dirty-row copies with
