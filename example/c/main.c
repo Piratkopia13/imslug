@@ -212,14 +212,14 @@ static int ExVkCreateInstance(ex_vk_state* state)
         }
     }
 
-    VkApplicationInfo application_info = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    VkApplicationInfo application_info = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO };
     application_info.pApplicationName = "imslug C example";
     application_info.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
     // The imslug shaders are SPIR-V 1.5 (vulkan1.2 target env); 1.2 is also
     // what the golden harness and the C++ example use.
     application_info.apiVersion = VK_API_VERSION_1_2;
 
-    VkInstanceCreateInfo create_info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+    VkInstanceCreateInfo create_info = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     create_info.pApplicationInfo = &application_info;
     if (state->ValidationEnabled)
     {
@@ -237,7 +237,9 @@ static int ExVkCreateInstance(ex_vk_state* state)
 
     if (state->ValidationEnabled)
     {
-        VkDebugUtilsMessengerCreateInfoEXT messenger_info = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+        VkDebugUtilsMessengerCreateInfoEXT messenger_info = {
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
+        };
         messenger_info.messageSeverity =
             VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
         messenger_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
@@ -338,11 +340,11 @@ static int ExVkCreateDevice(ex_vk_state* state)
         return 0;
 
     const float priority = 1.0f;
-    VkDeviceQueueCreateInfo queue_info = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+    VkDeviceQueueCreateInfo queue_info = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
     queue_info.queueFamilyIndex = state->QueueFamily;
     queue_info.queueCount = 1;
     queue_info.pQueuePriorities = &priority;
-    VkDeviceCreateInfo create_info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    VkDeviceCreateInfo create_info = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     create_info.queueCreateInfoCount = 1;
     create_info.pQueueCreateInfos = &queue_info;
     if (vkCreateDevice(state->PhysicalDevice, &create_info, NULL, &state->Device) != VK_SUCCESS)
@@ -383,7 +385,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    VkRenderPassCreateInfo render_pass_info = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+    VkRenderPassCreateInfo render_pass_info = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
     render_pass_info.attachmentCount = 1;
     render_pass_info.pAttachments = &color_attachment;
     render_pass_info.subpassCount = 1;
@@ -394,7 +396,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
         return 0;
 
     // Target image.
-    VkImageCreateInfo image_info = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    VkImageCreateInfo image_info = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
     image_info.extent.width = state->Width;
@@ -412,7 +414,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
 
     VkMemoryRequirements requirements;
     vkGetImageMemoryRequirements(state->Device, state->Image, &requirements);
-    VkMemoryAllocateInfo allocate_info = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    VkMemoryAllocateInfo allocate_info = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
     allocate_info.allocationSize = requirements.size;
     allocate_info.memoryTypeIndex =
         ExVkFindMemoryType(state, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -421,7 +423,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
         return 0;
     vkBindImageMemory(state->Device, state->Image, state->ImageMemory, 0);
 
-    VkImageViewCreateInfo view_info = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    VkImageViewCreateInfo view_info = { .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
     view_info.image = state->Image;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
     view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -431,7 +433,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
     if (vkCreateImageView(state->Device, &view_info, NULL, &state->ImageView) != VK_SUCCESS)
         return 0;
 
-    VkFramebufferCreateInfo framebuffer_info = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+    VkFramebufferCreateInfo framebuffer_info = { .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
     framebuffer_info.renderPass = state->RenderPass;
     framebuffer_info.attachmentCount = 1;
     framebuffer_info.pAttachments = &state->ImageView;
@@ -442,7 +444,7 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
         return 0;
 
     // Host-visible readback buffer.
-    VkBufferCreateInfo buffer_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    VkBufferCreateInfo buffer_info = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
     buffer_info.size = (VkDeviceSize)state->Width * state->Height * 4;
     buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -457,20 +459,20 @@ static int ExVkCreateRenderObjects(ex_vk_state* state)
         return 0;
     vkBindBufferMemory(state->Device, state->Readback, state->ReadbackMemory, 0);
 
-    VkCommandPoolCreateInfo pool_info = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    VkCommandPoolCreateInfo pool_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool_info.queueFamilyIndex = state->QueueFamily;
     if (vkCreateCommandPool(state->Device, &pool_info, NULL, &state->CommandPool) != VK_SUCCESS)
         return 0;
 
-    VkCommandBufferAllocateInfo allocate_buffer_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    VkCommandBufferAllocateInfo allocate_buffer_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
     allocate_buffer_info.commandPool = state->CommandPool;
     allocate_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocate_buffer_info.commandBufferCount = 1;
     if (vkAllocateCommandBuffers(state->Device, &allocate_buffer_info, &state->CommandBuffer) != VK_SUCCESS)
         return 0;
 
-    VkFenceCreateInfo fence_info = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VkFenceCreateInfo fence_info = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     if (vkCreateFence(state->Device, &fence_info, NULL, &state->Fence) != VK_SUCCESS)
         return 0;
     return 1;
@@ -519,7 +521,7 @@ static void ExVkDestroy(ex_vk_state* state)
 static int ExVkRenderFrame(ex_vk_state* state, ImDrawData* draw_data, int readback)
 {
     vkResetCommandBuffer(state->CommandBuffer, 0);
-    VkCommandBufferBeginInfo begin_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    VkCommandBufferBeginInfo begin_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (vkBeginCommandBuffer(state->CommandBuffer, &begin_info) != VK_SUCCESS)
         return 0;
@@ -532,7 +534,7 @@ static int ExVkRenderFrame(ex_vk_state* state, ImDrawData* draw_data, int readba
     clear.color.float32[1] = 0.0f;
     clear.color.float32[2] = 0.0f;
     clear.color.float32[3] = 1.0f;
-    VkRenderPassBeginInfo pass_info = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    VkRenderPassBeginInfo pass_info = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
     pass_info.renderPass = state->RenderPass;
     pass_info.framebuffer = state->Framebuffer;
     pass_info.renderArea.extent.width = state->Width;
@@ -561,7 +563,7 @@ static int ExVkRenderFrame(ex_vk_state* state, ImDrawData* draw_data, int readba
     if (vkEndCommandBuffer(state->CommandBuffer) != VK_SUCCESS)
         return 0;
 
-    VkSubmitInfo submit_info = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    VkSubmitInfo submit_info = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &state->CommandBuffer;
     if (vkQueueSubmit(state->Queue, 1, &submit_info, state->Fence) != VK_SUCCESS)
@@ -814,6 +816,7 @@ int main(int argc, char** argv)
         result = RunCpuSmoke(font_path, font_size);
 #else
     (void)validation_requested;
+    (void)screenshot_path;  // --vulkan only in builds with Vulkan support
     if (use_vulkan)
     {
         fprintf(stderr, "[c-example] --vulkan: this build has no Vulkan support (configure with a Vulkan SDK)\n");
