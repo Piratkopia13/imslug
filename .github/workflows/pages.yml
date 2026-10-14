@@ -1,0 +1,80 @@
+# imslug web demo -> GitHub Pages.
+#
+# Builds the WebGPU/Emscripten example and publishes the static site assembled
+# by scripts/build_web.sh whenever main moves, plus manual runs. The site is
+# plain static files: WebGPU needs no COOP/COEP headers (no SharedArrayBuffer),
+# so Pages' defaults work as-is. configure-pages with enablement: true sets the
+# Pages source to "GitHub Actions" on first run.
+#
+# The browser smoke (scripts/web_smoke.sh) drives headless Chrome with the
+# software WebGPU adapter. It starts as informational (continue-on-error)
+# until it is proven stable on the runner; delete that line to promote it to a
+# required gate. If SwiftShader proves unusable there, the documented fallback
+# is Mesa lavapipe + xvfb (see the imslug-webgpu-backend skill).
+
+name: Web demo (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build + smoke (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Emscripten (pinned; the floor is 4.0.10 for emdawnwebgpu)
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 5.0.1
+          actions-cache-folder: emsdk-cache
+      - name: Fetch the CJK subset (embedded into the deployed demo)
+        run: |
+          python3 -m pip install --quiet fonttools
+          ./scripts/fetch_cjk_font.sh
+      - name: Build the web demo
+        run: ./scripts/build_web.sh
+      - name: Browser smoke (headless Chrome, software WebGPU adapter)
+        continue-on-error: true
+        env:
+          IMSLUG_SMOKE_TIMEOUT_MS: "300000"
+        run: ./scripts/web_smoke.sh
+      - name: Upload the smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-smoke
+          path: build-web/smoke.png
+          if-no-files-found: ignore
+      - name: Configure Pages (GitHub Actions source)
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: build-web/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

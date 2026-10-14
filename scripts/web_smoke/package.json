@@ -1,0 +1,14 @@
+{
+  "name": "imslug-web-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless-Chrome smoke test for the imslug WebGPU web demo (internal; not published).",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer-core": "25.13.0"
+  },
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  }
+}
