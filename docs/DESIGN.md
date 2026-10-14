@@ -97,6 +97,17 @@ for unclipped runs; see the test output for the per-class bounds).
 drawn quad (`Statistics::BoundsMismatches`, debug assert); on the Vulkan
 backend it also seeds the glyph-bounds debug overlay (§6).
 
+**Sliver precision.** The UV handle encoding is affine, so ImGui's fine-clip
+interpolation decodes to the cut-edge fraction; at sub-pixel slivers the decoded
+fraction carries the encoding's float quantization (the ulp is ~0.002 fraction
+units at slot ids of a few thousand). Sliver-scale fraction spans (< 0.1) are
+therefore placed from the single-corner sample and the glyph's baked ppem
+instead of the fitted affine map; a fully collapsed fraction span is accepted
+while the quad still has extent on that axis, and a zero/inverted fine-clip
+extent on an axis (or a collapse on both axes) drops the glyph. M4 fuzz at
+100k cases: sliver pen error max 0.31 px, coverage gap max 1.26 px (bounds 1.0 /
+1.75 px), no drops outside the degenerate-extent class.
+
 ## 4. Performance
 
 Measured 2026-10-14, RTX 5080 (Vulkan 1.4.341), 1024×640 headless offscreen,

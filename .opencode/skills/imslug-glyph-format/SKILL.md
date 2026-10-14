@@ -287,6 +287,21 @@ evaluates it at the record's em bbox corners; `Ascent` bridges ImGui's
 line-top Y and em's baseline Y. The sanity slack is ~1 px because `X0..Y1` are
 the *integer* (floor/ceil) box around the exact control-point bbox.
 
+**Sliver precision (M4, PLAN §11 D18).** Fine clipping a glyph down to a few
+pixels makes the *decoded* fractions carry the encoded-UV quantization: the ulp
+is ~0.002 frac units at slot ids of a few thousand, so a sliver's fraction span
+can even collapse to zero (all four corners bitwise equal). The reconstruction
+handles this: spans below `kSpanReliable` (0.1) use the *single-corner* sample
+for the pen and the glyph's **baked** ppem for the scale (the drawn size differs
+from the bake only by ImGui's integer rounding, ≤ ~1.5 %); a collapsed span is
+accepted while the quad still has extent on that axis, and a zero/inverted quad
+or a collapse on both axes stays dropped (the fuzz ground truth skips those).
+Measured at 100k fuzz cases: sliver pen error max 0.31 px (was 2.71 px, and
+glyphs could be dropped outright), coverage gap 1.26 px (bound 1.75). Any change
+to `FitAxis`/`ReconstructPlacement` must keep `tests/test_fuzz.cpp` (both
+profiles, including the high-slot phase) green; the harness bounds are the
+contract.
+
 ## ImGui version support / master drift (R1)
 
 Supported + verified: **v1.92.9b** (the pinned `IMSLUG_IMGUI_TAG`). `imslug.h`
