@@ -49,6 +49,47 @@ humans, CI and the `.opencode/commands`:
 
 Agents should start with [`AGENTS.md`](AGENTS.md).
 
+### Running the example app
+
+The GLFW+Vulkan example is off by default. Enable it once through the build
+script (Windows cmd can't pass `-D...=ON` through the batch file, so it goes
+through `IMSLUG_CMAKE_DEFINES`; needs the Vulkan SDK, GLFW is fetched
+automatically):
+
+```bat
+set IMSLUG_CMAKE_DEFINES=-DIMSLUG_BUILD_EXAMPLES=ON
+scripts\build.bat
+```
+
+```powershell
+$env:IMSLUG_CMAKE_DEFINES = "-DIMSLUG_BUILD_EXAMPLES=ON"
+scripts\build.bat
+```
+
+```sh
+scripts/build.sh -DIMSLUG_BUILD_EXAMPLES=ON
+```
+
+The option is cached in the build directory, so later builds only need
+`scripts\build.bat` (`--target imslug_example_glfw_vulkan` builds just the
+example). Run `build\imslug_example_glfw_vulkan.exe` (`build/Release/...`
+with the Visual Studio generator). Keys 1–9 (plus `P` for the heavy demo)
+switch scenes, `M` swaps Slug and ImGui's atlas renderer for the body text,
+`+`/`-` change the base font size, F1/F2/F3 toggle the debug overlays, Esc
+quits; `--help` lists the command line, including
+`--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
+
+The example is standalone: the default fonts (the packed Roboto ASCII asset
+for Slug and the Roboto TTF for ImGui's stock atlas loader, so the `M`
+comparison works too) are embedded in the binary — no data files are needed
+next to the executable. `--font <ttf|imslug>` or the `IMSLUG_EXAMPLE_FONT`
+environment variable selects a different font at runtime (`--font` wins).
+For a truly single-file executable that also runs without the Visual C++
+redistributable, configure with `IMSLUG_STATIC_CRT=ON` (MSVC only; add
+`-DIMSLUG_STATIC_CRT=ON` to `IMSLUG_CMAKE_DEFINES`) — the only remaining
+dependency is `vulkan-1.dll` from the GPU driver. (It covers the targets this
+project builds; a caller-provided `glfw`/imgui target must also use `/MT`.)
+
 ## Integration
 
 ```cpp
@@ -86,7 +127,9 @@ ImFont* font = ImSlug::AddFontFromFileTTF("inter.imslug", 18.0f);  // same API
 
 The container v1 (magic `IMSLUG`, versioned, little-endian, deterministic) holds
 font metrics, glyph records and the packed curve/band texels; `imslug_gen info`
-validates and inspects an asset, `--emit-header` embeds one in C. A build with
+validates and inspects an asset and `--emit-header` embeds one in C.
+`imslug_gen embed <file>` wraps any raw file (a TTF, an image, …) in the same
+deterministic byte-array header. A build with
 `-DIMSLUG_TTF_PARSER=OFF` ships **without any TrueType parser** and loads packed
 assets only (the example's scene 9 and the no-parser CI job demonstrate it).
 Format, validation rules and limits: [`docs/PACKED_FORMAT.md`](docs/PACKED_FORMAT.md).
@@ -95,9 +138,14 @@ The GLFW+Vulkan example (`IMSLUG_BUILD_EXAMPLES=ON`,
 `build/imslug_example_glfw_vulkan.exe`) has a scene switcher for the demo
 window, widgets/plots/tables, a clipping torture scene, mixed Slug+atlas fonts,
 a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene, the fetched
-CJK subset, the color-emoji scene (with a zoom slider for the gradients) and the
-packed-asset scene, plus debug overlay toggles (F1/F2/F3) and
-`--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
+CJK subset, the color-emoji scene (with a zoom slider for the gradients), the
+packed-asset scene and a heavy demo / perf scene (key `P`) with a performance
+panel — wall-clock frame-time plot, whole-frame GPU timestamps, draw / Slug /
+atlas counters and a vsync toggle (`--novsync` for uncapped runs). `M` (or
+`--renderer atlas`) swaps the body text between Slug and ImGui's dynamic font
+system for a direct comparison of the same font; debug overlay toggles are
+F1/F2/F3 and `--screenshot <file.ppm> [scene] [dpi_scale]` captures offscreen
+frames.
 
 C and Rust consumers use the `extern "C"` mirror (`imslug_c.h`) instead of the
 C++ API; `example/c/` is a pure-C11 example (CPU smoke, plus a headless Vulkan

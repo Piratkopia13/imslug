@@ -33,7 +33,9 @@ literal range (`a-z`), hex codepoints (`0x20`, `U+20`), hex ranges
 Codepoints missing from the font are reported and skipped. `--emit-header
 <file.h>` additionally writes a C header embedding the bytes (deterministic, no
 timestamps) for apps that embed the asset; `--header-symbol <name>` overrides
-the generated symbol base name. `imslug_gen info <asset>` validates an asset
+the generated symbol base name. `imslug_gen embed <file> --emit-header <out.h>`
+writes the same kind of header for any raw file (the example embeds its default
+TTF this way). `imslug_gen info <asset>` validates an asset
 and prints its identity/pool summary.
 
 `--size-range` is recorded for diagnostics only: **glyph geometry is
@@ -168,7 +170,8 @@ printable) is regenerated with `scripts/gen_asset.*`.
 
 | What | Where |
 |---|---|
-| Generate an asset | `imslug_gen font …`; committed asset: `scripts/gen_asset.*` |
+| Generate an asset | `imslug_gen font …`; committed asset + example headers: `scripts/gen_asset.*` |
+| Embed a raw file | `imslug_gen embed <file> --emit-header <out.h>` |
 | Inspect an asset | `imslug_gen info <asset>` |
 | Round-trip (bitwise) | ctest `imslug_packed_roundtrip` (needs the parser) |
 | Loader/validation | ctest `imslug_packed_loader` (runs without the parser) |

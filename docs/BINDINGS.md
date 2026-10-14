@@ -149,7 +149,8 @@ can be bound later without a build change.
 `imslug_vulkan_init_info` is the C mirror of `ImSlugVulkanInitInfo`; fill it
 from your renderer's Vulkan objects. A zero `MSAASamples` selects
 `VK_SAMPLE_COUNT_1_BIT`; a zero `MaxInstancesPerFrame` selects
-`Config::MaxInstancesPerFrame`, then the backend default (16384). The
+`Config::MaxInstancesPerFrame`, then the backend default (16384) with adaptive
+growth on overflow, while a nonzero value is a fixed hard cap. The
 instance/device API version must be ≥ 1.2 (the committed SPIR-V is 1.5).
 
 `imslug_impl_vulkan_init` maps to the additive C++

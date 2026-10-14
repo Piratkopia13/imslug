@@ -156,8 +156,11 @@ typedef uint16_t imslug_wchar;
         // drew instead. Unclipped glyphs are placed identically either way.
         int EnableFineClipReconstruction;
 
-        // Instance ring sizing per frame; 0 selects the backend default (16384).
-        // A frame that overflows drops the overflowing runs (Statistics.DroppedRuns).
+        // Instance ring sizing per frame; 0 selects the backend default (16384)
+        // and lets the ring grow when a frame overflows (one-time stderr
+        // warning on the first drop; the next frame's ring is larger). A
+        // nonzero value is a fixed hard cap: overflowing runs keep dropping
+        // (warning + Statistics.DroppedRuns) until the app raises it.
         uint32_t MaxInstancesPerFrame;
 
         // Upper bound of live glyph slabs (one per baked visible glyph); 0 selects
@@ -293,7 +296,8 @@ typedef uint16_t imslug_wchar;
     // caller (never created/destroyed by imslug). Zero-initialize and fill; a
     // zero MSAASamples selects VK_SAMPLE_COUNT_1_BIT and a zero
     // MaxInstancesPerFrame selects the default (16384; Config::MaxInstancesPerFrame
-    // applies when nonzero).
+    // applies when nonzero) with adaptive growth on overflow, while a nonzero
+    // value is a fixed hard cap.
     typedef struct imslug_vulkan_init_info
     {
         // Device objects, owned by the caller (never created/destroyed here).
@@ -321,7 +325,8 @@ typedef uint16_t imslug_wchar;
         int UseDynamicRendering;
         VkPipelineRenderingCreateInfo PipelineRenderingCreateInfo;
 
-        // Instance ring sizing; 0 selects the default (16384 instances/frame).
+        // Instance ring sizing; 0 selects the default (16384, adaptive growth
+        // on overflow); a nonzero value is a fixed hard cap.
         uint32_t MaxInstancesPerFrame;
     } imslug_vulkan_init_info;
 

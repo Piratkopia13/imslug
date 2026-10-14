@@ -27,6 +27,7 @@
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace ImSlug
@@ -34,6 +35,16 @@ namespace ImSlug
     namespace
     {
         const uint32_t kDefaultMaxInstancesPerFrame = 16384;
+        // Default-capacity overflow grows the instance ring (doubling, at least
+        // to the observed demand) up to this many times the default. An
+        // explicit MaxInstancesPerFrame is a hard cap and is never exceeded.
+        const uint32_t kMaxInstanceGrowthFactor = 8;
+        // Instance buffers are host-visible and bound whole at draw time, so a
+        // growth must keep the old buffer alive until the frames that recorded
+        // against it completed (deferred free, no device wait). Growth doubles
+        // from the default and is capped at 8x, so at most three buffers can be
+        // pending; the extra slot is headroom.
+        const uint32_t kMaxRetiredInstanceBuffers = 4;
         const uint32_t kMaxFramesInFlight = 3;
         const uint32_t kMaxPipelineEntries = 16;
         const uint32_t kMaxDynamicColorFormats = 4;
@@ -54,6 +65,16 @@ namespace ImSlug
             VkDeviceMemory Memory;
             void* Mapped;
             VkDeviceSize Size;
+        };
+
+        // A grown-away instance buffer awaiting the completion of every frame
+        // that recorded against it. Host-visible buffers are bound whole at
+        // draw time, so the old buffer cannot be destroyed while those frames
+        // are in flight (validation would flag the destroy).
+        struct RetiredBuffer
+        {
+            Buffer Value;
+            uint32_t FreeAtUpload;  // destroy once UploadCount reaches this
         };
 
         struct PoolTexture
@@ -81,6 +102,15 @@ namespace ImSlug
             ImSlugVulkanInitInfo Info;
             uint32_t FramesInFlight;
             uint32_t InstanceCapacity;
+            // Growth ceiling: the explicit MaxInstancesPerFrame (a hard cap) or
+            // kMaxInstanceGrowthFactor * the default when the capacity came
+            // from the default. Never below InstanceCapacity.
+            uint32_t InstanceCapacityMax;
+            uint32_t PendingInstanceCapacity;  // 0 = no growth scheduled
+            uint32_t InstanceWarningCapacity;  // capacity the overflow warning last named
+            uint32_t InstanceCursor;           // per-frame reservation cursor
+            uint32_t CurrentFrameIndex;        // frame index of the last UploadPools call
+            uint32_t UploadCount;              // completed UploadPools calls (== frame id)
             uint32_t MaxImageDimension;
 
             VkDescriptorSetLayout DescriptorSetLayout;
@@ -108,6 +138,8 @@ namespace ImSlug
             // no device wait.
             Buffer Staging[kMaxFramesInFlight];
             Buffer Instances;
+            RetiredBuffer RetiredInstances[kMaxRetiredInstanceBuffers];
+            uint32_t RetiredInstanceCount;
 
             // Dynamic rendering: copy of the init info's create-info (with the
             // color format pointer re-pointed at our own array).
@@ -188,6 +220,96 @@ namespace ImSlug
             buffer->Handle = VK_NULL_HANDLE;
             buffer->Memory = VK_NULL_HANDLE;
             buffer->Size = 0;
+        }
+
+        // ---------------------------------------------------------------------
+        // Instance ring growth
+        // ---------------------------------------------------------------------
+        // The ring is frames_in_flight x InstanceCapacity host-visible records.
+        // A frame that needs more drops its overflowing runs; when the capacity
+        // came from the default (no explicit MaxInstancesPerFrame), the ring
+        // grows instead: in place when the frame has not written anything yet,
+        // otherwise at the next ImSlugVulkanUploadPools (one frame of dropped
+        // text at most). The old buffer stays alive until every frame that
+        // recorded against it completed - recording frame N again requires its
+        // previous submission to have completed (the frames-in-flight
+        // contract), i.e. it is safe once UploadCount reaches the frame that
+        // reuses frame N's ring slot.
+        void CollectRetiredInstanceBuffers(bool force)
+        {
+            uint32_t i = 0;
+            while (i < g_State.RetiredInstanceCount)
+            {
+                if (force || g_State.RetiredInstances[i].FreeAtUpload <= g_State.UploadCount)
+                {
+                    DestroyBuffer(&g_State.RetiredInstances[i].Value);
+                    g_State.RetiredInstances[i] = g_State.RetiredInstances[--g_State.RetiredInstanceCount];
+                    continue;
+                }
+                ++i;
+            }
+        }
+
+        void RetireInstanceBuffer(Buffer* buffer, uint32_t freeAtUpload)
+        {
+            if (buffer->Handle == VK_NULL_HANDLE)
+                return;
+            if (g_State.RetiredInstanceCount == kMaxRetiredInstanceBuffers)
+            {
+                // Unreachable with the doubling growth (at most three buffers
+                // pending); safety valve: make every in-flight submission
+                // complete, then free the whole list.
+                CheckVk(vkDeviceWaitIdle(g_State.Info.Device), "vkDeviceWaitIdle");
+                CollectRetiredInstanceBuffers(true);
+            }
+            RetiredBuffer* retired = &g_State.RetiredInstances[g_State.RetiredInstanceCount++];
+            retired->Value = *buffer;
+            retired->FreeAtUpload = freeAtUpload;
+            buffer->Handle = VK_NULL_HANDLE;
+            buffer->Memory = VK_NULL_HANDLE;
+            buffer->Mapped = nullptr;
+            buffer->Size = 0;
+        }
+
+        // Doubling, at least to `demanded`, never above the ceiling.
+        uint32_t InstanceGrowthTarget(uint32_t demanded)
+        {
+            uint32_t target = g_State.InstanceCapacity * 2;
+            if (target < demanded)
+                target = demanded;
+            if (target > g_State.InstanceCapacityMax)
+                target = g_State.InstanceCapacityMax;
+            return target;
+        }
+
+        // Replaces the ring with a `newCapacity`-records-per-frame buffer.
+        // Returns false (keeping the current ring) when the buffer cannot be
+        // created; the callers then keep dropping runs.
+        bool GrowInstanceBuffer(uint32_t newCapacity)
+        {
+            IMSLUG_ASSERT(g_State.Initialized);
+            IMSLUG_ASSERT(newCapacity > g_State.InstanceCapacity);
+            IMSLUG_ASSERT(newCapacity <= g_State.InstanceCapacityMax);
+            if (newCapacity <= g_State.InstanceCapacity || newCapacity > g_State.InstanceCapacityMax)
+                return false;
+
+            const VkDeviceSize bytes = (VkDeviceSize)g_State.FramesInFlight * newCapacity * sizeof(ImSlugGlyphInstance);
+            Buffer grown = {};
+            CreateBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &grown);
+            if (grown.Mapped == nullptr)
+            {
+                DestroyBuffer(&grown);  // CreateBuffer asserts; release is graceful
+                return false;
+            }
+
+            RetireInstanceBuffer(&g_State.Instances, g_State.UploadCount + g_State.FramesInFlight);
+            g_State.Instances = grown;
+            const uint32_t previous = g_State.InstanceCapacity;
+            g_State.InstanceCapacity = newCapacity;
+            fprintf(stderr, "[imslug] Slug instance ring grown from %u to %u instances/frame.\n", previous,
+                    newCapacity);
+            return true;
         }
 
         void TransitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
@@ -621,6 +743,9 @@ namespace ImSlug
             DestroyPoolTexture(&g_State.Bands);
             for (uint32_t i = 0; i < kMaxFramesInFlight; ++i)
                 DestroyBuffer(&g_State.Staging[i]);
+            for (uint32_t i = 0; i < g_State.RetiredInstanceCount; ++i)
+                DestroyBuffer(&g_State.RetiredInstances[i].Value);
+            g_State.RetiredInstanceCount = 0;
             DestroyBuffer(&g_State.Instances);
             DestroyBuffer(&g_State.Paints);
         }
@@ -656,6 +781,12 @@ namespace ImSlug
         g_State.FramesInFlight = initInfo->ImageCount < kMaxFramesInFlight ? initInfo->ImageCount : kMaxFramesInFlight;
         g_State.InstanceCapacity =
             initInfo->MaxInstancesPerFrame != 0 ? initInfo->MaxInstancesPerFrame : kDefaultMaxInstancesPerFrame;
+        // An explicit MaxInstancesPerFrame is a hard cap: overflow keeps
+        // dropping runs (one-time stderr warning). The default capacity grows
+        // up to kMaxInstanceGrowthFactor times the default.
+        g_State.InstanceCapacityMax = initInfo->MaxInstancesPerFrame != 0
+                                          ? initInfo->MaxInstancesPerFrame
+                                          : kDefaultMaxInstancesPerFrame * kMaxInstanceGrowthFactor;
 
         VkPhysicalDeviceProperties deviceProperties;
         vkGetPhysicalDeviceProperties(initInfo->PhysicalDevice, &deviceProperties);
@@ -797,6 +928,18 @@ namespace ImSlug
         IMSLUG_ASSERT(frameIndex < g_State.FramesInFlight);
         if (!g_State.Initialized || pools == nullptr || cmd == VK_NULL_HANDLE || frameIndex >= g_State.FramesInFlight)
             return false;
+
+        // Instance-ring bookkeeping (both are no-ops in steady state): free
+        // buffers no in-flight frame can read anymore, then apply the growth a
+        // previous frame requested (before anything of this frame is written).
+        CollectRetiredInstanceBuffers(false);
+        if (g_State.PendingInstanceCapacity > g_State.InstanceCapacity)
+        {
+            if (GrowInstanceBuffer(g_State.PendingInstanceCapacity))
+                g_State.PendingInstanceCapacity = 0;
+        }
+        g_State.CurrentFrameIndex = frameIndex;
+        g_State.InstanceCursor = 0;
 
         bool curveChanged = false;
         bool bandChanged = false;
@@ -942,6 +1085,7 @@ namespace ImSlug
             g_State.PaintsHasData = true;
             ImSlugPaintPoolClearDirtyRecords(&pools->Paints);
         }
+        g_State.UploadCount++;  // one UploadPools call == one frame (its ring slot)
         return true;
     }
 
@@ -962,6 +1106,73 @@ namespace ImSlug
         if (!g_State.Initialized || frameIndex >= g_State.FramesInFlight || g_State.Instances.Mapped == nullptr)
             return nullptr;
         return (ImSlugGlyphInstance*)g_State.Instances.Mapped + (size_t)frameIndex * g_State.InstanceCapacity;
+    }
+
+    ImSlugGlyphInstance* ImSlugVulkanReserveInstances(uint32_t count, uint32_t* outFirstInstance)
+    {
+        IMSLUG_ASSERT(g_State.Initialized);
+        IMSLUG_ASSERT(outFirstInstance != nullptr);
+        if (!g_State.Initialized || outFirstInstance == nullptr || count == 0)
+            return nullptr;
+        IMSLUG_ASSERT(g_State.InstanceCursor <= g_State.InstanceCapacity);
+
+        if (count > g_State.InstanceCapacity - g_State.InstanceCursor)
+        {
+            // Overflow. Growing in place is safe only while this frame has not
+            // reserved anything yet: no batch of the frame points into the
+            // current buffer (draws are recorded later, after the pre-pass), and
+            // the old buffer is retired for the frames still in flight.
+            if (g_State.InstanceCursor == 0 && g_State.InstanceCapacityMax > g_State.InstanceCapacity)
+                GrowInstanceBuffer(InstanceGrowthTarget(g_State.InstanceCursor + count));
+
+            if (count > g_State.InstanceCapacity - g_State.InstanceCursor)
+            {
+                // Still does not fit: the run is dropped. Warn once per
+                // capacity (so a fixed cap warns once, growth once per step)
+                // and schedule growth for the next frame when the capacity came
+                // from the default; an explicit MaxInstancesPerFrame is a hard
+                // cap and never grows.
+                const uint32_t demand = g_State.InstanceCursor + count;
+                uint32_t growthTarget = 0;
+                if (g_State.InstanceCapacityMax > g_State.InstanceCapacity)
+                {
+                    growthTarget = InstanceGrowthTarget(demand);
+                    if (growthTarget > g_State.PendingInstanceCapacity)
+                        g_State.PendingInstanceCapacity = growthTarget;
+                }
+                if (g_State.InstanceWarningCapacity != g_State.InstanceCapacity)
+                {
+                    g_State.InstanceWarningCapacity = g_State.InstanceCapacity;
+                    if (growthTarget > 0)
+                    {
+                        fprintf(stderr,
+                                "[imslug] Slug instance ring full: a text run of %u instances did not fit (frame "
+                                "demand %u, capacity %u); the run is dropped. The ring grows to %u for the next "
+                                "frame; raise MaxInstancesPerFrame (Config::MaxInstancesPerFrame / "
+                                "ImSlugVulkanInitInfo::MaxInstancesPerFrame) to set a fixed capacity.\n",
+                                count, demand, g_State.InstanceCapacity, growthTarget);
+                    }
+                    else
+                    {
+                        fprintf(stderr,
+                                "[imslug] Slug instance ring full: a text run of %u instances did not fit (frame "
+                                "demand %u, capacity %u); the run is dropped. Raise the configured "
+                                "MaxInstancesPerFrame (Config::MaxInstancesPerFrame / "
+                                "ImSlugVulkanInitInfo::MaxInstancesPerFrame) to fit the frame's glyph count.\n",
+                                count, demand, g_State.InstanceCapacity);
+                    }
+                }
+                return nullptr;
+            }
+        }
+
+        ImSlugGlyphInstance* base = ImSlugVulkanGetInstanceData(g_State.CurrentFrameIndex);
+        if (base == nullptr)
+            return nullptr;
+        const uint32_t firstInstance = g_State.InstanceCursor;
+        g_State.InstanceCursor += count;
+        *outFirstInstance = firstInstance;
+        return base + firstInstance;
     }
 
     void ImSlugVulkanDraw(VkCommandBuffer cmd, const ImSlugVulkanDrawInfo* drawInfo)
@@ -1059,11 +1270,12 @@ namespace ImSlug
             // Config::DebugDrawBounds at Init.
             uint32_t DebugOverlay;
 
-            // Per-frame slot and the instance allocation cursor inside it.
-            uint32_t FrameIndex;      // ring slot for the current frame
-            uint32_t FrameCounter;    // advanced by UploadPools (one per frame)
-            int UploadFrameCount;     // ImGui::GetFrameCount() of the last upload (-1 = none)
-            uint32_t InstanceCursor;  // per-frame instance allocation cursor
+            // Per-frame slot; advanced by UploadPools (one per frame). The
+            // instance allocation cursor lives in the core (one reserve path
+            // for the adapter and the harnesses).
+            uint32_t FrameIndex;    // ring slot for the current frame
+            uint32_t FrameCounter;  // advanced by UploadPools (one per frame)
+            int UploadFrameCount;   // ImGui::GetFrameCount() of the last upload (-1 = none)
 
             // Per RenderDrawData call (callbacks run inside the stock backend's
             // render loop, which republishes CommandBuffer + framebuffer size).
@@ -1083,16 +1295,9 @@ namespace ImSlug
         {
             if (!g_ImGuiVulkan.Initialized || count == 0)
                 return nullptr;
-            const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
-            if (count > capacity - g_ImGuiVulkan.InstanceCursor)
-                return nullptr;
-            ImSlugGlyphInstance* base = ImSlugVulkanGetInstanceData(g_ImGuiVulkan.FrameIndex);
-            if (base == nullptr)
-                return nullptr;
-            const uint32_t first = g_ImGuiVulkan.InstanceCursor;
-            g_ImGuiVulkan.InstanceCursor += count;
-            *outFirstInstance = first;
-            return base + first;
+            // The core owns the per-frame cursor, the growth policy and the
+            // one-time overflow warning (see ImSlugVulkanReserveInstances).
+            return ImSlugVulkanReserveInstances(count, outFirstInstance);
         }
 
         void ImGuiRenderIO_DrawBatch(const ImSlugBatch* batch)
@@ -1251,7 +1456,6 @@ namespace ImSlug
         const uint32_t framesInFlight = ImSlugVulkanGetFramesInFlight();
         g_ImGuiVulkan.FrameIndex = framesInFlight != 0 ? (g_ImGuiVulkan.FrameCounter % framesInFlight) : 0;
         g_ImGuiVulkan.FrameCounter++;
-        g_ImGuiVulkan.InstanceCursor = 0;
 
         ImSlugPools* pools = ImSlugGetPools();
         if (pools != nullptr)

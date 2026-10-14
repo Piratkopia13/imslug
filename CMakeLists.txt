@@ -23,6 +23,15 @@ option(IMSLUG_BUILD_EXAMPLES "Build the example applications" OFF)
 option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
 option(IMSLUG_BUILD_TOOLS    "Build the offline tools (imslug_gen)" ON)
 option(IMSLUG_TTF_PARSER     "Build the runtime TTF outline parser (stb_truetype; OFF = packed .imslug assets only)" ON)
+option(IMSLUG_STATIC_CRT     "MSVC only: link the C runtime statically (/MT) so executables run without the VC++ redistributable" OFF)
+
+# Mirror the MSVC runtime build-wide: our targets, the Dear ImGui sources and
+# GLFW (below) all end up in one binary, which must never mix /MD and /MT.
+# Off by default; a static-CRT build makes the example a single file that
+# needs no VC++ redistributable next to it.
+if(MSVC AND IMSLUG_STATIC_CRT)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 set(IMSLUG_IMGUI_DIR "" CACHE PATH
     "Use an existing Dear ImGui checkout instead of fetching it (-DIMSLUG_IMGUI_DIR=...)")
@@ -92,6 +101,11 @@ else()
 
     if(IMSLUG_IMGUI_LINK_TARGET)
         message(STATUS "imslug: using Dear ImGui via find_package(imgui) -> ${IMSLUG_IMGUI_LINK_TARGET}")
+        if(MSVC AND IMSLUG_STATIC_CRT)
+            message(AUTHOR_WARNING
+                "IMSLUG_STATIC_CRT=ON with a caller-provided imgui target: its MSVC runtime is outside this "
+                "project's control - make sure it is also /MT or the binary mixes runtimes.")
+        endif()
     else()
         include(FetchContent)
         FetchContent_Declare(imgui
@@ -258,11 +272,26 @@ if(IMSLUG_BUILD_EXAMPLES)
     else()
         # GLFW: local checkout (IMSLUG_GLFW_DIR), an existing glfw target, or
         # FetchContent at the pinned tag. Read-only third-party tree either way.
+        # Keep GLFW's own runtime choice in lockstep with ours when we create
+        # the target (mixed /MD-/MT objects in one binary are undefined): the
+        # cache entry is forced so that toggling IMSLUG_STATIC_CRT on an
+        # existing build directory takes effect. (Pathological superbuild
+        # caveat: a *normal* USE_MSVC_RUNTIME_LIBRARY_DLL variable upstream
+        # would make GLFW's option() ignore this cache entry via CMP0077.)
+        if(MSVC)
+            if(IMSLUG_STATIC_CRT)
+                set(USE_MSVC_RUNTIME_LIBRARY_DLL OFF CACHE BOOL "Use MSVC runtime library DLL" FORCE)
+            else()
+                set(USE_MSVC_RUNTIME_LIBRARY_DLL ON CACHE BOOL "Use MSVC runtime library DLL" FORCE)
+            endif()
+        endif()
+        set(_imslug_glfw_owned FALSE)
         if(IMSLUG_GLFW_DIR)
             if(NOT EXISTS "${IMSLUG_GLFW_DIR}/include/GLFW/glfw3.h")
                 message(FATAL_ERROR "IMSLUG_GLFW_DIR='${IMSLUG_GLFW_DIR}' does not look like a GLFW checkout")
             endif()
             add_subdirectory("${IMSLUG_GLFW_DIR}" "${CMAKE_BINARY_DIR}/_deps/glfw-local" EXCLUDE_FROM_ALL)
+            set(_imslug_glfw_owned TRUE)
         elseif(NOT TARGET glfw)
             include(FetchContent)
             set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -274,6 +303,12 @@ if(IMSLUG_BUILD_EXAMPLES)
                 GIT_TAG        ${IMSLUG_GLFW_TAG}
                 GIT_SHALLOW    TRUE)
             FetchContent_MakeAvailable(glfw)
+            set(_imslug_glfw_owned TRUE)
+        endif()
+        if(MSVC AND IMSLUG_STATIC_CRT AND NOT _imslug_glfw_owned)
+            message(AUTHOR_WARNING
+                "IMSLUG_STATIC_CRT=ON with a caller-provided 'glfw' target: its MSVC runtime is outside this "
+                "project's control - make sure it is also /MT or the example mixes runtimes.")
         endif()
 
         # Dear ImGui platform backend (third-party; examples only). The Vulkan
@@ -299,21 +334,19 @@ if(IMSLUG_BUILD_EXAMPLES)
             target_compile_options(imslug_imgui_demo PRIVATE -w)
         endif()
 
-        add_executable(imslug_example_glfw_vulkan example/glfw_vulkan/main.cpp)
+        add_executable(imslug_example_glfw_vulkan
+            example/glfw_vulkan/main.cpp
+            example/glfw_vulkan/imslug_example_asset.h
+            example/glfw_vulkan/imslug_example_font.h)
         set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
         imslug_target_defaults(imslug_example_glfw_vulkan)
         target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
-        # The default Slug font is the TTF when the parser is built in and
-        # the committed packed asset otherwise (the no-parser demo runs entirely
-        # from baked data; the stock atlas font still uses ImGui's own parser).
-        if(IMSLUG_TTF_PARSER)
-            set(IMSLUG_EXAMPLE_FONT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf")
-        else()
-            set(IMSLUG_EXAMPLE_FONT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug")
-        endif()
+        # The default fonts are embedded in the binary (generated headers,
+        # regenerated by scripts/gen_asset.*; freshness: imslug_asset_fresh):
+        # the committed packed asset for Slug and the raw TTF for ImGui's stock
+        # atlas loader, so the executable needs no data files next to it.
+        # --font / IMSLUG_EXAMPLE_FONT override them at runtime.
         target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
-            IMSLUG_EXAMPLE_FONT_PATH="${IMSLUG_EXAMPLE_FONT_PATH}"
-            IMSLUG_EXAMPLE_STOCK_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/Roboto-Regular.ttf"
             IMSLUG_PACKED_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug"
             IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
             IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"

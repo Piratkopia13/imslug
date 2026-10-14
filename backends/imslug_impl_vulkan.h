@@ -12,7 +12,8 @@
 //     upload);
 //   * one staging buffer per frame in flight, used for dirty-row uploads;
 //   * the host-visible persistently mapped instance ring
-//     (frames_in_flight x MaxInstancesPerFrame);
+//     (frames_in_flight x MaxInstancesPerFrame; grows within its ceiling when
+//     a frame overflows and no explicit capacity was set);
 //   * the Slug pipeline, created lazily per render pass/subpass (or once for
 //     dynamic rendering) and cached.
 //
@@ -73,7 +74,11 @@ namespace ImSlug
         bool UseDynamicRendering = false;
         VkPipelineRenderingCreateInfo PipelineRenderingCreateInfo = {};
 
-        // Instance ring sizing; 0 selects the default (16384 instances/frame).
+        // Instance ring sizing; 0 selects the default (16384) and lets the
+        // ring grow when a frame overflows (doubling, at least to the observed
+        // demand, capped at 8x the default). A nonzero value is a hard cap:
+        // the ring keeps that capacity and an overflowing frame drops its
+        // overflowing runs with a one-time stderr warning.
         uint32_t MaxInstancesPerFrame = 0;
     };
 
@@ -110,8 +115,30 @@ namespace ImSlug
     uint32_t ImSlugVulkanGetInstanceCapacity();
 
     // Base pointer of the ring slot for `frameIndex` (< frames in flight).
-    // Valid until Shutdown; write up to GetInstanceCapacity() records.
+    // Valid until the next ring growth (growth retires the old buffer once the
+    // frames that recorded against it completed, so re-fetch after
+    // ImSlugVulkanUploadPools/ImSlugVulkanReserveInstances; never cache the
+    // pointer across frames); otherwise valid until Shutdown. Write up to
+    // GetInstanceCapacity() records.
     ImSlugGlyphInstance* ImSlugVulkanGetInstanceData(uint32_t frameIndex);
+
+    // Reserves `count` contiguous instance records in the current frame's ring
+    // slot (the slot advances once per ImSlugVulkanUploadPools call). Returns
+    // the base of the slot-relative range - write the records there and pass
+    // the returned FirstInstance to ImSlugVulkanDrawInfo - or null when the
+    // frame's capacity is exhausted; the caller must then skip that batch. The
+    // ImGui adapter's ReserveInstances callback forwards here; harnesses drive
+    // it directly.
+    //
+    // Overflow is never silent and self-heals when the capacity came from the
+    // default (InitInfo::MaxInstancesPerFrame == 0): the first failure at a
+    // given capacity prints a one-line stderr warning (demand vs capacity plus
+    // the actionable knob) and the ring grows - in place when the frame has
+    // reserved nothing yet, otherwise at the next ImSlugVulkanUploadPools - by
+    // doubling (at least to the observed demand) up to 8x the default. An
+    // explicit MaxInstancesPerFrame is a hard cap: the ring never grows past
+    // it and every overflowing run drops.
+    ImSlugGlyphInstance* ImSlugVulkanReserveInstances(uint32_t count, uint32_t* outFirstInstance);
 
     // ---------------------------------------------------------------------
     // Draw

@@ -31,7 +31,7 @@ struct ImSlugVulkanInitInfo
     VkRenderPass RenderPass; uint32_t Subpass;   // render-pass path (UseDynamicRendering == false)
     bool UseDynamicRendering;                    // dynamic-rendering path
     VkPipelineRenderingCreateInfo PipelineRenderingCreateInfo;  // copied (up to 4 color formats)
-    uint32_t MaxInstancesPerFrame;               // 0 => 16384
+    uint32_t MaxInstancesPerFrame;               // 0 => 16384 (adaptive growth); nonzero = hard cap
 };
 
 bool ImSlugVulkanInit(const ImSlugVulkanInitInfo*);   // false => not usable (formats missing)
@@ -42,6 +42,13 @@ bool ImSlugVulkanUploadPools(VkCommandBuffer cmd, ImSlugPools* pools, uint32_t f
 uint32_t ImSlugVulkanGetFramesInFlight();
 uint32_t ImSlugVulkanGetInstanceCapacity();
 ImSlugGlyphInstance* ImSlugVulkanGetInstanceData(uint32_t frameIndex);  // ring slot base
+// Reserves in the current frame's slot; null when the frame's capacity is
+// exhausted (the core pre-pass drops that run). Never silent: the first drop at
+// a capacity warns on stderr (demand vs capacity) and the ring grows for the
+// next frame when the capacity came from the default (in place when the frame
+// has reserved nothing yet). A nonzero InitInfo::MaxInstancesPerFrame is a hard
+// cap: nothing grows past it. The adapter's ReserveInstances forwards here.
+ImSlugGlyphInstance* ImSlugVulkanReserveInstances(uint32_t count, uint32_t* outFirstInstance);
 
 struct ImSlugVulkanDrawInfo
 {
@@ -152,6 +159,17 @@ Maps 1:1 from `ImGui_ImplVulkan_InitInfo.PipelineInfoMain`
   into `ImSlugVulkanGetInstanceData(frameIndex)` and batches them with
   slot-relative `FirstInstance` (the buffer is bound whole, never per-batch;
   the draw adds the ring base, see the pipeline rules).
+* Instance-ring growth (default capacity only): `ImSlugVulkanReserveInstances`
+  warns once per capacity on the first drop (demand vs capacity + the knob) and
+  grows the ring - in place while the frame's cursor is still 0, else at the
+  next `ImSlugVulkanUploadPools` - doubling, at least to the observed demand,
+  capped at 8x the default. The grown-away buffer is deferred-freed (no device
+  wait): it is retired with `FreeAtUpload = UploadCount + frames in flight` and
+  destroyed when the frame that recorded against it last would reuse its ring
+  slot (the frames-in-flight contract), so nothing is destroyed while in
+  flight. A nonzero `InitInfo::MaxInstancesPerFrame` sets the capacity and the
+  ceiling to the same value: no growth, every overflow drops. Growth
+  invalidates `GetInstanceData` pointers - re-fetch, never cache across frames.
 * Paint pool: `ImSlugPools::Paints` (bytes, `ImSlugPaintRecord` array) is
   uploaded into the binding-2 storage buffer in the same call and through the
   same per-frame staging buffer. The first upload covers `[0, Count)`, later
@@ -276,7 +294,12 @@ messages). Scene switcher (keys 1-9 / the radio buttons): demo window,
 widgets/plots/tables, clipping torture, mixed Slug+atlas fonts, runtime
 `style.FontScaleDpi`, the 5k-glyph stress scene, the fetched CJK subset, the
 color-emoji scene (BMP emoji at a size slider plus a single-glyph zoom for the
-gradients) and the packed-asset scene. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
+gradients) and the packed-asset scene. Key `P` selects a heavy demo / perf scene
+with a performance panel: frame-ms plot, whole-frame GPU time from timestamp
+queries, draw/Slug/atlas counters and a vsync toggle (FIFO <-> MAILBOX/
+IMMEDIATE, `--novsync`); `M` (or `--renderer atlas`) swaps the default font
+between the Slug registration and the stock registration at the same size for
+an A/B comparison. `--screenshot <file.ppm> [scene] [dpi_scale]` captures an
 offscreen frame and prints the validation message/error counts on exit. The
 frame loop cycles over `ImSlugVulkanGetFramesInFlight()` (not a hardcoded 3) and
 null-checks the ring slot pointer - a 2-image swapchain must not touch ring
@@ -352,9 +375,12 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    frame index, the main render pass (`VK_NULL_HANDLE` under dynamic rendering),
    the batch's slot-relative `FirstInstance`/`InstanceCount`, a Y-down ortho MVP
    for the framebuffer, the framebuffer size and the batch scissor.
-6. Instances live in the core's instance ring: the adapter tracks the per-frame allocation
-   cursor (`ReserveInstances`); exhaustion drops the overflowing run with a
-   debug assert and `Statistics::DroppedRuns`.
+6. Instances live in the core's instance ring: the adapter's
+   `ReserveInstances` forwards to `ImSlugVulkanReserveInstances` (the core owns
+   the per-frame cursor, the growth policy and the one-time overflow warning);
+   exhaustion drops the overflowing run with a debug assert and
+   `Statistics::DroppedRuns`, and the next frame's ring is larger unless an
+   explicit `MaxInstancesPerFrame` capped it.
 7. Render pass: the pipeline mirrors `PipelineInfoMain.RenderPass/Subpass`, so
    multi-viewport render passes must be *compatible* with it (same
    formats/samples; the helper-created viewport passes are). Dynamic rendering

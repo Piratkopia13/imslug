@@ -89,10 +89,12 @@ documented approximations for a few rare composite modes are in `DESIGN.md`
 `IMGUI_USE_WCHAR32` for those. Packed `.imslug` v1 assets are monochrome only.
 
 **Why do I see no text at very large glyph counts?**
-The per-frame instance ring (default 16384 glyphs/layers) drops overflowing
-text runs gracefully (debug assert, `Statistics::DroppedRuns`) rather than
-corrupting the frame. Raise `Config::MaxInstancesPerFrame` if your UI is denser
-than that.
+The per-frame instance ring (default 16384 glyphs/layers) only drops runs that
+do not fit — and never silently: the first drop prints a one-time stderr warning
+with the demand and the capacity, and with the default capacity the ring grows
+for the next frame (doubling, capped at 8x the default), so the text returns.
+A **fixed** `Config::MaxInstancesPerFrame` is a hard cap; leave it 0 (adaptive)
+or raise it. Ongoing drops show in `Statistics::DroppedRuns`.
 
 ## Performance
 

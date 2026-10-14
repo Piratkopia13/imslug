@@ -12,8 +12,9 @@ bitmaps. Every other font, shape, texture and draw command keeps going through
 ImGui's stock path.
 
 If you just want to see it run, build the example app instead
-(`-DIMSLUG_BUILD_EXAMPLES=ON`, scene switcher keys 1–9); this document is for
-putting imslug into your own project. For the C API and Rust, see
+(`-DIMSLUG_BUILD_EXAMPLES=ON`, scene switcher keys 1–9, `P` for the heavy
+demo/perf scene, `M` to swap Slug <-> ImGui's dynamic font system); this
+document is for putting imslug into your own project. For the C API and Rust, see
 [`BINDINGS.md`](BINDINGS.md); for the design and the measured numbers, see
 [`DESIGN.md`](DESIGN.md); common questions are answered in [`FAQ.md`](FAQ.md).
 
@@ -157,9 +158,13 @@ ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
   override the stock backend takes.
 * One instance per glyph (plus one per color layer) is written into a
   frames-in-flight ring sized by `Config::MaxInstancesPerFrame` (default
-  16384). A frame that overflows drops the overflowing text runs — debug
-  assert, counted in `Statistics::DroppedRuns` — instead of corrupting the
-  frame.
+  16384). A frame that overflows never fails silently: the first drop at a
+  given capacity prints a one-time stderr warning (demand vs capacity plus the
+  knob that changes it), only the runs that do not fit are dropped (counted in
+  `Statistics::DroppedRuns`), and with the default capacity the ring grows for
+  the next frame (doubling, at least to the observed demand, capped at 8x the
+  default) so the text comes back. A nonzero `Config::MaxInstancesPerFrame` is a
+  fixed hard cap: nothing grows and the warning asks you to raise it.
 
 ## 5. Registering fonts
 
@@ -257,7 +262,7 @@ after v0.1, see `DESIGN.md` §8.
 |---|---|
 | Text renders as atlas bitmaps for a registered font | The pre-pass refused to rewrite: the backend must set `ImGuiBackendFlags_RendererHasTextures` and publish `PlatformIO::DrawCallback_ResetRenderState` (both come from the stock `imgui_impl_vulkan` init). One-time stderr warning + debug assert. |
 | Nothing renders for a Slug font | `ImSlug::Init` / `ImSlug_ImplVulkan_Init` returned false (check the return values), or `UploadPools` never ran (release: stale/empty pools; debug assert). |
-| Text disappears in frames with a huge number of glyphs | Instance-ring exhaustion; raise `Config::MaxInstancesPerFrame` or check `Statistics::DroppedRuns`. |
+| Text disappears in frames with a huge number of glyphs | Instance-ring exhaustion — never silent: a one-time stderr warning reports the demand vs the capacity. With the default capacity the ring grows for the next frame (doubling, capped at 8x the default), so the text returns; a fixed `Config::MaxInstancesPerFrame` is a hard cap, so raise it (or leave 0). Ongoing drops show in `Statistics::DroppedRuns`. |
 | Validation errors about pipelines / render passes | `ImSlug_ImplVulkan_Init` must describe the render pass (or dynamic-rendering formats) the draws actually run in. |
 | `imslug.h` fails to compile with an `#error` about Dear ImGui | ImGui < 1.92.8 or `imgui.h` not included first; see §1. |
 | Glyphs are squeezed or jump at clip edges | Fine-clip reconstruction disabled? The default (`EnableFineClipReconstruction = true`) reconstructs true placement; the fallback compresses into the drawn quad by design. |

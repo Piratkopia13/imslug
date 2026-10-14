@@ -6,25 +6,46 @@
 // everything, imslug renders the text of the registered fonts through Slug.
 // The scene switcher exercises the full feature set: demo, widgets/plots/
 // tables, clipping torture, mixed fonts, runtime FontScaleDpi, the 5k-glyph
-// and CJK stress scenes, color emoji and a pre-baked `.imslug` packed asset.
+// and CJK stress scenes, color emoji, a pre-baked `.imslug` packed asset and a
+// heavy demo scene with a performance panel. M swaps the body text between
+// Slug and ImGui's dynamic font system (an A/B comparison of the same font).
 // Vulkan validation
 // layers are enabled by default (set IMSLUG_VALIDATION=0 to disable); every
 // message is printed and the error count is reported on exit.
 //
 // Usage:
-//   imslug_example_glfw_vulkan [--font <path>] [--size <px>]
+//   imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--scene <1-10>]
+//                              [--renderer <slug|atlas>] [--novsync]
+//                              [--dpi <scale>]
 //                              [--overlay <none|bounds|grid|refs>]
 //                              [--screenshot <file.ppm> [scene] [dpi_scale]]
 // Keys:
 //   1 .. 9   select scene (demo / widgets / clipping / mixed / dpi / 5k / cjk /
 //            emoji / packed)
+//   P        select the heavy demo / perf scene (scene 10)
+//   M        text renderer: Slug outlines <-> ImGui dynamic fonts (atlas)
 //   + / -    base font size +-1 px (12 .. 48)
 //   F1/F2/F3 debug overlay: glyph bounds / band grid / reference-walk heat
 //   0        reset fonts/DPI to the defaults    Esc     quit
 //
+// Standalone: the default fonts are embedded in the binary (the packed
+// Roboto-ASCII asset for Slug and the raw Roboto TTF for ImGui's stock atlas
+// loader), so the executable runs with no data files next to it. Override the
+// font with --font <ttf|imslug> or the IMSLUG_EXAMPLE_FONT environment
+// variable (precedence: --font, then the environment, then the embedded
+// defaults). The CJK/emoji scenes still use the fetched test fonts when
+// present (they degrade with a message otherwise).
+//
+// The heavy scene's performance panel shows wall-clock frame time (plot; the
+// vsync checkbox flips FIFO <-> MAILBOX/IMMEDIATE), whole-frame GPU time from
+// timestamp queries when the queue supports them, and draw/Slug/atlas
+// counters. Isolated GPU text timings: scripts/bench.* (--gpu).
+//
 // Third-party: Dear ImGui (MIT, pinned v1.92.9b) and GLFW (zlib license) are
-// fetched by CMake; the example itself is imslug code. Fonts come from
-// tests/fonts/ (Roboto, Apache-2.0; the CJK subset is fetched locally).
+// fetched by CMake; the example itself is imslug code. The embedded default
+// fonts come from tests/fonts/Roboto-Regular.ttf (Apache-2.0) and its baked
+// tests/assets/Roboto-ASCII.imslug asset; the CJK/emoji test fonts are fetched
+// locally (IMSLUG_CJK_TEST_FONT / IMSLUG_EMOJI_TEST_FONT).
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -37,6 +58,12 @@
 #include "imslug.h"
 #include "imslug_impl_vulkan.h"
 #include "imslug_internal.h"
+
+// The default fonts, embedded at build time (generated artifacts; regenerate
+// with scripts/gen_asset.*): the packed Roboto-ASCII asset for Slug and the
+// raw Roboto TTF for ImGui's own atlas loader (mixed-font scene / M toggle).
+#include "imslug_example_asset.h"
+#include "imslug_example_font.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,11 +79,12 @@ namespace
     const int kDefaultSize = 17;
     const int kMinSize = 12;
     const int kMaxSize = 48;
-    const int kSceneCount = 9;
+    const int kSceneCount = 10;
+    const int kPerfHistory = 240;  // frame-ms ring for the performance panel
 
     // Sniffs the first bytes of a file for the `.imslug` container magic; the
-    // stock ImGui loader cannot parse a packed asset, so the mixed-font scene
-    // falls back to the built-in TTF when the Slug font is packed.
+    // stock ImGui loader cannot parse a packed asset, so a packed --font falls
+    // back to the embedded TTF for the stock atlas font.
     bool IsPackedAssetFile(const char* path)
     {
         FILE* file = fopen(path, "rb");
@@ -111,8 +139,9 @@ namespace
         bool CjkAttempted;
         bool EmojiAttempted;
         bool PackedAttempted;
-        float EmojiSize;  // emoji scene: emoji text size (12..96 px)
-        float EmojiZoom;  // emoji scene: single-glyph zoom (32..220 px)
+        bool PackedFromFile;  // packed scene: loaded the committed file, not the embedded copy
+        float EmojiSize;      // emoji scene: emoji text size (12..96 px)
+        float EmojiZoom;      // emoji scene: single-glyph zoom (32..220 px)
         bool ImGuiInitialized;
         bool ImSlugBackendInitialized;
         bool FontsDirty;  // re-add fonts at the current size next frame
@@ -122,6 +151,45 @@ namespace
         bool ShowDemoStats;
         int SlugGlyphCount;
         int SlugRunCount;
+
+        // Text renderer: false = Slug registered fonts, true = the stock
+        // registration through ImGui's dynamic font system (--renderer, M).
+        bool AtlasText;
+
+        // Present mode: true = vsync (FIFO, always supported), false = the
+        // uncapped MAILBOX/IMMEDIATE fallback chain. Toggling recreates the
+        // swapchain (see ToggleVsync / the performance panel).
+        bool Vsync;
+        VkPresentModeKHR PresentMode;
+        VkPresentModeKHR LoggedPresentMode;  // only log when the mode changes
+
+        // GPU timestamps: one start/end pair per frame slot; the pair is read
+        // when the slot is reused (its fence has signaled by then). The counter
+        // may be narrower than 64 bits (TimestampMask keeps a wrap harmless).
+        bool TimestampSupported;
+        float TimestampPeriodNs;
+        uint64_t TimestampMask;
+        VkQueryPool TimestampPool;
+        bool TimestampRecorded[kMaxFramesInFlight];
+        float GpuFrameMs[kMaxFramesInFlight];
+        bool GpuFrameMsValid[kMaxFramesInFlight];
+
+        // Performance panel: wall-clock frame ms ring.
+        float FrameMsHistory[kPerfHistory];
+        int FrameMsCursor;
+        int FrameMsCount;
+
+        // Draw-data shape captured right after ImGui::Render() (the panel runs
+        // while the live draw data is rebuilt, so it reads this copy).
+        int LastCmdLists;
+        int LastDrawCommands;
+        int LastVtxCount;
+        int LastIdxCount;
+
+        // Heavy demo scene state (sliders; the text wall rebuilds on change).
+        int PerfLines;
+        int PerfChars;
+        float PerfScale;
 
         // Debug overlay flags (applied after the backend module init; see
         // --overlay on the command line and the F1/F2/F3 toggles).
@@ -135,6 +203,7 @@ namespace
         int ScreenshotFrame;
         int FramesRendered;
         bool ScreenshotRequested;
+        bool ScreenshotWritten;
         bool ShouldClose;
         VkBuffer ScreenshotBuffer;
         VkDeviceMemory ScreenshotMemory;
@@ -373,6 +442,26 @@ namespace
         if (!FindQueueFamily(g_App.PhysicalDevice, &g_App.QueueFamily))
             return false;
 
+        // Timestamp support for the performance panel's GPU numbers: the queue
+        // must have valid bits, the device a sane timestampPeriod. The counter
+        // width can be below 64; the mask keeps a wrap from inverting a pair.
+        g_App.TimestampPeriodNs = properties.limits.timestampPeriod;
+        {
+            uint32_t familyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(g_App.PhysicalDevice, &familyCount, nullptr);
+            VkQueueFamilyProperties* familyProperties =
+                (VkQueueFamilyProperties*)malloc(sizeof(VkQueueFamilyProperties) * (familyCount ? familyCount : 1));
+            if (familyProperties != nullptr)
+            {
+                vkGetPhysicalDeviceQueueFamilyProperties(g_App.PhysicalDevice, &familyCount, familyProperties);
+                const uint32_t validBits =
+                    familyCount > g_App.QueueFamily ? familyProperties[g_App.QueueFamily].timestampValidBits : 0;
+                g_App.TimestampSupported = validBits != 0;
+                g_App.TimestampMask = validBits >= 64 ? ~0ull : ((1ull << validBits) - 1);
+                free(familyProperties);
+            }
+        }
+
         const float priority = 1.0f;
         VkDeviceQueueCreateInfo queueInfo = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
         queueInfo.queueFamilyIndex = g_App.QueueFamily;
@@ -394,6 +483,55 @@ namespace
     // ---------------------------------------------------------------------
     // Swapchain / render pass / sync
     // ---------------------------------------------------------------------
+    const char* PresentModeName(VkPresentModeKHR mode)
+    {
+        switch (mode)
+        {
+        case VK_PRESENT_MODE_MAILBOX_KHR:
+            return "MAILBOX (uncapped, no tearing)";
+        case VK_PRESENT_MODE_IMMEDIATE_KHR:
+            return "IMMEDIATE (uncapped, tears)";
+        default:
+            return "FIFO (vsync)";
+        }
+    }
+
+    // Vsync on -> FIFO (always supported). Vsync off -> MAILBOX when the
+    // surface offers it (uncapped without tearing), else IMMEDIATE, else FIFO.
+    VkPresentModeKHR ChoosePresentMode()
+    {
+        if (g_App.Vsync)
+            return VK_PRESENT_MODE_FIFO_KHR;
+        uint32_t count = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(g_App.PhysicalDevice, g_App.Surface, &count, nullptr);
+        VkPresentModeKHR chosen = VK_PRESENT_MODE_FIFO_KHR;
+        VkPresentModeKHR* modes = (VkPresentModeKHR*)malloc(sizeof(VkPresentModeKHR) * (count ? count : 1));
+        if (modes != nullptr && count > 0)
+        {
+            vkGetPhysicalDeviceSurfacePresentModesKHR(g_App.PhysicalDevice, g_App.Surface, &count, modes);
+            bool hasMailbox = false;
+            bool hasImmediate = false;
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                hasMailbox = hasMailbox || modes[i] == VK_PRESENT_MODE_MAILBOX_KHR;
+                hasImmediate = hasImmediate || modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR;
+            }
+            if (hasMailbox)
+                chosen = VK_PRESENT_MODE_MAILBOX_KHR;
+            else if (hasImmediate)
+                chosen = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        }
+        free(modes);
+        return chosen;
+    }
+
+    void ToggleVsync()
+    {
+        g_App.Vsync = !g_App.Vsync;
+        g_App.SwapchainDirty = true;  // recreated before the next frame
+        printf("[imslug] vsync %s\n", g_App.Vsync ? "on (FIFO)" : "off (uncapped when supported)");
+    }
+
     bool CreateSwapchain()
     {
         VkSurfaceCapabilitiesKHR capabilities;
@@ -433,7 +571,13 @@ namespace
         createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         createInfo.preTransform = capabilities.currentTransform;
         createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        g_App.PresentMode = ChoosePresentMode();
+        createInfo.presentMode = g_App.PresentMode;
+        if (g_App.LoggedPresentMode != g_App.PresentMode)
+        {
+            printf("[imslug] present mode: %s\n", PresentModeName(g_App.PresentMode));
+            g_App.LoggedPresentMode = g_App.PresentMode;
+        }
         createInfo.clipped = VK_TRUE;
         if (!Check(vkCreateSwapchainKHR(g_App.Device, &createInfo, nullptr, &g_App.Swapchain), "vkCreateSwapchainKHR"))
             return false;
@@ -588,6 +732,19 @@ namespace
                 return false;
         }
         return true;
+    }
+
+    bool CreateTimestampPool()
+    {
+        if (!g_App.TimestampSupported)
+        {
+            printf("[imslug] GPU timestamps: unavailable (queue has no timestamp support)\n");
+            return true;  // the performance panel reports n/a
+        }
+        VkQueryPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        poolInfo.queryCount = kMaxFramesInFlight * 2;
+        return Check(vkCreateQueryPool(g_App.Device, &poolInfo, nullptr, &g_App.TimestampPool), "vkCreateQueryPool");
     }
 
     // ---------------------------------------------------------------------
@@ -888,10 +1045,11 @@ namespace
 
     // Packed-asset scene: text rendered from a pre-baked `.imslug` container
     // (glyph records + curve/band texels; no outline parsing). The asset is the
-    // committed test asset (tests/assets/Roboto-ASCII.imslug); the scene loads
-    // it as a second Slug font, so the shared pools and the auto-detecting
-    // loader are both exercised. In a no-parser build this is also the default
-    // font source.
+    // committed test asset (tests/assets/Roboto-ASCII.imslug, also embedded in
+    // this binary); the scene loads it as a second Slug font, so the shared
+    // pools and the auto-detecting loader are both exercised. With no checkout
+    // next to the executable the embedded copy stands in. In a no-parser build
+    // this is also the default font source.
     void ScenePacked()
     {
         ImGui::SetNextWindowSize(ImVec2(900.0f, 560.0f), ImGuiCond_FirstUseEver);
@@ -906,6 +1064,16 @@ namespace
                 // The same entry point as a TTF: the loader auto-detects the
                 // container by content.
                 g_App.PackedFont = ImSlug::AddFontFromFileTTF(IMSLUG_PACKED_TEST_ASSET, 20.0f);
+                g_App.PackedFromFile = g_App.PackedFont != nullptr;
+            }
+            else
+            {
+                // Standalone run (no repo checkout next to the executable):
+                // fall back to the embedded copy of the same committed asset.
+                ImFontConfig packedConfig;
+                packedConfig.FontDataOwnedByAtlas = false;
+                g_App.PackedFont = ImSlug::AddFontFromMemoryTTF(imslug_example_asset_data,
+                                                                (int)imslug_example_asset_size, 20.0f, &packedConfig);
             }
         }
         if (g_App.PackedFont == nullptr)
@@ -916,11 +1084,12 @@ namespace
         }
         else
         {
-            ImGui::TextWrapped("This text is rendered from tests/assets/Roboto-ASCII.imslug - an .imslug "
-                               "container v1 asset: glyph records, curve texels and band texels copied into the "
-                               "shared pools without any outline parsing. ImSlug::AddFontFromFileTTF "
-                               "auto-detects the format by content, so no app code changes between TTF and "
-                               "packed fonts.");
+            ImGui::TextWrapped("This text is rendered from %s - the committed Roboto-ASCII.imslug packed asset "
+                               "(.imslug container v1): glyph records, curve texels and band texels copied into "
+                               "the shared pools without any outline parsing. The loader auto-detects the format "
+                               "by content, so no app code changes between TTF and packed fonts.",
+                               g_App.PackedFromFile ? "tests/assets/Roboto-ASCII.imslug"
+                                                    : "the asset copy embedded in this binary");
             ImGui::Separator();
             ImGui::PushFont(g_App.PackedFont, 20.0f);
             ImGui::TextUnformatted("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
@@ -935,6 +1104,160 @@ namespace
                         stats.GlyphSlabs);
         }
         ImGui::End();
+    }
+
+    // Heavy scene (key P): a text-heavy workload plus the performance panel.
+    // M swaps the body text between Slug outlines and ImGui's dynamic font
+    // system; the panel shows wall-clock frame time (plot), whole-frame GPU
+    // time from timestamp queries, draw/Slug/atlas counters and the vsync
+    // toggle. Isolated GPU text timings: scripts/bench.* (imslug_tests_bench
+    // --gpu); see docs/DESIGN.md section 4.
+    void ScenePerf()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+
+        ImGui::SetNextWindowPos(ImVec2(268.0f, 8.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(430.0f, 0.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("performance");
+        ImGui::Text("text renderer: %s (M toggles)", g_App.AtlasText ? "ImGui dynamic fonts" : "Slug outlines");
+        const float frameMs = io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f;
+        float frameAvg = 0.0f;
+        for (int i = 0; i < g_App.FrameMsCount; ++i)
+            frameAvg += g_App.FrameMsHistory[i];
+        if (g_App.FrameMsCount > 0)
+            frameAvg /= (float)g_App.FrameMsCount;
+        ImGui::Text("frame: %.1f FPS, %.2f ms (window avg %.2f ms)", io.Framerate, frameMs, frameAvg);
+        ImGui::TextUnformatted("frame ms (wall clock):");
+        ImGui::PlotLines("##frame_ms", g_App.FrameMsHistory, g_App.FrameMsCount,
+                         g_App.FrameMsCount < kPerfHistory ? 0 : g_App.FrameMsCursor, nullptr, 0.0f,
+                         frameAvg * 2.0f > 1.0f ? frameAvg * 2.0f : 1.0f, ImVec2(410.0f, 64.0f));
+        if (g_App.TimestampSupported)
+        {
+            float gpuSum = 0.0f;
+            int gpuCount = 0;
+            for (uint32_t i = 0; i < g_App.FramesInFlight; ++i)
+            {
+                if (g_App.GpuFrameMsValid[i])
+                {
+                    gpuSum += g_App.GpuFrameMs[i];
+                    ++gpuCount;
+                }
+            }
+            if (gpuCount > 0)
+                ImGui::Text("GPU frame (timestamps): %.2f ms over %d slots", gpuSum / (float)gpuCount, gpuCount);
+            else
+                ImGui::TextUnformatted("GPU frame (timestamps): warming up");
+        }
+        else
+            ImGui::TextUnformatted("GPU frame: n/a (queue without timestamps)");
+        bool vsync = g_App.Vsync;
+        if (ImGui::Checkbox("vsync", &vsync))
+            ToggleVsync();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", PresentModeName(g_App.PresentMode));
+
+        ImGui::SeparatorText("draw stats (last frame)");
+        ImGui::Text("windows %d, cmd lists %d, draw cmds %d", io.MetricsRenderWindows, g_App.LastCmdLists,
+                    g_App.LastDrawCommands);
+        ImGui::Text("verts %d, indices %d", g_App.LastVtxCount, g_App.LastIdxCount);
+        Statistics stats;
+        ImSlug::GetStatistics(&stats);
+        ImGui::Text("Slug: %u instances (%u color layers), %u runs, %u slabs", stats.Instances, stats.ColorLayers,
+                    stats.LiveBatches, stats.GlyphSlabs);
+        if (stats.DroppedRuns != 0)
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "dropped runs: %u", stats.DroppedRuns);
+        const ImTextureData* tex = io.Fonts->TexData;
+        ImGui::Text("atlas: %dx%d, %.2f MB, %d fonts", tex != nullptr ? tex->Width : 0,
+                    tex != nullptr ? tex->Height : 0,
+                    tex != nullptr ? (double)tex->GetSizeInBytes() / (1024.0 * 1024.0) : 0.0, io.Fonts->Fonts.Size);
+        ImGui::End();
+
+        ImGui::SetNextWindowPos(ImVec2(706.0f, 8.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(550.0f, 720.0f), ImGuiCond_FirstUseEver);
+        ImGui::Begin("heavy demo (Slug vs atlas)");
+        ImGui::TextWrapped("A text-heavy frame to compare the two render paths. Press M (or use the switcher "
+                           "radios) to swap the body text between Slug outlines and ImGui's dynamic font system, "
+                           "and watch the performance panel; untick vsync for uncapped numbers.");
+        ImGui::SliderInt("lines", &g_App.PerfLines, 8, 80);
+        ImGui::SliderInt("chars/line", &g_App.PerfChars, 64, 512);
+        ImGui::SliderFloat("large text", &g_App.PerfScale, 1.0f, 6.0f, "%.1fx");
+        ImGui::Text("%d lines x %d chars = %.0f glyphs laid out per frame", g_App.PerfLines, g_App.PerfChars,
+                    (double)g_App.PerfLines * (double)g_App.PerfChars);
+
+        if (g_App.SlugFont != nullptr && g_App.StockFont != nullptr)
+        {
+            ImGui::SeparatorText("same text, both paths (2x size)");
+            ImGui::PushFont(g_App.SlugFont, (float)g_App.BaseSize * 2.0f);
+            ImGui::TextUnformatted("Slug: Hamburgefonstiv 0123456789");
+            ImGui::PopFont();
+            ImGui::PushFont(g_App.StockFont, (float)g_App.BaseSize * 2.0f);
+            ImGui::TextUnformatted("atlas: Hamburgefonstiv 0123456789");
+            ImGui::PopFont();
+        }
+
+        ImGui::SeparatorText("text load");
+        ImFont* largeFont = g_App.AtlasText ? g_App.StockFont : g_App.SlugFont;
+        if (largeFont != nullptr)
+        {
+            ImGui::PushFont(largeFont, (float)g_App.BaseSize * g_App.PerfScale);
+            ImGui::TextWrapped("The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor "
+                               "jugs. Waltz, bad nymph, for quick jigs vex. Sphinx of black quartz, judge my vow.");
+            ImGui::PopFont();
+        }
+
+        // Text wall, regenerated only when the inputs (or the base size) change.
+        static char* wall = nullptr;
+        static int wallLines = -1;
+        static int wallChars = -1;
+        static int wallSize = -1;
+        if (wallLines != g_App.PerfLines || wallChars != g_App.PerfChars || wallSize != g_App.BaseSize)
+        {
+            free(wall);
+            wall = nullptr;
+            const int lines = g_App.PerfLines;
+            const int chars = g_App.PerfChars;
+            char* next = (char*)malloc((size_t)lines * ((size_t)chars + 1) + 1);
+            if (next != nullptr)
+            {
+                const char* pattern = "Hamburgefonstiv 0123456789 Grumpy wizards make toxic brew. ";
+                const int patternLength = (int)strlen(pattern);
+                size_t at = 0;
+                for (int line = 0; line < lines; ++line)
+                {
+                    for (int column = 0; column < chars; ++column)
+                        next[at++] = pattern[(line * chars + column) % patternLength];
+                    next[at++] = '\n';
+                }
+                next[at] = '\0';
+                wall = next;
+                wallLines = lines;
+                wallChars = chars;
+                wallSize = g_App.BaseSize;
+            }
+        }
+        if (wall != nullptr)
+            ImGui::TextUnformatted(wall);
+        ImGui::End();
+    }
+
+    // Text renderer toggle (M / the switcher radios / --renderer). Both font
+    // registrations coexist: SlugFont renders from the outlines through imslug,
+    // StockFont through ImGui's dynamic font system. Only the default font
+    // swaps; scenes that push a dedicated font (CJK/emoji/packed) keep it.
+    void SetTextRenderer(bool atlas)
+    {
+        if (g_App.AtlasText == atlas)
+            return;
+        if (atlas && g_App.StockFont == nullptr)
+        {
+            fprintf(stderr, "[imslug] text renderer: atlas unavailable (the stock font registration failed)\n");
+            return;
+        }
+        g_App.AtlasText = atlas;
+        ImFont* font = atlas ? g_App.StockFont : g_App.SlugFont;
+        if (font != nullptr && ImGui::GetCurrentContext() != nullptr)
+            ImGui::GetIO().FontDefault = font;
+        printf("[imslug] text renderer: %s\n", atlas ? "ImGui dynamic fonts (atlas)" : "Slug outlines");
     }
 
     // Debug overlay toggle (runtime; see ImSlug_ImplVulkan_SetDebugOverlay).
@@ -953,25 +1276,38 @@ namespace
 
     void DrawSceneSwitcher()
     {
-        const char* sceneNames[kSceneCount] = { "demo window",           "widgets / plots / tables",
-                                                "clipping torture",      "mixed fonts",
-                                                "runtime FontScaleDpi",  "5k glyph stress",
-                                                "CJK (fetched subset)",  "color emoji (COLR v1)",
-                                                "packed asset (.imslug)" };
+        const char* sceneNames[kSceneCount] = {
+            "demo window",          "widgets / plots / tables", "clipping torture",
+            "mixed fonts",          "runtime FontScaleDpi",     "5k glyph stress",
+            "CJK (fetched subset)", "color emoji (COLR v1)",    "packed asset (.imslug)",
+            "heavy demo / perf (P)"
+        };
         ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(240.0f, 0.0f), ImGuiCond_FirstUseEver);
         ImGui::Begin("imslug example " IMSLUG_VERSION, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Scene (keys 1-%d):", kSceneCount);
+        ImGui::TextUnformatted("Scene (keys 1-9, P):");
         for (int i = 0; i < kSceneCount; ++i)
-            if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)))
+        {
+            const bool shortcut =
+                i < 9 ? ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i)) : ImGui::IsKeyPressed(ImGuiKey_P);
+            if (ImGui::RadioButton(sceneNames[i], g_App.Scene == i) || shortcut)
                 g_App.Scene = i;
+        }
         ImGui::Separator();
-        ImGui::Text("font: Slug, base size %d px", g_App.BaseSize);
-        if (ImGui::Button("+") || ImGui::IsKeyPressed(ImGuiKey_Equal))
+        ImGui::TextUnformatted("text renderer (M):");
+        if (ImGui::RadioButton("Slug", !g_App.AtlasText))
+            SetTextRenderer(false);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("ImGui atlas", g_App.AtlasText))
+            SetTextRenderer(true);
+        ImGui::Text("font: %s, base size %d px", g_App.AtlasText ? "atlas" : "Slug", g_App.BaseSize);
+        if (ImGui::Button("+") || ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
             g_App.FontsDirty = true, g_App.BaseSize = g_App.BaseSize < kMaxSize ? g_App.BaseSize + 1 : kMaxSize;
         ImGui::SameLine();
-        if (ImGui::Button("-") || ImGui::IsKeyPressed(ImGuiKey_Minus))
+        if (ImGui::Button("-") || ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
             g_App.FontsDirty = true, g_App.BaseSize = g_App.BaseSize > kMinSize ? g_App.BaseSize - 1 : kMinSize;
+        const ImGuiIO& io = ImGui::GetIO();
+        ImGui::Text("%.1f FPS (%.2f ms)", io.Framerate, io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
         ImGui::Separator();
         Statistics stats;
         ImSlug::GetStatistics(&stats);
@@ -998,6 +1334,12 @@ namespace
     void BuildImGuiFrame()
     {
         ImGui::NewFrame();
+        // Performance panel history: wall-clock frame ms (io.DeltaTime is the
+        // time NewFrame measured for the previous frame).
+        g_App.FrameMsHistory[g_App.FrameMsCursor] = ImGui::GetIO().DeltaTime * 1000.0f;
+        g_App.FrameMsCursor = (g_App.FrameMsCursor + 1) % kPerfHistory;
+        if (g_App.FrameMsCount < kPerfHistory)
+            ++g_App.FrameMsCount;
         DrawSceneSwitcher();
         switch (g_App.Scene)
         {
@@ -1025,8 +1367,11 @@ namespace
         case 7:
             SceneEmoji();
             break;
-        default:
+        case 8:
             ScenePacked();
+            break;
+        default:  // 9: heavy demo / perf
+            ScenePerf();
             break;
         }
     }
@@ -1050,28 +1395,59 @@ namespace
             io.Fonts->RemoveFont(g_App.StockFont);
             g_App.StockFont = nullptr;
         }
-        const char* fontPath = g_App.FontPath != nullptr ? g_App.FontPath : IMSLUG_EXAMPLE_FONT_PATH;
-        g_App.SlugFont = ImSlug::AddFontFromFileTTF(fontPath, (float)g_App.BaseSize);
+        const char* fontPath = g_App.FontPath;  // --font / IMSLUG_EXAMPLE_FONT; null = embedded defaults
+        if (fontPath != nullptr)
+        {
+            g_App.SlugFont = ImSlug::AddFontFromFileTTF(fontPath, (float)g_App.BaseSize);
+        }
+        else
+        {
+            // The embedded default: the committed packed Roboto-ASCII asset,
+            // loaded straight from the binary (no outline parsing - the same
+            // path a no-parser build ships). Static data: never transfer
+            // ownership to the atlas.
+            ImFontConfig slugConfig;
+            slugConfig.FontDataOwnedByAtlas = false;
+            g_App.SlugFont = ImSlug::AddFontFromMemoryTTF(imslug_example_asset_data, (int)imslug_example_asset_size,
+                                                          (float)g_App.BaseSize, &slugConfig);
+        }
         if (g_App.SlugFont == nullptr)
         {
-            fprintf(stderr, "[imslug] cannot add Slug font: %s\n", fontPath);
+            fprintf(stderr, "[imslug] cannot add Slug font: %s\n",
+                    fontPath != nullptr ? fontPath : "(embedded packed asset)");
             g_App.ShouldClose = true;
             return;
         }
-        // A stock font for the mixed-font scene: through ImGui's own stb loader
-        // (Oversample 1 keeps the metrics identical). A packed `.imslug` asset
-        // cannot go through the stock loader, so that case falls back to the
-        // built-in TTF (and in a no-parser build the stock path is still
-        // ImGui's own parser, which imslug does not remove).
-        const char* stockPath = IsPackedAssetFile(fontPath) ? IMSLUG_EXAMPLE_STOCK_FONT : fontPath;
+        // A stock font for the mixed-font scene and the M toggle: through
+        // ImGui's own stb loader (Oversample 1 keeps the metrics identical).
+        // ImGui cannot parse a packed `.imslug` asset, so the stock font uses
+        // the file only when --font named a TTF; otherwise it comes from the
+        // embedded Roboto TTF copy (in a no-parser build too - ImGui's own
+        // parser is independent of imslug's).
         ImFontConfig stockConfig;
         stockConfig.OversampleH = 1;
         stockConfig.OversampleV = 1;
-        g_App.StockFont = io.Fonts->AddFontFromFileTTF(stockPath, (float)g_App.BaseSize, &stockConfig);
-        io.FontDefault = g_App.SlugFont;
+        if (fontPath != nullptr && !IsPackedAssetFile(fontPath))
+        {
+            // File source: ImGui loads (and, with the default ownership, frees)
+            // the buffer - do not override FontDataOwnedByAtlas here or every
+            // RebuildFonts() would leak the font file.
+            g_App.StockFont = io.Fonts->AddFontFromFileTTF(fontPath, (float)g_App.BaseSize, &stockConfig);
+        }
+        else
+        {
+            // Embedded static data: never transfer ownership to the atlas.
+            stockConfig.FontDataOwnedByAtlas = false;
+            g_App.StockFont = io.Fonts->AddFontFromMemoryTTF(
+                (void*)imslug_example_font_data, (int)imslug_example_font_size, (float)g_App.BaseSize, &stockConfig);
+        }
+        io.FontDefault = g_App.AtlasText ? g_App.StockFont : g_App.SlugFont;
         g_App.FontsDirty = false;
-        printf("[imslug] fonts: Slug + atlas at %d px (font: %s)\n", g_App.BaseSize, fontPath);
+        printf("[imslug] fonts: Slug + atlas at %d px (font: %s)\n", g_App.BaseSize,
+               fontPath != nullptr ? fontPath : "embedded Roboto (packed asset, TTF for the atlas)");
     }
+
+    // ---------------------------------------------------------------------
     // Screenshot (PPM readback)
     // ---------------------------------------------------------------------
     bool WritePpm(const char* path, const unsigned char* pixels, uint32_t width, uint32_t height, VkFormat format)
@@ -1198,28 +1574,21 @@ namespace
             return;
         if (key == GLFW_KEY_ESCAPE)
             g_App.ShouldClose = true;
-        else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD)
-            g_App.Scene = g_App.Scene < kSceneCount - 1 ? g_App.Scene + 1 : kSceneCount - 1;
-        else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT)
-            g_App.Scene = g_App.Scene > 0 ? g_App.Scene - 1 : 0;
         else if (key == GLFW_KEY_F1)
             ToggleDebugOverlay(ImSlugVulkanDebugOverlay_GlyphBounds);
         else if (key == GLFW_KEY_F2)
             ToggleDebugOverlay(ImSlugVulkanDebugOverlay_BandGrid);
         else if (key == GLFW_KEY_F3)
             ToggleDebugOverlay(ImSlugVulkanDebugOverlay_RefHeat);
+        else if (key == GLFW_KEY_M)
+            SetTextRenderer(!g_App.AtlasText);
         else if (key == GLFW_KEY_0)
         {
             g_App.BaseSize = kDefaultSize;
             g_App.DpiScale = 1.0f;
             g_App.FontsDirty = true;
-        }
-        else
-            return;
-        if (key == GLFW_KEY_0)
             printf("[imslug] fonts reset to %d px, DPI 1.00\n", g_App.BaseSize);
-        else
-            printf("[imslug] scene %d\n", g_App.Scene + 1);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -1234,6 +1603,26 @@ namespace
 
         if (!Check(vkWaitForFences(app.Device, 1, &app.InFlight[frame], VK_TRUE, UINT64_MAX), "vkWaitForFences"))
             return false;
+
+        // GPU timestamps: this slot's fence just signaled, so the pair recorded
+        // for its previous use is complete and readable.
+        if (app.TimestampPool != VK_NULL_HANDLE && app.TimestampRecorded[frame])
+        {
+            uint64_t values[2] = {};
+            const VkResult result = vkGetQueryPoolResults(app.Device, app.TimestampPool, frame * 2, 2, sizeof(values),
+                                                          values, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            if (result == VK_SUCCESS && values[1] >= values[0])
+            {
+                const uint64_t delta = (values[1] - values[0]) & app.TimestampMask;
+                app.GpuFrameMs[frame] = (float)delta * app.TimestampPeriodNs / 1.0e6f;
+                app.GpuFrameMsValid[frame] = true;
+            }
+            else
+            {
+                app.GpuFrameMsValid[frame] = false;  // never average a stale sample
+            }
+            app.TimestampRecorded[frame] = false;
+        }
 
         uint32_t imageIndex = 0;
         VkResult acquire = vkAcquireNextImageKHR(app.Device, app.Swapchain, UINT64_MAX, app.ImageAvailable[frame],
@@ -1255,11 +1644,34 @@ namespace
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(app.CommandBuffers[frame], &beginInfo);
 
+        // Whole-frame GPU bracket (dirty-row uploads + the render pass + the
+        // screenshot copy); both writes are outside a render pass instance.
+        if (app.TimestampPool != VK_NULL_HANDLE)
+        {
+            vkCmdResetQueryPool(app.CommandBuffers[frame], app.TimestampPool, frame * 2, 2);
+            vkCmdWriteTimestamp(app.CommandBuffers[frame], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, app.TimestampPool,
+                                frame * 2);
+            app.TimestampRecorded[frame] = true;
+        }
+
         // ImGui frame: platform + renderer new-frame, build, then the pre-pass.
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         BuildImGuiFrame();
         ImGui::Render();
+
+        // Capture the draw-data shape for the performance panel (the live draw
+        // data is cleared by the next NewFrame; the Slug pre-pass rewrites a
+        // copy of this during RenderDrawData, so read it before that).
+        {
+            const ImDrawData* drawData = ImGui::GetDrawData();
+            app.LastCmdLists = drawData->CmdListsCount;
+            app.LastVtxCount = drawData->TotalVtxCount;
+            app.LastIdxCount = drawData->TotalIdxCount;
+            app.LastDrawCommands = 0;
+            for (int i = 0; i < drawData->CmdListsCount; ++i)
+                app.LastDrawCommands += drawData->CmdLists[i]->CmdBuffer.Size;
+        }
 
         // Glyph-pool uploads: dirty rows only; must stay outside the render
         // pass (transfer commands are illegal inside one).
@@ -1295,6 +1707,10 @@ namespace
             app.ScreenshotRequested = true;
         }
 
+        if (app.TimestampPool != VK_NULL_HANDLE)
+            vkCmdWriteTimestamp(app.CommandBuffers[frame], VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, app.TimestampPool,
+                                frame * 2 + 1);
+
         if (!Check(vkEndCommandBuffer(app.CommandBuffers[frame]), "vkEndCommandBuffer"))
             return false;
 
@@ -1326,8 +1742,10 @@ namespace
         {
             if (!Check(vkQueueWaitIdle(app.Queue), "vkQueueWaitIdle"))
                 return false;
-            WritePpm(app.ScreenshotPath, (const unsigned char*)app.ScreenshotMapped, app.SwapchainExtent.width,
-                     app.SwapchainExtent.height, app.SwapchainFormat);
+            if (!WritePpm(app.ScreenshotPath, (const unsigned char*)app.ScreenshotMapped, app.SwapchainExtent.width,
+                          app.SwapchainExtent.height, app.SwapchainFormat))
+                return false;
+            app.ScreenshotWritten = true;
             app.ShouldClose = true;
         }
 
@@ -1354,12 +1772,34 @@ namespace
         g_App.FramesRendered = 0;
         g_App.DebugOverlay = 0;
         g_App.DebugOverlayGiven = false;
+        g_App.AtlasText = false;
+        g_App.Vsync = true;
+        g_App.LoggedPresentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;  // log the first pick
+        g_App.ScreenshotWritten = false;
+        g_App.PerfLines = 40;
+        g_App.PerfChars = 200;
+        g_App.PerfScale = 3.0f;
         for (int i = 1; i < argc; ++i)
         {
             if (strcmp(argv[i], "--font") == 0 && i + 1 < argc)
                 g_App.FontPath = argv[++i];
             else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
                 g_App.BaseSize = atoi(argv[++i]);
+            else if (strcmp(argv[i], "--renderer") == 0 && i + 1 < argc)
+            {
+                const char* value = argv[++i];
+                if (strcmp(value, "slug") == 0)
+                    g_App.AtlasText = false;
+                else if (strcmp(value, "atlas") == 0)
+                    g_App.AtlasText = true;
+                else
+                {
+                    fprintf(stderr, "[imslug] --renderer expects 'slug' or 'atlas' (got '%s')\n", value);
+                    exit(1);
+                }
+            }
+            else if (strcmp(argv[i], "--novsync") == 0)
+                g_App.Vsync = false;
             else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
                 sceneNumber = atoi(argv[++i]);
             else if (strcmp(argv[i], "--dpi") == 0 && i + 1 < argc)
@@ -1392,10 +1832,12 @@ namespace
             else if (strcmp(argv[i], "--help") == 0)
             {
                 printf("usage: imslug_example_glfw_vulkan [--font <path>] [--size <px>] [--scene <1-%d>]\n"
-                       "                                  [--dpi <scale>] [--overlay <none|bounds|grid|refs>]\n"
+                       "                                  [--renderer <slug|atlas>] [--novsync] [--dpi <scale>]\n"
+                       "                                  [--overlay <none|bounds|grid|refs>]\n"
                        "                                  [--screenshot <file.ppm> [scene] [dpi_scale]]\n"
-                       "keys: 1-%d scenes, +/- scene, F1 glyph bounds, F2 band grid, F3 ref heat, 0 reset\n",
-                       kSceneCount, kSceneCount);
+                       "font: --font <ttf|imslug> or IMSLUG_EXAMPLE_FONT; default: fonts embedded in this binary\n"
+                       "keys: 1-9 + P scenes, M renderer (Slug/atlas), +/- base size, 0 reset; F1/F2/F3 overlays\n",
+                       kSceneCount);
                 exit(0);
             }
             else
@@ -1403,6 +1845,14 @@ namespace
                 fprintf(stderr, "[imslug] unknown argument: %s\n", argv[i]);
                 exit(1);
             }
+        }
+        // No --font: the IMSLUG_EXAMPLE_FONT environment variable overrides
+        // the embedded defaults (precedence: CLI, environment, embedded).
+        if (g_App.FontPath == nullptr)
+        {
+            const char* envFont = getenv("IMSLUG_EXAMPLE_FONT");
+            if (envFont != nullptr && envFont[0] != '\0')
+                g_App.FontPath = envFont;
         }
         if (g_App.BaseSize < kMinSize)
             g_App.BaseSize = kMinSize;
@@ -1416,6 +1866,34 @@ namespace
             g_App.DpiScale = 0.5f;
         if (g_App.DpiScale > 3.0f)
             g_App.DpiScale = 3.0f;
+    }
+
+    // Applies a pending swapchain recreation (resize / the vsync toggle).
+    // Returns false when there is nothing to render into yet: the framebuffer
+    // is 0x0 (minimized; the dirty flag stays set for a retry) or the
+    // recreation failed (*ok is cleared). The caller must skip the frame.
+    bool ServiceSwapchain(bool* ok)
+    {
+        if (!g_App.SwapchainDirty)
+            return true;
+        vkDeviceWaitIdle(g_App.Device);
+        DestroySwapchain();
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(g_App.Window, &width, &height);
+        if (width > 0 && height > 0)
+        {
+            *ok = CreateSwapchain();
+            g_App.SwapchainDirty = !*ok;
+            if (*ok)
+            {
+                // Refresh the backend's image expectation and keep our frame
+                // ring within the (possibly changed) image count.
+                if (g_App.SwapchainImageCount < g_App.FramesInFlight)
+                    g_App.FramesInFlight = g_App.SwapchainImageCount;
+                ImGui_ImplVulkan_SetMinImageCount(g_App.SwapchainImageCount);
+            }
+        }
+        return *ok && !g_App.SwapchainDirty;
     }
 
     int Run()
@@ -1567,23 +2045,18 @@ namespace
         }
         if (ok)
             ok = CreateSyncObjects();
+        if (ok)
+            ok = CreateTimestampPool();
 
         while (ok && glfwWindowShouldClose(g_App.Window) == GLFW_FALSE && !g_App.ShouldClose)
         {
             glfwPollEvents();
-            if (g_App.SwapchainDirty)
+            if (!ServiceSwapchain(&ok))
             {
-                vkDeviceWaitIdle(g_App.Device);
-                DestroySwapchain();
-                int width = 0, height = 0;
-                glfwGetFramebufferSize(g_App.Window, &width, &height);
-                if (width > 0 && height > 0)
-                {
-                    ok = CreateSwapchain();
-                    g_App.SwapchainDirty = !ok;
-                }
                 if (!ok)
                     break;
+                glfwWaitEventsTimeout(0.1);  // minimized: wait for a restore/size event
+                continue;
             }
             if (g_App.FontsDirty)
                 RebuildFonts();
@@ -1594,8 +2067,22 @@ namespace
             // Give the screenshot its frame if it did not land yet (e.g. when
             // the swapchain was recreated).
             int guard = 0;
-            while (g_App.ScreenshotPath != nullptr && !g_App.ShouldClose && guard++ < 8)
+            while (ok && g_App.ScreenshotPath != nullptr && !g_App.ShouldClose && guard++ < 8)
+            {
+                glfwPollEvents();
+                if (!ServiceSwapchain(&ok))
+                {
+                    if (!ok)
+                        break;
+                    continue;
+                }
                 ok = RenderFrame();
+            }
+            if (ok && g_App.ScreenshotPath != nullptr && !g_App.ScreenshotWritten)
+            {
+                fprintf(stderr, "[imslug] screenshot frame did not land\n");
+                ok = false;
+            }
         }
         if (g_App.Device != VK_NULL_HANDLE)
             vkDeviceWaitIdle(g_App.Device);
@@ -1637,6 +2124,11 @@ namespace
             free(g_App.CommandBuffers);
             g_App.CommandBuffers = nullptr;
             DestroySwapchain();
+            if (g_App.TimestampPool != VK_NULL_HANDLE)
+            {
+                vkDestroyQueryPool(g_App.Device, g_App.TimestampPool, nullptr);
+                g_App.TimestampPool = VK_NULL_HANDLE;
+            }
             if (g_App.RenderPass != VK_NULL_HANDLE)
             {
                 vkDestroyRenderPass(g_App.Device, g_App.RenderPass, nullptr);

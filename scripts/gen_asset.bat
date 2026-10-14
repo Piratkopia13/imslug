@@ -4,11 +4,16 @@ rem ===========================================================================
 rem imslug - scripts\gen_asset.bat
 rem
 rem Regenerates the committed packed test asset
-rem (tests\assets\Roboto-ASCII.imslug) with the imslug_gen CLI. The asset is a
-rem generated artifact: never edit it by hand. The round-trip test
-rem (imslug_packed_roundtrip) and the CLI freshness test (imslug_asset_fresh)
-rem compare against it and fail when it is stale, so regenerate + commit the
-rem file together with any generator/format/version change.
+rem (tests\assets\Roboto-ASCII.imslug) with the imslug_gen CLI, plus the two
+rem generated headers the GLFW example embeds as its default fonts:
+rem   example\glfw_vulkan\imslug_example_asset.h  (the packed asset itself)
+rem   example\glfw_vulkan\imslug_example_font.h   (the raw TTF for the stock
+rem                                                ImGui atlas font)
+rem All three are generated artifacts: never edit them by hand. The round-trip
+rem test (imslug_packed_roundtrip) and the CLI freshness test
+rem (imslug_asset_fresh, which also byte-compares both example headers) compare
+rem against them and fail when stale, so regenerate + commit the files together
+rem with any generator/format/version change.
 rem
 rem Overrides (same as scripts\build.bat): IMSLUG_BUILD_DIR, IMSLUG_BUILD_TYPE,
 rem IMSLUG_CMAKE, IMSLUG_RECONFIGURE, IMSLUG_CMAKE_DEFINES.
@@ -34,8 +39,15 @@ if not exist "%GEN%" (
     popd & exit /b 1
 )
 
-echo [gen_asset] %GEN% font tests\fonts\Roboto-Regular.ttf --size-range 8:72 --chars 0x20-0x7E -o tests\assets\Roboto-ASCII.imslug
-"%GEN%" font tests\fonts\Roboto-Regular.ttf --size-range 8:72 --chars 0x20-0x7E -o tests\assets\Roboto-ASCII.imslug
+echo [gen_asset] %GEN% font tests\fonts\Roboto-Regular.ttf --size-range 8:72 --chars 0x20-0x7E -o tests\assets\Roboto-ASCII.imslug --emit-header example\glfw_vulkan\imslug_example_asset.h --header-symbol imslug_example_asset
+"%GEN%" font tests\fonts\Roboto-Regular.ttf --size-range 8:72 --chars 0x20-0x7E -o tests\assets\Roboto-ASCII.imslug --emit-header example\glfw_vulkan\imslug_example_asset.h --header-symbol imslug_example_asset
+if errorlevel 1 (
+    echo [gen_asset] FAILED: asset + asset header.>&2
+    popd & exit /b 1
+)
+
+echo [gen_asset] %GEN% embed tests\fonts\Roboto-Regular.ttf --emit-header example\glfw_vulkan\imslug_example_font.h --header-symbol imslug_example_font
+"%GEN%" embed tests\fonts\Roboto-Regular.ttf --emit-header example\glfw_vulkan\imslug_example_font.h --header-symbol imslug_example_font
 set "RESULT=%errorlevel%"
 if not "%RESULT%"=="0" echo [gen_asset] FAILED with exit code %RESULT%.>&2
 popd

@@ -74,9 +74,13 @@ into one callback command plus one stock reset command. Consequences:
   are in §5.
 * **Instances:** one 96-byte record per glyph (instance format v2; a color
   glyph contributes one per layer) in a per-frame ring
-  (`Config::MaxInstancesPerFrame`, default 16384). Ring exhaustion drops the
-  overflowing run (release-safe; debug asserts) and is counted in
-  `Statistics::DroppedRuns`.
+  (`Config::MaxInstancesPerFrame`, default 16384). Ring exhaustion is never
+  silent: the first drop at a capacity warns on stderr (demand vs capacity),
+  only the runs that do not fit are dropped (release-safe; debug asserts;
+  `Statistics::DroppedRuns`) and, with the default capacity, the ring grows for
+  the next frame (doubling, at least to the observed demand, capped at 8x the
+  default) so the text comes back. A nonzero `MaxInstancesPerFrame` is a hard
+  cap that nothing grows past.
 
 ## 2. Data and defaults
 
@@ -208,6 +212,12 @@ Manual cross-check (any GPU):
 4. Quote mean/median with the device name, frame size and instance count;
    compare only against the atlas row of the same run. The small-size table
    (`--cpu`) compares the estimator against the atlas rasterizer at 8–32 px.
+
+For an interactive view of the same comparison, the GLFW example's heavy scene
+(key `P`) has a performance panel: `M` swaps the body text between Slug and the
+atlas at identical size, the panel plots wall-clock frame ms and reports
+whole-frame GPU time from timestamp queries (untick vsync or pass `--novsync`
+for uncapped numbers). The harness above stays the source of the quoted numbers.
 
 Budgets in the harness are informational; CI runs the CPU mode.
 

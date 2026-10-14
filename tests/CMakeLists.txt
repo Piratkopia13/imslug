@@ -96,6 +96,7 @@ if(IMSLUG_TTF_PARSER)
                 -DIMSLUG_GEN=$<TARGET_FILE:imslug_gen>
                 -DIMSLUG_FONT=${CMAKE_CURRENT_SOURCE_DIR}/fonts/Roboto-Regular.ttf
                 -DIMSLUG_ASSET=${IMSLUG_PACKED_TEST_ASSET}
+                -DIMSLUG_EXAMPLE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../example/glfw_vulkan
                 -DIMSLUG_OUT_DIR=${CMAKE_BINARY_DIR}/asset_check
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check_asset_fresh.cmake)
     endif()

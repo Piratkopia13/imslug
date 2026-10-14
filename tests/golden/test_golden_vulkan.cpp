@@ -364,6 +364,8 @@ namespace
         return true;
     }
 
+    bool InitVulkanModule(uint32_t maxInstancesPerFrame);  // defined after CreateRenderObjects
+
     bool CreateRenderObjects()
     {
         if (!g_State.UseDynamicRendering)
@@ -416,6 +418,15 @@ namespace
         if (vkCreateFence(g_State.Device, &fenceInfo, nullptr, &g_State.Fence) != VK_SUCCESS)
             return false;
 
+        return InitVulkanModule(0);
+    }
+
+    // Initializes the imslug core with the given explicit instance-ring
+    // capacity (0 = the documented default with adaptive growth). Split out of
+    // CreateRenderObjects so the instance-ring regression can re-init the
+    // module with an explicit cap and restore the default afterwards.
+    bool InitVulkanModule(uint32_t maxInstancesPerFrame)
+    {
         ImSlugVulkanInitInfo initInfo;
         initInfo.PhysicalDevice = g_State.PhysicalDevice;
         initInfo.Device = g_State.Device;
@@ -426,6 +437,7 @@ namespace
         initInfo.RenderPass = g_State.RenderPass;
         initInfo.Subpass = 0;
         initInfo.UseDynamicRendering = g_State.UseDynamicRendering;
+        initInfo.MaxInstancesPerFrame = maxInstancesPerFrame;
         VkFormat dynamicColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
         if (g_State.UseDynamicRendering)
         {
@@ -1169,6 +1181,257 @@ namespace
         return clear;
     }
 #endif  // defined(NDEBUG)
+
+    // Instance-ring growth. An overflow with the default capacity must not be
+    // silent and must self-heal: the overflowing reservation fails (the core
+    // pre-pass drops that run), the ring grows - in place when the frame has
+    // reserved nothing yet, at the next ImSlugVulkanUploadPools otherwise - and
+    // later frames render fully from the grown ring. An explicit
+    // MaxInstancesPerFrame is a hard cap: no growth, the overflow keeps
+    // failing. The swap must keep the old buffer alive while the frames that
+    // recorded against it are in flight (validation flags an early destroy).
+    bool RunInstanceGrowthRegression()
+    {
+        const uint32_t frames = ImSlugVulkanGetFramesInFlight();
+        const uint32_t capacity = ImSlugVulkanGetInstanceCapacity();
+        if (frames < 2 || capacity < 8)
+        {
+            std::printf("  instance-growth: skipped (capacity %u, frames %u)\n", capacity, frames);
+            return true;
+        }
+
+        const float pixelsPerEm = 32.0f;
+        VkCommandBuffer cmds[2] = {};
+        VkFence fences[2] = {};
+        bool submitted[2] = {};
+        Target targets[2] = {};
+        RegressionGlyphs glyphs[2] = {};
+        ImSlugGlyphInstance scratch[2][64] = {};
+        VkCommandBufferAllocateInfo allocateInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+        allocateInfo.commandPool = g_State.CommandPool;
+        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocateInfo.commandBufferCount = 2;
+        bool ok = vkAllocateCommandBuffers(g_State.Device, &allocateInfo, cmds) == VK_SUCCESS;
+        if (!ok)
+            std::printf("  instance-growth: FAIL (command buffer allocation)\n");
+        for (int k = 0; k < 2 && ok; ++k)
+        {
+            VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            ok = vkCreateFence(g_State.Device, &fenceInfo, nullptr, &fences[k]) == VK_SUCCESS;
+        }
+        // Build both runs' glyphs before the first UploadPools: a glyph first
+        // built after a frame's UploadPools has no pool rows (band/curve) in
+        // that frame - the shader would sample empty band data and discard.
+        // The instance records are copied from these scratch layouts.
+        if (ok)
+            ok = LayoutRegressionText("MMMM", pixelsPerEm, scratch[0], &glyphs[0]) &&
+                 LayoutRegressionText("Hamb", pixelsPerEm, scratch[1], &glyphs[1]);
+        if (!ok)
+            std::printf("  instance-growth: FAIL (glyph layout)\n");
+
+        // --- frame 0: a reserved batch, then a reservation that cannot fit ---
+        // The frame has already reserved (cursor != 0), so the growth cannot be
+        // applied in place: the reservation fails (the run would drop) and the
+        // growth is deferred to the next UploadPools. The frame's draw still
+        // comes from the old buffer, which stays readable while frame 0's
+        // submission is in flight.
+        if (ok)
+        {
+            vkResetCommandBuffer(cmds[0], 0);
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmds[0], &beginInfo);
+            uint32_t first = 0;
+            ImSlugGlyphInstance* reserved =
+                ImSlugVulkanUploadPools(cmds[0], &g_State.Pools, 0) ? ImSlugVulkanReserveInstances(4, &first) : nullptr;
+            if (reserved != nullptr)
+                std::memcpy(reserved, scratch[0], (size_t)glyphs[0].Count * sizeof(ImSlugGlyphInstance));
+            uint32_t droppedFirst = 0;
+            ok = reserved != nullptr && first == 0;
+            if (ok)
+                ok = ImSlugVulkanReserveInstances(capacity + 1, &droppedFirst) == nullptr;
+            if (!ok)
+                std::printf("  instance-growth: FAIL (frame 0 reserve/drop)\n");
+            if (ok)
+            {
+                targets[0].Width = (uint32_t)std::ceil(glyphs[0].ExtentX + 2.0f * kMargin);
+                targets[0].Height = (uint32_t)std::ceil(glyphs[0].ExtentY + 2.0f * kMargin);
+                ok = CreateTarget(targets[0].Width, targets[0].Height, &targets[0]);
+            }
+            if (ok)
+            {
+                RecordDraw(cmds[0], &targets[0], 0, first, (uint32_t)glyphs[0].Count);
+                RecordCopyToReadback(cmds[0], &targets[0]);
+            }
+            vkEndCommandBuffer(cmds[0]);
+            if (ok)
+            {
+                VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+                submitInfo.commandBufferCount = 1;
+                submitInfo.pCommandBuffers = &cmds[0];
+                ok = vkQueueSubmit(g_State.Queue, 1, &submitInfo, fences[0]) == VK_SUCCESS;
+                if (ok)
+                    submitted[0] = true;
+            }
+            if (ok && ImSlugVulkanGetInstanceCapacity() != capacity)
+            {
+                std::printf("  instance-growth: FAIL (capacity changed before the growth applied)\n");
+                ok = false;
+            }
+        }
+
+        // --- frame 1: the deferred growth applies; the frame renders fully ---
+        // Recorded and submitted while frame 0 is still in flight, so the swap
+        // must retire the old buffer instead of destroying it.
+        uint32_t grown = 0;
+        if (ok)
+        {
+            vkResetCommandBuffer(cmds[1], 0);
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmds[1], &beginInfo);
+            ok = ImSlugVulkanUploadPools(cmds[1], &g_State.Pools, 1);
+            grown = ImSlugVulkanGetInstanceCapacity();
+            if (ok && grown <= capacity)
+            {
+                std::printf("  instance-growth: FAIL (no growth after the overflow: %u)\n", grown);
+                ok = false;
+            }
+            // The reservation that failed in frame 0 fits now; write it into
+            // the grown ring's slot and draw it.
+            uint32_t first = 0;
+            ImSlugGlyphInstance* reserved = ok ? ImSlugVulkanReserveInstances(capacity + 1, &first) : nullptr;
+            if (reserved != nullptr)
+                std::memcpy(reserved, scratch[1], (size_t)glyphs[1].Count * sizeof(ImSlugGlyphInstance));
+            ok = ok && reserved != nullptr;
+            if (ok)
+            {
+                targets[1].Width = (uint32_t)std::ceil(glyphs[1].ExtentX + 2.0f * kMargin);
+                targets[1].Height = (uint32_t)std::ceil(glyphs[1].ExtentY + 2.0f * kMargin);
+                ok = CreateTarget(targets[1].Width, targets[1].Height, &targets[1]);
+            }
+            if (ok)
+            {
+                RecordDraw(cmds[1], &targets[1], 1, first, (uint32_t)glyphs[1].Count);
+                RecordCopyToReadback(cmds[1], &targets[1]);
+            }
+            vkEndCommandBuffer(cmds[1]);
+            if (ok)
+            {
+                VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+                submitInfo.commandBufferCount = 1;
+                submitInfo.pCommandBuffers = &cmds[1];
+                ok = vkQueueSubmit(g_State.Queue, 1, &submitInfo, fences[1]) == VK_SUCCESS;
+                if (ok)
+                    submitted[1] = true;
+            }
+        }
+
+        // Always reap what was submitted (an early failure must not free or
+        // destroy a command buffer that is still in flight).
+        for (int k = 0; k < 2; ++k)
+            if (submitted[k])
+                ok = vkWaitForFences(g_State.Device, 1, &fences[k], VK_TRUE, UINT64_MAX) == VK_SUCCESS && ok;
+        bool pass = ok;
+        for (int k = 0; k < 2 && ok; ++k)
+        {
+            char name[64];
+            std::snprintf(name, sizeof(name), "instance-growth frame %d", k);
+            pass = CompareRegressionImage(name, targets[k], glyphs[k], pixelsPerEm) && pass;
+        }
+
+        // --- same-frame growth: an empty cursor grows in place (no drop) -----
+        if (ok)
+        {
+            const uint32_t before = ImSlugVulkanGetInstanceCapacity();
+            vkResetCommandBuffer(cmds[0], 0);  // frame 0's submission completed
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmds[0], &beginInfo);
+            ok = ImSlugVulkanUploadPools(cmds[0], &g_State.Pools, 0);
+            uint32_t first = 0;
+            ImSlugGlyphInstance* reserved = ok ? ImSlugVulkanReserveInstances(before + 1, &first) : nullptr;
+            const uint32_t after = ImSlugVulkanGetInstanceCapacity();
+            vkEndCommandBuffer(cmds[0]);
+            if (ok && (reserved == nullptr || after <= before))
+            {
+                std::printf("  instance-growth: FAIL (same-frame growth: %u -> %u)\n", before, after);
+                ok = false;
+            }
+            if (ok)
+                std::printf("  instance-growth in place: capacity %u -> %u\n", before, after);
+        }
+
+        // Advance the frame counter past the retire deadlines, so the
+        // grown-away buffers are destroyed (an in-use destroy would be a
+        // validation error).
+        for (uint32_t i = 0; i < frames + 2 && ok; ++i)
+        {
+            vkResetCommandBuffer(cmds[0], 0);
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmds[0], &beginInfo);
+            ok = ImSlugVulkanUploadPools(cmds[0], &g_State.Pools, i % frames);
+            vkEndCommandBuffer(cmds[0]);
+        }
+        pass = pass && ok;
+
+        for (int k = 0; k < 2; ++k)
+        {
+            if (fences[k] != VK_NULL_HANDLE)
+                vkDestroyFence(g_State.Device, fences[k], nullptr);
+            DestroyTarget(&targets[k]);
+        }
+        if (cmds[0] != VK_NULL_HANDLE)
+            vkFreeCommandBuffers(g_State.Device, g_State.CommandPool, 2, cmds);
+
+        // --- an explicit MaxInstancesPerFrame is a hard cap -------------------
+        ImSlugVulkanShutdown();
+        const uint32_t kExplicitCapacity = 64;
+        if (!InitVulkanModule(kExplicitCapacity))
+        {
+            std::printf("  instance-growth: FAIL (explicit-cap re-init)\n");
+            return false;
+        }
+        bool capped = ImSlugVulkanGetInstanceCapacity() == kExplicitCapacity;
+        if (capped)
+        {
+            // Frame 0: a reserved batch, then an overflow that must fail.
+            vkResetCommandBuffer(g_State.CommandBuffer, 0);
+            VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(g_State.CommandBuffer, &beginInfo);
+            capped = ImSlugVulkanUploadPools(g_State.CommandBuffer, &g_State.Pools, 0);
+            uint32_t first = 0;
+            capped = capped && ImSlugVulkanReserveInstances(8, &first) != nullptr;
+            uint32_t droppedFirst = 0;
+            capped = capped && ImSlugVulkanReserveInstances(kExplicitCapacity + 1, &droppedFirst) == nullptr;
+            vkEndCommandBuffer(g_State.CommandBuffer);
+
+            // Frame 1: an empty cursor must refuse to grow in place too, and
+            // the capacity must never move.
+            vkResetCommandBuffer(g_State.CommandBuffer, 0);
+            vkBeginCommandBuffer(g_State.CommandBuffer, &beginInfo);
+            capped = capped && ImSlugVulkanUploadPools(g_State.CommandBuffer, &g_State.Pools, 1);
+            uint32_t skippedFirst = 0;
+            capped = capped && ImSlugVulkanReserveInstances(kExplicitCapacity + 1, &skippedFirst) == nullptr;
+            capped = capped && ImSlugVulkanReserveInstances(kExplicitCapacity - 1, &skippedFirst) != nullptr;
+            vkEndCommandBuffer(g_State.CommandBuffer);
+            capped = capped && ImSlugVulkanGetInstanceCapacity() == kExplicitCapacity;
+        }
+
+        // Restore the default (adaptive) capacity for the golden matrix.
+        ImSlugVulkanShutdown();
+        if (!InitVulkanModule(0))
+        {
+            std::printf("  instance-growth: FAIL (default re-init)\n");
+            return false;
+        }
+        const uint32_t restored = ImSlugVulkanGetInstanceCapacity();
+        std::printf("  %-22s capacity %u -> %u, explicit cap %u held, default restored to %u  %s\n", "instance-growth",
+                    capacity, grown, kExplicitCapacity, restored, pass && capped ? "ok" : "FAIL");
+        return pass && capped;
+    }
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1264,6 +1527,10 @@ int main(int argc, char** argv)
 #else
     std::printf("  draw-clamp no-ops: skipped (debug asserts active)\n");
 #endif
+    // Re-inits the module (explicit cap, then default); must run before the
+    // golden matrix so the matrix sees the default adaptive capacity.
+    if (!RunInstanceGrowthRegression())
+        ++backendFailures;
 
     static const char* kTexts[2] = { "Hamburgefonstiv 0123456789", "@#%&gpqy{}()[]|" };
     static const float kBakeSizes[4] = { 12.0f, 16.0f, 32.0f, 64.0f };

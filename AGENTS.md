@@ -71,23 +71,40 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   taken from `IMSLUG_GLFW_DIR`). It is an ImGui app with a scene switcher
   (keys 1–9, 1-based: demo, widgets/plots/tables, clipping torture, mixed fonts,
   runtime `FontScaleDpi`, 5k-glyph stress, CJK subset, color emoji, packed
-  `.imslug` asset), F1/F2/F3 debug-overlay toggles (glyph bounds / band grid /
-  ref heat, `--overlay` on the CLI) and `--screenshot <file.ppm> [scene]
-  [dpi_scale]` for deterministic offscreen captures (scene numbers are 1-based
-  like the keys). `--font <path>` accepts a TTF or an `.imslug` asset (the
-  loader auto-detects); in a no-parser build the default font is the committed
-  asset.
+  `.imslug` asset; key `P` = heavy demo / perf scene with a performance panel:
+  frame-ms plot, whole-frame GPU timestamps, draw/Slug/atlas counters and a
+  vsync toggle), an `M` toggle (or `--renderer atlas`) that swaps the body text
+  between Slug and ImGui's dynamic font system for the same registered font,
+  F1/F2/F3 debug-overlay toggles (glyph bounds / band grid / ref heat,
+  `--overlay` on the CLI) and `--screenshot <file.ppm> [scene] [dpi_scale]` for
+  deterministic offscreen captures (scene numbers are 1-based like the keys).
+  `--font <path>` accepts a TTF or an `.imslug` asset (the loader auto-detects).
+  The default fonts are embedded in the binary (the committed packed asset for
+  Slug + the raw TTF for ImGui's stock atlas font, so `M` works standalone);
+  `--font` or `IMSLUG_EXAMPLE_FONT` (env var; `--font` wins) overrides them.
+  No data files are needed next to the executable. The CJK/emoji scenes still
+  use the fetched test fonts when present.
+* `IMSLUG_STATIC_CRT` (configure option, default OFF, MSVC only) links the C
+  runtime statically (`/MT`, mirrored for GLFW): the example then needs no
+  VC++ redistributable — a genuinely single-file executable whose only
+  non-OS import is `vulkan-1.dll` (GPU driver). Provide it through
+  `IMSLUG_CMAKE_DEFINES="-DIMSLUG_STATIC_CRT=ON"`; toggling it on an existing
+  build directory forces a reconfigure of GLFW's runtime choice. It covers the
+  targets this project builds: a caller-provided `glfw`/imgui target must use
+  `/MT` itself (a configure-time AUTHOR_WARNING flags that case).
 * `IMSLUG_TTF_PARSER` (configure option, default ON) builds the runtime TTF
   outline parser (stb_truetype). `-DIMSLUG_TTF_PARSER=OFF` builds the core
   **without stbtt** (packed `.imslug` assets only; TTF font sources fail
   cleanly): the packed tests, the packed goldens and the example still build and
-  run (the example defaults to `tests/assets/Roboto-ASCII.imslug`).
+  run (the example's embedded defaults are the packed asset for Slug and the
+  TTF for ImGui's own loader, which this option does not remove).
 * `IMSLUG_BUILD_TOOLS` (configure option, default ON) builds the `imslug_gen`
   CLI + its writer library (`build/imslug_gen.exe`); tests use the writer for
-  the round-trip suite. The committed generated asset is
-  `tests/assets/Roboto-ASCII.imslug`, regenerated with `scripts/gen_asset.*`
-  (format spec: `docs/PACKED_FORMAT.md`; freshness enforced by
-  `imslug_packed_roundtrip` + `imslug_asset_fresh`).
+  the round-trip suite. The committed generated artifacts are
+  `tests/assets/Roboto-ASCII.imslug` and the two example headers
+  `example/glfw_vulkan/imslug_example_{asset,font}.h`, all regenerated with
+  `scripts/gen_asset.*` (format spec: `docs/PACKED_FORMAT.md`; freshness
+  enforced by `imslug_packed_roundtrip` + `imslug_asset_fresh`).
 * `IMSLUG_BUILD_C_EXAMPLE` (configure option, default ON) builds the pure-C11
   example (`build/imslug_example_c.exe`): the default run is a CPU smoke
   (context, init, add font, one headless frame, shutdown; ctest

@@ -87,8 +87,14 @@ namespace ImSlug
         bool EnableFineClipReconstruction = true;
 
         // Instance ring sizing per frame; 0 selects the backend default
-        // (16384). The pre-pass needs one instance per glyph; a frame that
-        // overflows drops the overflowing runs (Statistics::DroppedRuns).
+        // (16384) and lets the ring grow when a frame overflows: the first drop
+        // prints a one-time stderr warning (demand vs capacity plus this knob)
+        // and the ring is larger on the next frame (doubling, at least to the
+        // observed demand, at most 8x the default), so Slug text does not
+        // silently disappear. A nonzero value is a fixed hard cap: the ring
+        // never grows past it and overflowing runs keep dropping (warning +
+        // Statistics::DroppedRuns) until the app raises it. The pre-pass needs
+        // one instance per glyph (one per layer for COLR color glyphs).
         uint32_t MaxInstancesPerFrame = 0;
 
         // Upper bound of live glyph slabs (one per baked visible glyph; a
