@@ -171,5 +171,5 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri
-      - name: ImGui master: build + full test suite
+      - name: "ImGui master: build + full test suite"
         run: ./scripts/smoke_imgui_master.sh
