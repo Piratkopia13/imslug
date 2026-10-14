@@ -19,5 +19,5 @@
 
 ## Notes for the reviewer
 
-<!-- Risks, follow-ups, deliberate deviations, decisions recorded outside the
-     repo (the plan lives in the gitignored .agent-docs/). -->
+<!-- Risks, follow-ups, deliberate deviations, and anything future work
+     should know. -->

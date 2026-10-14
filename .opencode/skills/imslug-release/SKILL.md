@@ -38,7 +38,8 @@ version with a `-dev` suffix. `v0.1.0` ships `IMSLUG_VERSION "0.1.0"`.
 ## Release procedure
 
 1. **Scope/state.** `main` is feature-complete for the release, the tree is
-   clean, and the plan's status/decision notes are current.
+   clean, and no release-relevant work is left uncommitted or parked in
+   transient `.agent-docs/` material.
 2. **Version.** Update the five rows above. Bump PATCH for fixes, MINOR for
    additive (ABI-compatible) features, MAJOR only with owner approval; in 0.x,
    a breaking change bumps MINOR.
@@ -74,17 +75,19 @@ version with a `-dev` suffix. `v0.1.0` ships `IMSLUG_VERSION "0.1.0"`.
    `.agent-docs/reports/`, never committed).
 7. **Post-tag.** The tree stays clean and the tag must point at the commit
    whose headers say `X.Y.Z`. Moving a tag is an owner decision
-   (`git tag -d vX.Y.Z` + re-create) — never do it silently.
+   (`git tag -d vX.Y.Z` + re-create) — never do it silently. Delete the
+   transient release-notes draft in `.agent-docs/reports/` once the release
+   lands.
 
 ## Changelog rules
 
 * Root `CHANGELOG.md`, newest entry first, sections per Keep a Changelog:
   Added / Changed / Fixed / Known limitations.
-* Describe user-visible behavior and the decision behind it (not the
-  plan's internal wording); never paste `.agent-docs/` wholesale.
+* Describe user-visible behavior and the decision behind it (not internal
+  planning wording); never paste `.agent-docs/` wholesale.
 * While a release is prepared but untagged, mark the entry
   "(release prepared; tag pending owner)" and note the exact tag command
-  alongside the plan entry.
+  alongside the changelog entry.
 
 ## What CI enforces (mirror these locally)
 

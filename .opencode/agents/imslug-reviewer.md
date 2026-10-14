@@ -36,7 +36,7 @@ Review focus, in order:
    proprietary Slug library, CC0/MIT adaptations credited.
 4. Contract hygiene: generated SPIR-V header not hand-edited; no STL in
    `imslug.h`; no third-party file modified; docs policy respected (transient
-   markdown only under `.agent-docs/`).
+   markdown only under `.agent-docs/`, and cleaned up when the task lands).
 
 Also check: tests cover the changed behavior; comments explain "why", not "what";
 the diff is task-scoped. Ask (in the report) rather than assume when a

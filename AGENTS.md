@@ -25,7 +25,7 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 | `tests/` | Unit tests, CPU reference rasterizer, golden images, test fonts under `tests/fonts/`, committed generated assets under `tests/assets/`. |
 | `scripts/` | Deterministic build/test/generate entry points (see Commands). |
 | `.opencode/` | Commands, repo skills and subagents for agent sessions. |
-| `.agent-docs/` | Transient agent working material (plan, briefs, notes). **Gitignored — never committed.** |
+| `.agent-docs/` | Transient agent working material for tasks in flight. **Gitignored — never committed; delete finished material.** |
 | `docs/` | Durable user documentation (allowlist; promoted deliberately, never a side effect). |
 
 ## Status
@@ -33,11 +33,13 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 * v0.1.0 release prepared: version macros final, `CHANGELOG.md` entry marked
   "tag pending owner"; the owner holds the `v0.1.0` tag (see the
   `imslug-release` skill for the exact preconditions and the tag command).
-* Work queue/status: `.agent-docs/PLAN.md` §7. Decisions log: §11. There is no
-  open task brief; if the owner assigns new work, write a brief into
-  `.agent-docs/milestones/` (or extend the plan).
-* `.agent-docs/` is gitignored transient material: never `git add -f` it, never
-  write scratch markdown anywhere else (see Docs policy).
+* Work is **features and bug-fixes**, not milestone-numbered plans: name the
+  change after what it does (commit subject, tests, docs) and record the
+  rationale in the commit. There is no milestone queue or task brief, and new
+  work is never appended as an "M12"-style item.
+* `.agent-docs/` is gitignored transient material for in-flight work only:
+  never `git add -f` it, never write scratch markdown anywhere else, and delete
+  a task's files when the task lands (see Docs policy).
 
 ## Commands (exact — never guess flags)
 
@@ -117,7 +119,7 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   pinned SHA-256 live next to them in `tests/fonts/*/PROVENANCE.txt`.
 * `.opencode/commands/` mirrors these commands: `/build`, `/test`,
   `/gen-shaders`, `/gen-asset`, `/golden`, `/verify-fetchcontent`, `/bench`,
-  `/check-docs`, `/plan-next`, `/update-plan`.
+  `/check-docs`.
 * Golden images run in a headless offscreen pass (`tests/golden/`, PPMs in
   `<build>/golden/`) and skip with exit 77 when no Vulkan device is available:
   the monochrome tests compare GPU output against the CPU reference
@@ -148,15 +150,21 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
    `backends/` and adapter files only.
 8. **Shader sources and their regenerated SPIR-V header are committed together**
    and must be deterministic.
-9. **Record decisions** in `.agent-docs/PLAN.md` §11 (date + rationale).
+9. **Record decisions durably**: the commit message states the change and its
+   rationale; `docs/**`, `README.md` and `CHANGELOG.md` are updated when
+   behavior, contracts, defaults or limitations change. Never park decisions in
+   `.agent-docs/` (transient; cleaned up when a task lands).
 
 ## Docs policy
 
 * Committed markdown allowlist: `README.md`, `AGENTS.md`, `CHANGELOG.md`,
   `docs/**`, `.opencode/**`, `.github/**`; plus `LICENSE`/`NOTICE`
   (non-markdown).
-* Transient plan drafts, session notes and scratch go in `.agent-docs/` **only**
-  — never at the repo root or anywhere else.
+* In-flight notes, drafts, evidence and scratch go in `.agent-docs/` **only** —
+  never at the repo root or anywhere else.
+* `.agent-docs/` holds in-flight work only: when a task lands, delete its
+  transient files so finished material does not accumulate. The durable record
+  is the commit message plus `docs/**`/`CHANGELOG.md` where behavior changed.
 * Never commit `.agent-docs/**`; never `git add -f` ignored files.
 * Promoting a scratch doc into `docs/` is a deliberate, reviewed step: rewrite
   it in `docs/` and delete the scratch copy (never leave both).
@@ -164,9 +172,10 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 
 ## Session procedure
 
-1. **Start:** read this file + your task brief; check PLAN §7/§11; list
-   available skills (`skill` tool) and load the ones the task needs. Load the
-   `opencode` skill **before** touching `.opencode/` or `opencode.jsonc`.
+1. **Start:** read this file first; check `.agent-docs/` for any in-flight notes
+   a previous session left; list available skills (`skill` tool) and load the
+   ones the task needs. Load the `opencode` skill **before** touching
+   `.opencode/` or `opencode.jsonc`.
 2. **Baseline:** run `scripts/test.*` before edits. After shader edits run
    `scripts/gen_shaders.* --check`; after backend edits run the
    validation-layer smoke test.
@@ -174,8 +183,9 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
    `explore`, `plan`, and the repo agents in `.opencode/agents/`) for isolated
    research/test work; extend the repo skills/scripts instead of one-off hacks.
 4. **Finish:** run `scripts/build.*`, `scripts/test.*`, `scripts/check_docs.*`
-   (plus `scripts/gen_shaders.* --check` after shader work); update the plan and
-   the brief's completion notes; leave the repo green.
+   (plus `scripts/gen_shaders.* --check` after shader work); update durable docs
+   where behavior changed; delete the transient `.agent-docs/` files this task
+   created; leave the repo green.
 5. **Blocked?** Ask the repo owner. If the harness itself misbehaves, use the
    `report` skill instead of silently working around it. Never push, tag or
    publish without an explicit request.
@@ -187,7 +197,8 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
 - [ ] `scripts/check_docs.*` passes (no transient docs added).
 - [ ] `NOTICE`/attribution updated if third-party code was added.
 - [ ] Shaders: sources + regenerated header committed together, `--check` clean.
-- [ ] Plan updated (decisions §11; brief completion notes when the task ends).
+- [ ] Transient `.agent-docs/` files for this task deleted; decisions live in
+      the commit message (and durable docs where behavior changed).
 
 ## Repo skills
 
