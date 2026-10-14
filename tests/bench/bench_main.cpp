@@ -7,14 +7,21 @@
 //           per-frame upload bytes from the pool dirty rows, the draw-call
 //           count of a contiguous run, the text vertex/index waste (the input
 //           for the M4 vertex-compaction decision) and the lazy glyph build
-//           cost. These are the automated CPU-side checks CI can run.
+//           cost, plus the R8 small-size quality table (unhinted Slug vs the
+//           atlas rasterizer at 8..32 px and the 4x-supersample ceiling).
+//           These are the automated CPU-side checks CI can run.
 //
 //   --gpu   headless offscreen Vulkan: GPU time from timestamp queries for the
 //           same scene rendered with the Slug font and with the atlas font
 //           (Oversample 1, the metric-neutral configuration), so "Slug vs
-//           stock" is an apples-to-apples comparison on the same device. Also
-//           prints the device name; the manual cross-check procedure is in
-//           docs/DESIGN.md ("Measuring performance").
+//           stock" is an apples-to-apples comparison on the same device. Runs
+//           the production order (UploadPools -> RenderDrawData, which runs the
+//           pre-pass), reports the Slug instance count of the measured frame
+//           and warns when the Slug row did not render any text. Validation
+//           layers are on by default (--no-validation / IMSLUG_VALIDATION=0 to
+//           skip); they do not change the GPU numbers on the test machine.
+//           The manual cross-check procedure is in docs/DESIGN.md
+//           ("Measuring performance").
 //
 //   --all   both, with a markdown report written to --report <path>.
 //
@@ -94,6 +101,22 @@ namespace
     {
         static const auto start = std::chrono::steady_clock::now();
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    }
+
+    // Progress tracing for diagnosing headless GPU failures (crash bisecting):
+    // set IMSLUG_BENCH_TRACE=1. Silent otherwise.
+    void Trace(const char* format, ...)
+    {
+        static const bool enabled = std::getenv("IMSLUG_BENCH_TRACE") != nullptr;
+        if (!enabled)
+            return;
+        va_list args;
+        va_start(args, format);
+        std::fprintf(stderr, "[bench-trace] ");
+        std::vfprintf(stderr, format, args);
+        std::fprintf(stderr, "\n");
+        std::fflush(stderr);
+        va_end(args);
     }
 
     struct Stats
@@ -647,8 +670,53 @@ namespace
         applicationInfo.apiVersion = VK_API_VERSION_1_2;
         VkInstanceCreateInfo instanceInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
         instanceInfo.pApplicationInfo = &applicationInfo;
-        if (!CheckVk(vkCreateInstance(&instanceInfo, nullptr, &g_Gpu.Instance), "vkCreateInstance"))
+
+        // Validation layers mirror the golden harness: the report claims
+        // "validation clean" only when the layer actually ran (pass
+        // --no-validation or IMSLUG_VALIDATION=0 to skip it).
+        VkDebugUtilsMessengerCreateInfoEXT messengerInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+        messengerInfo.messageSeverity =
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        messengerInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                    VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                    VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        messengerInfo.pfnUserCallback = DebugCallback;
+        if (g_Options.Validation)
+        {
+            instanceInfo.enabledLayerCount = 1;
+            static const char* const validationLayer = "VK_LAYER_KHRONOS_validation";
+            instanceInfo.ppEnabledLayerNames = &validationLayer;
+            instanceInfo.enabledExtensionCount = 1;
+            static const char* const debugUtilsExtension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+            instanceInfo.ppEnabledExtensionNames = &debugUtilsExtension;
+            instanceInfo.pNext = &messengerInfo;
+        }
+
+        VkResult instanceResult = vkCreateInstance(&instanceInfo, nullptr, &g_Gpu.Instance);
+        if (instanceResult == VK_ERROR_LAYER_NOT_PRESENT || instanceResult == VK_ERROR_EXTENSION_NOT_PRESENT)
+        {
+            Report("  (validation layers unavailable; running without)\n");
+            g_Options.Validation = false;
+            instanceInfo.enabledLayerCount = 0;
+            instanceInfo.enabledExtensionCount = 0;
+            instanceInfo.pNext = nullptr;
+            instanceResult = vkCreateInstance(&instanceInfo, nullptr, &g_Gpu.Instance);
+        }
+        if (!CheckVk(instanceResult, "vkCreateInstance"))
             return false;
+        if (g_Options.Validation)
+        {
+            PFN_vkCreateDebugUtilsMessengerEXT createMessenger =
+                (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(g_Gpu.Instance,
+                                                                          "vkCreateDebugUtilsMessengerEXT");
+            if (createMessenger == nullptr ||
+                createMessenger(g_Gpu.Instance, &messengerInfo, nullptr, &g_Gpu.DebugMessenger) != VK_SUCCESS)
+            {
+                Report("  (debug messenger unavailable; running without validation)\n");
+                g_Options.Validation = false;
+            }
+        }
+        g_Gpu.ValidationEnabled = g_Options.Validation;
 
         uint32_t deviceCount = 0;
         vkEnumeratePhysicalDevices(g_Gpu.Instance, &deviceCount, nullptr);
@@ -810,6 +878,14 @@ namespace
     {
         if (g_Gpu.Device == VK_NULL_HANDLE)
         {
+            if (g_Gpu.DebugMessenger != VK_NULL_HANDLE)
+            {
+                PFN_vkDestroyDebugUtilsMessengerEXT destroyMessenger =
+                    (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(g_Gpu.Instance,
+                                                                               "vkDestroyDebugUtilsMessengerEXT");
+                if (destroyMessenger != nullptr)
+                    destroyMessenger(g_Gpu.Instance, g_Gpu.DebugMessenger, nullptr);
+            }
             vkDestroyInstance(g_Gpu.Instance, nullptr);
             return;
         }
@@ -915,16 +991,19 @@ namespace
         long long UploadBytes = 0;
         long long VertexBytes = 0;
         DrawStats Draws;
+        uint32_t Instances = 0;  // Slug instances produced by the last pre-pass
     };
 
     // Renders one configuration and fills out->Times with the GPU frame times.
     bool GpuBenchVariant(bool slugFont, bool uiScene, const std::string& text, float size, GpuVariantResult* out)
     {
+        Trace("variant(%s, ui=%d): create context", slugFont ? "slug" : "atlas", uiScene ? 1 : 0);
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.DisplaySize = ImVec2(1024.0f, 640.0f);
         ImGui::StyleColorsDark();
+        Trace("variant: ImSlug::Init");
         if (!ImSlug::Init())
             return false;
         if (slugFont)
@@ -940,6 +1019,7 @@ namespace
         }
         if (io.FontDefault == nullptr)
             return false;
+        Trace("variant: font registered");
 
         ImGui_ImplVulkan_InitInfo initInfo = {};
         initInfo.ApiVersion = VK_API_VERSION_1_2;
@@ -956,8 +1036,10 @@ namespace
         initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         if (!ImGui_ImplVulkan_Init(&initInfo))
             return false;
+        Trace("variant: stock backend init");
         if (!ImSlug_ImplVulkan_Init(&initInfo))
             return false;
+        Trace("variant: imslug backend init");
 
         const int totalFrames = g_Options.GpuWarmupFrames + g_Options.GpuFrames;
         long long uploadBytes = 0;
@@ -965,6 +1047,7 @@ namespace
         ImFont* font = io.FontDefault;
         for (int frame = 0; frame < totalFrames; ++frame)
         {
+            Trace("variant: frame %d build", frame);
             if (uiScene)
             {
                 BuildTypicalUiScene(font, size);
@@ -982,12 +1065,11 @@ namespace
                 ImGui::End();
             }
             ImGui::Render();
+            Trace("variant: frame %d render", frame);
             ImDrawData* drawData = ImGui::GetDrawData();
-            if (slugFont)
-                ImSlug::PreprocessDrawData(drawData);  // idempotent; RenderDrawData re-runs it for stock API parity
-            if (frame == totalFrames - 1)
-                drawStats = CollectDrawStats(drawData);
-
+            // No manual pre-pass: production calls ImSlug_ImplVulkan_RenderDrawData,
+            // which runs PreprocessDrawData itself (a second call is idempotent,
+            // but the pre-pass must run *after* UploadPools advanced the ring).
             vkResetFences(g_Gpu.Device, 1, &g_Gpu.Fence);
             vkResetCommandBuffer(g_Gpu.CommandBuffer, 0);
             VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -1007,6 +1089,7 @@ namespace
             }
             if (slugFont)
                 ImSlug_ImplVulkan_UploadPools(g_Gpu.CommandBuffer);
+            Trace("variant: frame %d pools uploaded", frame);
 
             VkClearValue clearValue = {};
             clearValue.color.float32[0] = 0.06f;
@@ -1028,6 +1111,20 @@ namespace
                 ImSlug_ImplVulkan_RenderDrawData(drawData, g_Gpu.CommandBuffer);
             else
                 ImGui_ImplVulkan_RenderDrawData(drawData, g_Gpu.CommandBuffer);  // stock baseline, no imslug
+            // After the call: the Slug pre-pass has rewritten the command
+            // stream in place (callbacks + resets), which is what the stats
+            // columns must report for both variants.
+            if (frame == totalFrames - 1)
+            {
+                drawStats = CollectDrawStats(drawData);
+                if (slugFont)
+                {
+                    Statistics statistics;
+                    ImSlug::GetStatistics(&statistics);
+                    out->Instances = statistics.Instances;
+                }
+            }
+            Trace("variant: frame %d drawdata recorded", frame);
             vkCmdEndRenderPass(g_Gpu.CommandBuffer);
             vkCmdWriteTimestamp(g_Gpu.CommandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_Gpu.Timestamps,
                                 queryBase + 1);
@@ -1038,6 +1135,7 @@ namespace
             submitInfo.pCommandBuffers = &g_Gpu.CommandBuffer;
             vkQueueSubmit(g_Gpu.Queue, 1, &submitInfo, g_Gpu.Fence);
             vkWaitForFences(g_Gpu.Device, 1, &g_Gpu.Fence, VK_TRUE, UINT64_MAX);
+            Trace("variant: frame %d submitted", frame);
             if (frame >= g_Options.GpuWarmupFrames)
                 uploadBytes += frameUpload;
         }
@@ -1066,30 +1164,32 @@ namespace
         ImSlug::Shutdown();
         ImGui_ImplVulkan_Shutdown();
         ImGui::DestroyContext();
+        Trace("variant: shutdown done");
         return true;
     }
 
     void GpuBenchSceneReport(const char* sceneName, bool uiScene, const std::string& text, float size)
     {
         Report("\n### %s\n\n", sceneName);
-        Report(
-            "| variant | GPU ms mean | median | p99 | slug cmds | resets | geom cmds | vertex KB/f | upload KB/f |\n");
-        Report("|---|---|---|---|---|---|---|---|---|\n");
+        Report("| variant | GPU ms mean | median | p99 | slug cmds | resets | geom cmds | instances | vertex KB/f | "
+               "upload KB/f |\n");
+        Report("|---|---|---|---|---|---|---|---|---|---|\n");
         GpuVariantResult slug, atlas;
         if (!GpuBenchVariant(true, uiScene, text, size, &slug))
         {
-            Report("| slug | FAILED | | | | | | | |\n");
+            Report("| slug | FAILED | | | | | | | | |\n");
             return;
         }
         if (!GpuBenchVariant(false, uiScene, text, size, &atlas))
         {
-            Report("| atlas (stock) | FAILED | | | | | | | |\n");
+            Report("| atlas (stock) | FAILED | | | | | | | | |\n");
             return;
         }
-        Report("| slug | %.3f | %.3f | %.3f | %d | %d | %d | %.1f | %.1f |\n", slug.Times.Mean(), slug.Times.Median(),
-               slug.Times.P99(), slug.Draws.SlugCommands, slug.Draws.ResetCommands, slug.Draws.GeometryCommands,
-               (double)slug.VertexBytes / 1024.0, (double)slug.UploadBytes / 1024.0);
-        Report("| atlas (stock) | %.3f | %.3f | %.3f | %d | %d | %d | %.1f | %.1f |\n", atlas.Times.Mean(),
+        Report("| slug | %.3f | %.3f | %.3f | %d | %d | %d | %u | %.1f | %.1f |\n", slug.Times.Mean(),
+               slug.Times.Median(), slug.Times.P99(), slug.Draws.SlugCommands, slug.Draws.ResetCommands,
+               slug.Draws.GeometryCommands, slug.Instances, (double)slug.VertexBytes / 1024.0,
+               (double)slug.UploadBytes / 1024.0);
+        Report("| atlas (stock) | %.3f | %.3f | %.3f | %d | %d | %d | - | %.1f | %.1f |\n", atlas.Times.Mean(),
                atlas.Times.Median(), atlas.Times.P99(), atlas.Draws.SlugCommands, atlas.Draws.ResetCommands,
                atlas.Draws.GeometryCommands, (double)atlas.VertexBytes / 1024.0, (double)atlas.UploadBytes / 1024.0);
         const double ratio = atlas.Times.Median() > 0.0 ? slug.Times.Median() / atlas.Times.Median() : 0.0;
@@ -1099,8 +1199,9 @@ namespace
                "geometry) vs stock %d geometry\n",
                ratio, slugCommands, slug.Draws.SlugCommands, slug.Draws.ResetCommands, slug.Draws.GeometryCommands,
                atlasCommands);
-        Report("GPU ratio vs text coverage: the text-dominated scene above isolates the fragment cost; the typical-UI "
-               "scene is the production mix (text interleaved with widgets and shapes).\n");
+        if (slug.Instances == 0 || slug.Draws.SlugCommands == 0)
+            Report("WARNING: the Slug variant produced no instances/callbacks; this row does not measure Slug text "
+                   "(check the pre-pass order: UploadPools -> RenderDrawData).\n");
     }
 
     void RunGpuBench()
@@ -1110,7 +1211,11 @@ namespace
                "serialized submissions\n",
                g_Gpu.DeviceName.c_str(), (double)g_Gpu.TimestampPeriod, g_Options.GpuFrames, g_Options.GpuWarmupFrames);
         Report("The stock variant renders through ImGui_ImplVulkan_RenderDrawData only (no imslug pre-pass), so the "
-               "comparison is production-imslug vs production-stock.\n");
+               "comparison is production-imslug vs production-stock. `instances` is the Slug pre-pass output of the "
+               "last measured frame: zero means the Slug row does not measure text rendering.\n");
+        Report("The GPU fragment cost is the interesting number (text-dominated scene); the typical-UI scene is the "
+               "production mix (text interleaved with widgets and shapes), where the text share of the frame is "
+               "smaller.\n");
 
         std::string text;
         BuildStressText(&text, g_Options.Lines, g_Options.Columns);
@@ -1176,6 +1281,13 @@ int main(int argc, char** argv)
     if (!g_Options.RunCpu && !g_Options.RunGpu)
         g_Options.RunCpu = true;
 
+    // IMSLUG_VALIDATION=0 disables the layer like the example and the golden
+    // harness (the GPU mode enables it by default; see CreateGpuObjects).
+    const char* validationEnv = std::getenv("IMSLUG_VALIDATION");
+    if (validationEnv != nullptr && (validationEnv[0] == '0' || validationEnv[0] == 'n' || validationEnv[0] == 'N' ||
+                                     validationEnv[0] == 'f' || validationEnv[0] == 'F'))
+        g_Options.Validation = false;
+
     Report("imslug M4 benchmark harness\n===========================\n");
     if (g_Options.RunCpu)
         RunCpuBench();
@@ -1188,7 +1300,9 @@ int main(int argc, char** argv)
         else
         {
             RunGpuBench();
-            if (g_Gpu.ValidationErrors > 0)
+            if (!g_Options.Validation)
+                Report("\nValidation: layer disabled (--no-validation / IMSLUG_VALIDATION=0).\n");
+            else if (g_Gpu.ValidationErrors > 0)
                 Report("\nValidation errors during the bench: %d (of %d messages) - numbers above are suspect.\n",
                        g_Gpu.ValidationErrors, g_Gpu.ValidationMessages);
             else

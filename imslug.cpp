@@ -119,6 +119,7 @@ namespace ImSlug
             InstanceArena Instances;
             BatchArena Batches;
             int ArenaFrameCount;
+            int CommittedBatches;  // batches already copied into the ring this arena
 
             // Scratch for CmdBuffer rewriting (grown, never shrunk).
             ImDrawCmd* CmdScratch;
@@ -158,6 +159,7 @@ namespace ImSlug
         {
             g_Core.Instances.Count = 0;
             g_Core.Batches.Count = 0;
+            g_Core.CommittedBatches = 0;
             g_Core.Stats.LiveBatches = 0;
             g_Core.Stats.Instances = 0;
             g_Core.Stats.DroppedRuns = 0;
@@ -817,7 +819,14 @@ namespace ImSlug
             if (g_Core.RenderIO == nullptr)
                 return;
 
-            for (int i = 0; i < g_Core.Batches.Count; ++i)
+            // Idempotent per arena reset (imslug.h: "Idempotent per frame"): a
+            // later PreprocessDrawData call in the same frame must not commit
+            // the same batch twice. After the first commit, batch->FirstInstance
+            // is a *ring* index, no longer an index into g_Core.Instances - a
+            // second commit would memcpy from that offset (out of bounds) and
+            // duplicate the ring allocation. Only batches appended after the
+            // last commit (new draw commands added between calls) are committed.
+            for (int i = g_Core.CommittedBatches; i < g_Core.Batches.Count; ++i)
             {
                 ImSlugBatch* batch = &g_Core.Batches.Data[i];
                 if (batch->InstanceCount == 0)
@@ -840,6 +849,7 @@ namespace ImSlug
                 memcpy(dst, g_Core.Instances.Data + start, (size_t)batch->InstanceCount * sizeof(ImSlugGlyphInstance));
                 batch->FirstInstance = firstInstance;
             }
+            g_Core.CommittedBatches = g_Core.Batches.Count;
         }
     }  // namespace
 

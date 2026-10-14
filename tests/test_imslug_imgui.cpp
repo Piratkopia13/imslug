@@ -1252,6 +1252,92 @@ static void TestGracefulFallbacks()
     }
 }
 
+// ---------------------------------------------------------------------------
+// 10. The pre-pass is idempotent per frame (imslug.h). A second
+// PreprocessDrawData with the same draw data must not re-commit the batches:
+// the commit rewrites batch->FirstInstance from an arena index to a ring index,
+// so a second commit would memcpy *from the ring index as an arena index*
+// (out-of-bounds read) and duplicate the ring allocation. Found by the M4
+// bench harness, whose GPU loop pre-processed twice per frame.
+// ---------------------------------------------------------------------------
+static void TestPrepassIdempotence()
+{
+    std::printf("[test] pre-pass idempotence (double PreprocessDrawData per frame)\n");
+    // A fresh Slug font: this test must not depend on what earlier tests left
+    // in the atlas (TestGracefulFallbacks shuts the core down and caps slabs).
+    ImFont* slugFont = ImSlug::AddFontFromFileTTF(IMSLUG_TEST_FONT_PATH("Roboto-Regular.ttf"), 21.0f);
+    TEST_CHECK(slugFont != nullptr);
+    if (slugFont == nullptr)
+        return;
+    const float size = 21.0f;
+    const ImVec2 textPos(11.0f, 7.0f);
+
+    // Frame 1: one pre-pass per frame, the documented usage.
+    ImGui::NewFrame();
+    OpenTestWindow("idempotence");
+    ImGui::GetWindowDrawList()->AddText(slugFont, size, textPos, IM_COL32(255, 255, 255, 255), "Idempotent frame");
+    ImGui::End();
+    ImGui::Render();
+    ImDrawData* drawData = ImGui::GetDrawData();
+    ResetFake();
+    g_FakeFrameIndex = 4;
+    ImSlug::PreprocessDrawData(drawData);
+    const uint32_t usedAfterFirst = g_FakeUsed;
+    TEST_CHECK(usedAfterFirst > 0);
+    DispatchSlugCallbacks(drawData);  // fills g_FakeLastBatch
+    const ImSlugBatch batchAfterFirst = g_FakeLastBatch;
+
+    // A second call in the same frame: the draw data was already rewritten
+    // (callbacks pass through), so nothing new may be allocated.
+    ImSlug::PreprocessDrawData(drawData);
+    TEST_CHECKF(g_FakeUsed == usedAfterFirst, "second pre-pass consumed %u more instances",
+                g_FakeUsed - usedAfterFirst);
+    DispatchSlugCallbacks(drawData);
+    TEST_CHECKF(g_FakeLastBatch.FirstInstance == batchAfterFirst.FirstInstance,
+                "second pre-pass moved FirstInstance %u -> %u", batchAfterFirst.FirstInstance,
+                g_FakeLastBatch.FirstInstance);
+    TEST_CHECKF(g_FakeLastBatch.InstanceCount == batchAfterFirst.InstanceCount, "second pre-pass changed the count");
+
+    Statistics stats;
+    ImSlug::GetStatistics(&stats);
+    TEST_CHECKF(stats.Instances == usedAfterFirst, "statistics report %u instances after the double pre-pass (%u)",
+                stats.Instances, usedAfterFirst);
+    TEST_CHECKF(stats.DroppedRuns == 0, "double pre-pass dropped %u runs", stats.DroppedRuns);
+
+    // Frame 2 with a stale ring cursor: exactly the bench's order (pre-pass
+    // before the upload advanced the ring). The double commit used to read
+    // g_Core.Instances past its end with `start = batch->FirstInstance`.
+    ImGui::NewFrame();
+    OpenTestWindow("idempotence-2");
+    ImGui::GetWindowDrawList()->AddText(slugFont, size, textPos, IM_COL32(255, 255, 255, 255), "Idempotent frame two");
+    ImGui::End();
+    ImGui::Render();
+    drawData = ImGui::GetDrawData();
+    g_FakeFrameIndex = 5;
+    g_FakeUsed = 512;  // stale cursor from the previous frame (ring not reset yet)
+    ImSlug::PreprocessDrawData(drawData);
+    const uint32_t usedAfterFirst2 = g_FakeUsed;
+    DispatchSlugCallbacks(drawData);
+    const ImSlugBatch batchAfterFirst2 = g_FakeLastBatch;
+    ImSlug::PreprocessDrawData(drawData);
+    TEST_CHECKF(g_FakeUsed == usedAfterFirst2, "stale-cursor double pre-pass consumed %u more instances",
+                g_FakeUsed - usedAfterFirst2);
+    DispatchSlugCallbacks(drawData);
+    TEST_CHECKF(g_FakeLastBatch.FirstInstance == batchAfterFirst2.FirstInstance,
+                "stale-cursor double pre-pass moved FirstInstance");
+    TEST_CHECK(g_FakeLastBatch.InstanceCount == batchAfterFirst2.InstanceCount);
+
+    // The committed instance range stays inside the arena-backed ring data:
+    // every committed record must be finite and match the batch.
+    TEST_CHECK(g_FakeLastBatch.FirstInstance + g_FakeLastBatch.InstanceCount <= g_FakeUsed);
+    for (uint32_t i = 0; i < g_FakeLastBatch.InstanceCount; ++i)
+    {
+        const ImSlugGlyphInstance instance = g_FakeInstances[g_FakeLastBatch.FirstInstance + i];
+        TEST_CHECK(std::isfinite(instance.ScreenMinX) && std::isfinite(instance.ScreenMaxX) &&
+                   std::isfinite(instance.ScreenMinY) && std::isfinite(instance.ScreenMaxY));
+    }
+}
+
 int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1285,6 +1371,7 @@ int main()
     TestRuntimeDpiAndAtlasGrowth();
     TestCommandScratchGrowth();
     TestBakeLifetime();
+    TestPrepassIdempotence();
     TestGracefulFallbacks();
 
     if (g_TestFont != nullptr)
