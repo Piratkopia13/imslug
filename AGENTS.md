@@ -104,12 +104,13 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   elsewhere) builds the WebGPU backend module + the third-party
   `imgui_impl_wgpu` target. `scripts\build_web.bat` / `scripts/build_web.sh` is
   the one web entry point: it sources `emsdk_env` when the emsdk root is known
-  (emsdk ≥ 4.0.10; CI pins 5.0.1), embeds the fetched CJK subset with the
-  native `imslug_gen` when both exist
-  (`-DIMSLUG_CJK_EMBED_HEADER=<build>/include/imslug_example_cjk.h`),
-  configures `build-web/` through `emcmake` (`-G Ninja`; examples on, Vulkan,
-  tests, C example and tools off) and assembles `build-web/site/` for GitHub
-  Pages (`index.html`, `index.js`, `index.wasm`, `.nojekyll`).
+  (emsdk ≥ 4.0.10; CI pins 5.0.1), embeds the fetched CJK and color-emoji
+  subsets with the native `imslug_gen` when present
+  (`-DIMSLUG_CJK_EMBED_HEADER=` / `-DIMSLUG_EMOJI_EMBED_HEADER=<build>/include/*.h`;
+  the emoji subset is produced by `scripts/subset_emoji_for_web.py`, COLR v1
+  only), configures `build-web/` through `emcmake` (`-G Ninja`; examples on,
+  Vulkan, tests, C example and tools off) and assembles `build-web/site/` for
+  GitHub Pages (`index.html`, `index.js`, `index.wasm`, `.nojekyll`).
   `scripts/web_smoke.sh` / `node scripts\web_smoke\smoke.mjs` serves that site
   and drives headless Chrome (software WebGPU adapter by default; waits for
   `window.__imslugReady` + a frame count, checks the screenshot for ink and the

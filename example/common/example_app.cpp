@@ -21,11 +21,16 @@
 #include "imslug_example_font.h"
 
 // The browser build has no filesystem: when the web shell was built with the
-// CJK subset embedded (scripts/build_web.* runs imslug_gen embed and defines
-// IMSLUG_EXAMPLE_CJK_EMBED, adding its directory to the include path), the
-// CJK scene registers that subset instead of probing the fetched file.
+// fetched test fonts embedded (scripts/build_web.* runs imslug_gen embed and
+// defines IMSLUG_EXAMPLE_CJK_EMBED / IMSLUG_EXAMPLE_EMOJI_EMBED, adding the
+// headers' directory to the include path), the CJK and color-emoji scenes
+// register those subsets instead of probing the fetched files. The emoji
+// subset is COLR v1 only (built by scripts/subset_emoji_for_web.py).
 #if defined(__EMSCRIPTEN__) && defined(IMSLUG_EXAMPLE_CJK_EMBED)
 #include "imslug_example_cjk.h"
+#endif
+#if defined(__EMSCRIPTEN__) && defined(IMSLUG_EXAMPLE_EMOJI_EMBED)
+#include "imslug_example_emoji.h"
 #endif
 
 #include <stdio.h>
@@ -310,7 +315,15 @@ namespace
         if (g_App.EmojiFont == nullptr && !g_App.EmojiAttempted)
         {
             g_App.EmojiAttempted = true;
-#ifndef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) && defined(IMSLUG_EXAMPLE_EMOJI_EMBED)
+            // The browser build embeds a build-time COLR v1 subset of the
+            // fetched font (scripts/build_web.*: subset_emoji_for_web.py +
+            // imslug_gen embed; SVG/bitmap tables dropped).
+            ImFontConfig emojiConfig;
+            emojiConfig.FontDataOwnedByAtlas = false;
+            g_App.EmojiFont = ImSlug::AddFontFromMemoryTTF(imslug_example_emoji_data, (int)imslug_example_emoji_size,
+                                                           24.0f, &emojiConfig);
+#elif !defined(__EMSCRIPTEN__)
             FILE* emojiFile = fopen(IMSLUG_EMOJI_TEST_FONT, "rb");
             if (emojiFile != nullptr)
             {
@@ -321,8 +334,14 @@ namespace
         }
         if (g_App.EmojiFont == nullptr)
         {
+#if defined(__EMSCRIPTEN__)
+            ImGui::TextWrapped("This web build does not embed the color-emoji subset. Fetch the font "
+                               "(scripts/fetch_emoji_font.*) and rebuild (scripts/build_web.* embeds a COLR v1 "
+                               "subset; see tests/fonts/emoji/PROVENANCE.txt).");
+#else
             ImGui::TextWrapped("The color-emoji test font is not fetched. Run scripts/fetch_emoji_font.* (see "
                                "tests/fonts/emoji/PROVENANCE.txt), then restart or reselect this scene.");
+#endif
         }
         else
         {

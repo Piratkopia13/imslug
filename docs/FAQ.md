@@ -38,10 +38,10 @@ lavapipe (software Vulkan), and local development targets a discrete GPU.
 WebGPU: Chrome/Edge 113+ (Windows/macOS/ChromeOS), 121+ (Android) or recent
 Linux; Firefox 141+ (Windows) / 145+ (macOS); Safari 26+ (macOS/iOS). The page
 checks `navigator.gpu` and shows a notice otherwise. The web build has no
-filesystem: fonts are the embedded Roboto packed asset / atlas TTF plus the
-fetched CJK subset when embedded at build time; the color-emoji scene shows
-its "font not fetched" message (the 25 MB emoji font is not shipped). See
-`docs/INTEGRATION.md` §13 and `scripts/build_web.*`.
+filesystem: fonts are the embedded Roboto packed asset / atlas TTF, plus
+build-time subsets of the fetched CJK and color-emoji fonts when present (the
+emoji subset is COLR v1 only, ~12 KB, so the full 25 MB font is never shipped).
+See `docs/INTEGRATION.md` §13 and `scripts/build_web.*`.
 
 **How mature is it?**
 v0.1.0 is the first release: feature-complete (glyph pipeline, Vulkan renderer,
@@ -165,6 +165,6 @@ and the validation-layer output.
 
 **What is not in v0.1?**
 OTF/CFF (above), a desktop GL backend, multi-viewport beyond compatible render
-passes, packed color assets, emoji in the browser build, and the
-`imgui-rs-vulkan-renderer` integration (prerequisites documented in
-`docs/BINDINGS.md`). `DESIGN.md` §8 is the authoritative list.
+passes, packed color assets, and the `imgui-rs-vulkan-renderer` integration
+(prerequisites documented in `docs/BINDINGS.md`). `DESIGN.md` §8 is the
+authoritative list.

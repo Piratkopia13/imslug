@@ -521,6 +521,13 @@ their own PROVENANCE.txt files and downloaded by scripts/fetch_*:
   (C:\Windows\Fonts\seguiemj.ttf) is used for local manual checks only and is
   never fetched, copied or committed.
 
+The browser demo build embeds build-time subsets of both fetched fonts into the
+deployed page (scripts/build_web.*: the CJK subset as fetched, plus a COLR v1
+subset of Noto Color Emoji produced by scripts/subset_emoji_for_web.py with the
+SVG/bitmap tables dropped - imslug renders COLR/CPAL only). Neither font
+declares a Reserved Font Name; the embedded headers are build artifacts and are
+not committed.
+
 --------------------------------------------------------------------------------
 6. Trademarks and affiliation
 --------------------------------------------------------------------------------

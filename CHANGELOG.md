@@ -23,9 +23,10 @@ All notable changes to imslug are documented in this file. The format follows
   scenes, switcher) lives in `example/common/example_app.*`;
   `example/glfw_vulkan/main.cpp` is the desktop shell and
   `example/web/main.cpp` (+ `example/web/shell.html`) the Emscripten shell. The
-  web build embeds the fetched CJK subset when present
-  (`scripts/build_web.*` + `imslug_gen embed`); the emoji scene keeps its
-  desktop-only message.
+  web build embeds the fetched CJK subset and a COLR v1 subset of the fetched
+  Noto Color Emoji when present (`scripts/build_web.*`,
+  `scripts/subset_emoji_for_web.py` + `imslug_gen embed`); both stay
+  desktop-only when the assets are absent.
 - **Web tooling and deployment.** `IMSLUG_BACKEND_WEBGPU` (default ON under
   Emscripten), `scripts/build_web.bat|sh` (assembles `build-web/site/`),
   `scripts/web_smoke.sh` + `scripts/web_smoke/` (headless-Chrome smoke with a

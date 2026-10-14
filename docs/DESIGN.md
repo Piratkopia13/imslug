@@ -385,11 +385,13 @@ subset without the parser, reproducible builds, and startup-time savings
 (packed loading is a copy, not an extraction).
 
 The browser deployment is the same idea for the web build: CI configures with
-Emscripten (`scripts/build_web.*`), optionally embeds the fetched CJK subset
-with `imslug_gen embed`, and publishes the static
-`build-web/site/` (`.github/workflows/pages.yml`, GitHub Pages). The page runs
-through the WebGPU backend and the WGSL shader port; it is single-threaded and
-needs no SharedArrayBuffer, so no COOP/COEP headers are required.
+Emscripten (`scripts/build_web.*`), embeds build-time subsets of the fetched
+CJK and color-emoji test fonts when present (`imslug_gen embed`;
+`scripts/subset_emoji_for_web.py` makes the 25 MB Noto Color Emoji a ~12 KB
+COLR v1-only subset), and publishes the static `build-web/site/`
+(`.github/workflows/pages.yml`, GitHub Pages). The page runs through the WebGPU
+backend and the WGSL shader port; it is single-threaded and needs no
+SharedArrayBuffer, so no COOP/COEP headers are required.
 
 ## 11. Deviations from the reference
 

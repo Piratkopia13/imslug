@@ -119,8 +119,8 @@ On Windows the entry points are `scripts\build_web.bat` and
 known), CMake + Ninja, and one native `scripts\build.*` run — the CJK subset is
 embedded with the native `imslug_gen` (a cross-compiled tool cannot run during
 the web build). The browser build has no filesystem: fonts are the embedded
-Roboto packed asset/atlas TTF plus the CJK subset when fetched; the emoji scene
-shows its "font not fetched" message.
+Roboto packed asset/atlas TTF, plus build-time subsets of the fetched CJK and
+color-emoji fonts when present (the emoji subset is COLR v1 only, ~12 KB).
 
 ## Integration
 

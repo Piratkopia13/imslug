@@ -100,10 +100,40 @@ else
     echo "[build_web]   (fetch once: scripts/fetch_cjk_font.sh; native tool: scripts/build.sh)"
 fi
 
+# --- optional emoji subset embed (COLR v1 only; SVG tables dropped) ----------
+EMOJI_HEADER=""
+EMOJI_FONT="tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
+PYTHON_EXE="${PYTHON:-}"
+if [ -z "$PYTHON_EXE" ]; then
+    PYTHON_EXE=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+fi
+if [ -x "$GEN_EXE" ] && [ -f "$EMOJI_FONT" ] && [ -n "$PYTHON_EXE" ]; then
+    echo "[build_web] subsetting Noto Color Emoji for the web demo"
+    mkdir -p "$BUILD_DIR/include"
+    if "$PYTHON_EXE" scripts/subset_emoji_for_web.py --input "$EMOJI_FONT" \
+            --output "$BUILD_DIR/include/imslug_emoji_subset.ttf"; then
+        if ! "$GEN_EXE" embed "$BUILD_DIR/include/imslug_emoji_subset.ttf" \
+                --emit-header "$BUILD_DIR/include/imslug_example_emoji.h" \
+                --header-symbol imslug_example_emoji; then
+            echo "[build_web] ERROR: imslug_gen embed failed (emoji subset)." >&2
+            exit 1
+        fi
+        EMOJI_HEADER="$BUILD_DIR/include/imslug_example_emoji.h"
+    else
+        echo "[build_web] emoji subset failed - building without it (fonttools needed: pip install fonttools)"
+    fi
+else
+    echo "[build_web] emoji font, python or native imslug_gen missing - building without embedded emoji"
+    echo "[build_web]   (fetch once: scripts/fetch_emoji_font.sh)"
+fi
+
 # --- configure only when needed ---------------------------------------------
 DEFINES="-DIMSLUG_BUILD_EXAMPLES=ON -DIMSLUG_BACKEND_VULKAN=OFF -DIMSLUG_BUILD_TESTS=OFF -DIMSLUG_BUILD_C_EXAMPLE=OFF -DIMSLUG_BUILD_TOOLS=OFF"
 if [ -n "$CJK_HEADER" ]; then
     DEFINES="$DEFINES -DIMSLUG_CJK_EMBED_HEADER=$CJK_HEADER"
+fi
+if [ -n "$EMOJI_HEADER" ]; then
+    DEFINES="$DEFINES -DIMSLUG_EMOJI_EMBED_HEADER=$EMOJI_HEADER"
 fi
 if [ -n "${IMSLUG_CMAKE_DEFINES:-}" ]; then
     DEFINES="$DEFINES $IMSLUG_CMAKE_DEFINES"
@@ -112,6 +142,7 @@ fi
 RECONFIGURE="${IMSLUG_RECONFIGURE:-0}"
 if [ -n "$IMSLUG_CMAKE_DEFINES" ]; then RECONFIGURE=1; fi
 if [ -n "$CJK_HEADER" ]; then RECONFIGURE=1; fi
+if [ -n "$EMOJI_HEADER" ]; then RECONFIGURE=1; fi
 
 if [ -f "$BUILD_DIR/CMakeCache.txt" ] && [ "$RECONFIGURE" != "1" ]; then
     :

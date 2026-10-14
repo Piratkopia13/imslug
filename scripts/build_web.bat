@@ -111,15 +111,46 @@ if exist "%GEN%" if exist "%CJK_FONT%" (
     echo [build_web]   ^(fetch once: scripts\fetch_cjk_font.bat; native tool: scripts\build.bat^)
 )
 
+rem --- optional emoji subset embed (COLR v1 only; SVG tables dropped) ---------
+set "EMOJI_HEADER="
+set "EMOJI_FONT=tests\fonts\emoji\NotoColorEmoji-Regular.ttf"
+set "PYTHON_EXE="
+if defined PYTHON set "PYTHON_EXE=%PYTHON%"
+if not defined PYTHON_EXE for /f "delims=" %%P in ('where python 2^>nul') do if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+if not defined GEN goto :emoji_skip
+if not exist "%EMOJI_FONT%" goto :emoji_skip
+if not defined PYTHON_EXE goto :emoji_skip
+echo [build_web] subsetting Noto Color Emoji for the web demo
+if not exist "%IMSLUG_BUILD_DIR%\include" mkdir "%IMSLUG_BUILD_DIR%\include"
+"%PYTHON_EXE%" "scripts\subset_emoji_for_web.py" --input "%EMOJI_FONT%" --output "%IMSLUG_BUILD_DIR%\include\imslug_emoji_subset.ttf"
+if errorlevel 1 goto :emoji_skip_fonttools
+"%GEN%" embed "%IMSLUG_BUILD_DIR%\include\imslug_emoji_subset.ttf" --emit-header "%IMSLUG_BUILD_DIR%\include\imslug_example_emoji.h" --header-symbol imslug_example_emoji
+if errorlevel 1 (
+    echo [build_web] ERROR: imslug_gen embed failed ^(emoji subset^).>&2
+    popd & exit /b 1
+)
+set "EMOJI_HEADER=%IMSLUG_BUILD_DIR%\include\imslug_example_emoji.h"
+goto :configure_inputs
+:emoji_skip_fonttools
+echo [build_web] emoji subset failed - building without the embedded emoji font
+echo [build_web]   ^(fonttools is required: pip install fonttools^)
+goto :configure_inputs
+:emoji_skip
+echo [build_web] emoji font, python or native imslug_gen missing - building without embedded emoji
+echo [build_web]   ^(fetch once: scripts\fetch_emoji_font.bat^)
+:configure_inputs
+
 rem --- configure only when needed --------------------------------------------
 set "DEFINES=-DIMSLUG_BUILD_EXAMPLES=ON -DIMSLUG_BACKEND_VULKAN=OFF -DIMSLUG_BUILD_TESTS=OFF -DIMSLUG_BUILD_C_EXAMPLE=OFF -DIMSLUG_BUILD_TOOLS=OFF"
 if defined CJK_HEADER set "DEFINES=%DEFINES% -DIMSLUG_CJK_EMBED_HEADER=%CJK_HEADER%"
+if defined EMOJI_HEADER set "DEFINES=%DEFINES% -DIMSLUG_EMOJI_EMBED_HEADER=%EMOJI_HEADER%"
 if defined IMSLUG_CMAKE_DEFINES set "DEFINES=%DEFINES% %IMSLUG_CMAKE_DEFINES%"
 
 if not exist "%IMSLUG_BUILD_DIR%\CMakeCache.txt" goto :configure
 if /i "%IMSLUG_RECONFIGURE%"=="1" goto :configure
 if defined IMSLUG_CMAKE_DEFINES goto :configure
 if defined CJK_HEADER goto :configure
+if defined EMOJI_HEADER goto :configure
 goto :build
 
 :configure

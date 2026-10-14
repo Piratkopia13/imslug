@@ -313,6 +313,6 @@ ImSlug_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
 * The Slug pipeline must match the stock backend (render target format, depth
   format, sample count) because Slug draws share ImGui's render pass.
 * Browser builds: `scripts/build_web.*` (site in `build-web/site/`, optional
-  embedded CJK subset), `scripts/web_smoke.*` (headless-Chrome smoke) and the
-  `imslug-webgpu-backend` skill hold the Emscripten flags, the page hooks and
-  the known pitfalls.
+  embedded CJK/color-emoji subsets), `scripts/web_smoke.*` (headless-Chrome
+  smoke) and the `imslug-webgpu-backend` skill hold the Emscripten flags, the
+  page hooks and the known pitfalls.

@@ -39,6 +39,8 @@ unset(IMSLUG_BACKEND_WEBGPU_DEFAULT)
 
 set(IMSLUG_CJK_EMBED_HEADER "" CACHE FILEPATH
     "Web example: generated header embedding the CJK subset (scripts/build_web.*; empty = not embedded)")
+set(IMSLUG_EMOJI_EMBED_HEADER "" CACHE FILEPATH
+    "Web example: generated header embedding the color-emoji subset (scripts/build_web.*; empty = not embedded)")
 
 # Mirror the MSVC runtime build-wide: our targets, the Dear ImGui sources and
 # GLFW (below) all end up in one binary, which must never mix /MD and /MT.
@@ -502,6 +504,16 @@ if(IMSLUG_BUILD_EXAMPLES AND EMSCRIPTEN)
             get_filename_component(_imslug_cjk_embed_dir "${IMSLUG_CJK_EMBED_HEADER}" DIRECTORY)
             target_include_directories(imslug_example_web PRIVATE "${_imslug_cjk_embed_dir}")
             target_compile_definitions(imslug_example_web PRIVATE IMSLUG_EXAMPLE_CJK_EMBED=1)
+        endif()
+        if(IMSLUG_EMOJI_EMBED_HEADER)
+            if(NOT EXISTS "${IMSLUG_EMOJI_EMBED_HEADER}")
+                message(FATAL_ERROR
+                    "IMSLUG_EMOJI_EMBED_HEADER='${IMSLUG_EMOJI_EMBED_HEADER}' does not exist. Generate it with "
+                    "scripts/build_web.* (subset_emoji_for_web.py + imslug_gen embed) or clear the cache entry.")
+            endif()
+            get_filename_component(_imslug_emoji_embed_dir "${IMSLUG_EMOJI_EMBED_HEADER}" DIRECTORY)
+            target_include_directories(imslug_example_web PRIVATE "${_imslug_emoji_embed_dir}")
+            target_compile_definitions(imslug_example_web PRIVATE IMSLUG_EXAMPLE_EMOJI_EMBED=1)
         endif()
     endif()
 endif()

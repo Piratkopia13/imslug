@@ -40,10 +40,11 @@ jobs:
         with:
           version: 5.0.1
           actions-cache-folder: emsdk-cache
-      - name: Fetch the CJK subset (embedded into the deployed demo)
+      - name: Fetch the test fonts (embedded into the deployed demo)
         run: |
           python3 -m pip install --quiet fonttools
           ./scripts/fetch_cjk_font.sh
+          ./scripts/fetch_emoji_font.sh
       - name: Build the web demo
         run: ./scripts/build_web.sh
       - name: Browser smoke (headless Chrome, software WebGPU adapter)
