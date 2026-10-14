@@ -12,6 +12,37 @@ repository skills:
 * `.opencode/skills/imslug-shaders/SKILL.md` — shader sources, SPIR-V
   generation, porting rules.
 
+## 0. Architecture at a glance
+
+imslug is three building blocks with one contract between them:
+
+1. **Core glyph pipeline** (`imslug.cpp`, `imslug_glyphgen.*`,
+   `imslug_packer.*`, `imslug_font.*`, `imslug_packed.*`,
+   `imslug_refraster.*`): turns TTF bytes or `.imslug` assets into
+   size-independent glyph records plus the shared curve/band pools, and
+   rasterizes the same data on the CPU (the arbiter for every golden test).
+   The ImGui-facing half — the draw-data pre-pass and the `ImFontLoader` — is
+   `imslug_imgui_adapter.*`; the rest of the core never sees a Vulkan type.
+2. **Standalone Vulkan renderer** (`backends/imslug_impl_vulkan.*`): an
+   ImGui-free core — pipeline creation (render-pass and dynamic-rendering
+   paths), dirty-row pool uploads, the frames-in-flight instance ring, and one
+   `ImSlugVulkanDraw` per text batch. It takes explicit Vulkan objects and is
+   reusable by any renderer, not just ImGui's.
+3. **ImGui adapter** (`backends/imslug_impl_vulkan.*`): maps
+   `ImGui_ImplVulkan_InitInfo` onto the renderer core, registers the callback
+   render interface, and records Slug draws into the stock backend's render
+   pass through the documented reset-render-state protocol.
+
+The offline generator (`tools/imslug_gen/`) is a thin CLI over block 1 — it
+consumes the same font handle, band construction and packer, which is why
+packed assets are bitwise identical to runtime generation (§10). The C API
+(`imslug_c.h` / `imslug_c.cpp`, `backends/imslug_c_vulkan.cpp`) is a strict
+mirror of blocks 1–3, not a fourth block.
+
+The exact data contract (texel layouts, band rules, handle encoding) is the
+`imslug-glyph-format` skill; §2 below records the defaults and the reasoning
+behind them.
+
 ## 1. Rendering model
 
 imslug renders text with the Slug algorithm (Eric Lengyel; see `NOTICE`): a
@@ -41,7 +72,8 @@ into one callback command plus one stock reset command. Consequences:
   Removing them ("vertex compaction") was evaluated and deliberately skipped —
   it cannot change GPU time and only rewrites transient buffers; the numbers
   are in §5.
-* **Instances:** one 92-byte record per glyph in a per-frame ring
+* **Instances:** one 96-byte record per glyph (instance format v2; a color
+  glyph contributes one per layer) in a per-frame ring
   (`Config::MaxInstancesPerFrame`, default 16384). Ring exhaustion drops the
   overflowing run (release-safe; debug asserts) and is counted in
   `Statistics::DroppedRuns`.
@@ -226,8 +258,16 @@ the R8 table for the specific font.
   skill): the adapter cannot discover a foreign render pass at callback time.
 * ImGui master (1.93 WIP) reworked the font loader; the pinned v1.92.9b is the
   supported version (the daily smoke job tracks drift).
-* OTF/CFF fonts are not parsed (TTF `glyf` only for now); unsupported fonts
-  stay on the stock atlas path.
+* OTF/CFF fonts are not supported in v0.1: the tested path is TrueType
+  (`glyf`) outlines. stb_truetype parses some CFF fonts and the
+  cubic→quadratic converter exists, but the CFF path is unverified (metrics
+  parity, bands, color tables) and outside the test matrix; fonts the parser
+  rejects make `ImSlug::AddFontFrom*` return `NULL` (Dear ImGui rolls the
+  source back), so they can be added through the stock atlas path instead.
+  Full CFF support is planned after v0.1 with no new dependency added now.
+* Only the Vulkan backend exists in v0.1. A second backend is planned after
+  v0.1 — GL3 first if/when needed — since the core, pre-pass and formats are
+  backend-independent.
 * Color fonts (§9) cover COLR v0/v1 with the documented paint fallbacks; a
   color glyph costs one instance per layer, so emoji-heavy frames are
   instance-hungry (the ring drops overflowing runs gracefully).
@@ -315,3 +355,42 @@ cleanly with a warning, and the example's scene 9 / the no-parser CI job
 demonstrate rendering entirely from baked data. Typical uses: shipping a font
 subset without the parser, reproducible builds, and startup-time savings
 (packed loading is a copy, not an extraction).
+
+## 11. Deviations from the reference
+
+imslug's shaders are ports of Eric Lengyel's reference implementation (see
+`shaders/reference/slug.hlsl`, which carries the verbatim reference and the
+full port-mapping table). The deliberate deviations, all reflected in the
+mapping table:
+
+* **Instance mode instead of five vertex streams.** The reference VS takes
+  `pos`/`tex`/`jac`/`bnd`/`col` per vertex; imslug writes one
+  `ImSlugGlyphInstance` record per glyph and generates the quad from
+  `gl_VertexIndex`, the same approach as the prior-art renderers. `SlugDilate`
+  is ported operation-for-operation (object space is screen pixels, Y down;
+  `pos.zw` is the unnormalized corner direction).
+* **The even-odd flag is bit 28 of the packed `bandMax` word** (bit 12 of its
+  high 16-bit half, which is the reference `tex.w` bit) — `ImSlugPackBandMaxWord`
+  keeps the reference shader's mask working unchanged.
+* **The `SLUG_EVENODD` compile switch is always on** (both fill rules are
+  compiled in; no weight boost, matching the CPU arbiter).
+* **The degenerate-linear guard** in `SolveHorizPoly`/`SolveVertPoly`:
+  `|b| >= 1/65536` before dividing (the Slughorn-adapted guard, shared with
+  `imslug_refraster.cpp`). The reference's unconditional `0.5/b` is inf/NaN when
+  a curve becomes exactly axis-parallel after fp16 pool quantization, which can
+  happen even though band construction excludes axis-parallel fp32 curves.
+* **Adaptive band counts** — `clamp(ceil(2*sqrt(curveCount)), 4, 32)` per axis
+  (§2) instead of the reference's uniform scheme; band layout, sorting and the
+  no-row-wrap rules follow the reference pixel shader.
+* **One global pool set** (curve + band, 4096 texels wide) shared by every
+  font, allocated monotonically with dirty-row tracking, instead of per-font
+  resources. Endpoint sharing between connected curves is not implemented.
+* **`texelFetch` instead of `Load`**, `R16G16_UINT` bands (the reference's two
+  u16 fields per texel), plus the `fill < 0.001` early-discard performance
+  guard.
+* **ImGui-side machinery with no reference counterpart:** the draw-data
+  pre-pass and callback protocol, fine-clip reconstruction, the rect-less
+  `ImFontLoader` with UV handles, the fallback path, the debug overlays, color
+  fonts (COLR v0/v1 with per-fragment paints), packed `.imslug` assets, and
+  the Y-down ortho MVP (the reference HLSL follows the D3D convention with a
+  Y flip in the projection).
