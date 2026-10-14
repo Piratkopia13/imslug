@@ -429,5 +429,6 @@ mapping table:
   pre-pass and callback protocol, fine-clip reconstruction, the rect-less
   `ImFontLoader` with UV handles, the fallback path, the debug overlays, color
   fonts (COLR v0/v1 with per-fragment paints), packed `.imslug` assets, and
-  the Y-down ortho MVP (the reference HLSL follows the D3D convention with a
-  Y flip in the projection).
+  the Y-down ortho MVP mapping ImGui *display* space (logical pixels, never the
+  framebuffer pixels of a hi-DPI target) to clip space (the reference HLSL
+  follows the D3D convention with a Y flip in the projection).

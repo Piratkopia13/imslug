@@ -11,7 +11,13 @@
 //     after a 1 px dilation (catches shifted/missing/wrongly-scaled glyphs);
 //   * anti-aliasing is perceptual: the mean |diff| and the tail of large
 //     differences stay within documented budgets (Slug solves coverage
-//     analytically, the atlas samples a rasterized bitmap).
+//     analytically, the atlas samples a rasterized bitmap);
+//   * the default scene also runs at framebuffer scales 2x and 3x
+//     (DisplayFramebufferScale > 1 with the logical display shrunk to match):
+//     ImGui lays out in logical pixels while the renderer expands to the
+//     framebuffer, so a projection built from framebuffer pixels instead of the
+//     display size draws 1/scale too small - and, clipped by the batch scissor,
+//     invisible on phones/retina displays.
 //
 // The default scene covers the acceptance surface: several sizes, tables with
 // narrow cells (CPU fine clip on the right), shrinking children (window clip), a
@@ -577,15 +583,19 @@ namespace
         out[at] = '\0';
     }
 
+    // The scene fills the ImGui display. The caller owns DisplaySize and
+    // DisplayFramebufferScale (RenderVariant): the render target is always
+    // kWidth x kHeight, so a framebuffer scale > 1 shrinks the *logical* display
+    // by the same factor - the retina/phone case where ImGui lays out in logical
+    // pixels and the renderer expands to the framebuffer.
     void BuildScene(int scene)
     {
         ImGuiIO& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2((float)kWidth, (float)kHeight);
         io.DeltaTime = 1.0f / 60.0f;
 
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2((float)kWidth, (float)kHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
         ImGui::Begin(SceneTitle(scene), nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
@@ -693,7 +703,7 @@ namespace
     const uint32_t kOverlayUnchanged = 0xFFFFFFFFu;
     bool RenderVariant(bool slugVariant, unsigned char* outPixels, const char* name, int scene,
                        uint32_t overlayFlags = kOverlayUnchanged, bool seedConfigBounds = false,
-                       uint32_t* outOverlayAfterInit = nullptr)
+                       uint32_t* outOverlayAfterInit = nullptr, float fbScale = 1.0f)
     {
         ImGui::CreateContext();
         // ImSlug::Init requires a live context (imslug.h); the module lives per
@@ -707,7 +717,10 @@ namespace
         }
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
-        io.DisplaySize = ImVec2((float)kWidth, (float)kHeight);
+        // The logical display shrinks with the framebuffer scale; the target and
+        // therefore the physical size of everything stay kWidth x kHeight.
+        io.DisplaySize = ImVec2((float)kWidth / fbScale, (float)kHeight / fbScale);
+        io.DisplayFramebufferScale = ImVec2(fbScale, fbScale);
         ImGui::StyleColorsDark();
         ImGui::GetStyle().FontScaleDpi = 1.0f;
 
@@ -1118,6 +1131,16 @@ int main(int argc, char** argv)
     }
 
     int failures = 0;
+    // Framebuffer scales: (1,1) is the plain layout case; 2 and 3 emulate the
+    // hi-DPI targets (retina/phones) where ImGui lays out in logical pixels and
+    // reports DisplayFramebufferScale > 1. Slug must place its instances in
+    // display space (the batch MVP maps DisplayPos..DisplayPos+DisplaySize);
+    // building the projection from the framebuffer size instead drew the text
+    // 1/scale too small, outside its own scissor rect - invisible text. The
+    // hi-DPI scales cover the placement path; stress and CJK stay at 1x to
+    // bound the runtime.
+    const float kFbScales[] = { 1.0f, 2.0f, 3.0f };
+    const int kFbScaleCount = (int)(sizeof(kFbScales) / sizeof(kFbScales[0]));
     for (int scene = 0; scene < kSceneCount; ++scene)
     {
         if (scene == 2)
@@ -1131,94 +1154,109 @@ int main(int argc, char** argv)
             }
             std::fclose(cjkFile);
         }
-        std::printf("  scene %d (%s):\n", scene, SceneTitle(scene));
-        if (!RenderVariant(/*slugVariant=*/true, slugPixels, "slug", scene))
+        const int scaleCount = (scene == 0) ? kFbScaleCount : 1;
+        for (int scaleIndex = 0; scaleIndex < scaleCount; ++scaleIndex)
         {
-            std::printf("imslug_tests_imgui_golden: FAIL (Slug variant, scene %d)\n", scene);
-            ++failures;
-            continue;
-        }
-        if (!RenderVariant(/*slugVariant=*/false, stockPixels, "atlas", scene))
-        {
-            std::printf("imslug_tests_imgui_golden: FAIL (atlas variant, scene %d)\n", scene);
-            ++failures;
-            continue;
-        }
-
-        {
-            // Whole-frame statistics.
-            double mean = 0.0;
-            int worst = 0;
-            int edgePixels = 0;
-            int structuralPixels = 0;
-            int inkPixels = 0;
-            for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+            const float fbScale = kFbScales[scaleIndex];
+            if (fbScale == 1.0f)
+                std::printf("  scene %d (%s):\n", scene, SceneTitle(scene));
+            else
+                std::printf("  scene %d (%s), framebuffer scale %.0fx (logical display %.0fx%.0f):\n", scene,
+                            SceneTitle(scene), fbScale, (float)kWidth / fbScale, (float)kHeight / fbScale);
+            if (!RenderVariant(/*slugVariant=*/true, slugPixels, "slug", scene, kOverlayUnchanged,
+                               /*seedConfigBounds=*/false, nullptr, fbScale))
             {
-                for (uint32_t channel = 0; channel < 3; ++channel)
-                {
-                    const double diff = ChannelDiff(slugPixels, stockPixels, i, channel);
-                    mean += diff;
-                    if ((int)diff > worst)
-                        worst = (int)diff;
-                }
-                const double diffSum = ChannelDiff(slugPixels, stockPixels, i, 0) +
-                                       ChannelDiff(slugPixels, stockPixels, i, 1) +
-                                       ChannelDiff(slugPixels, stockPixels, i, 2);
-                const double average = diffSum / 3.0;
-                // A pixel counts as ink when either variant inks it.
-                if (slugPixels[i * 4] + slugPixels[i * 4 + 1] + slugPixels[i * 4 + 2] > 60 ||
-                    stockPixels[i * 4] + stockPixels[i * 4 + 1] + stockPixels[i * 4 + 2] > 60)
-                {
-                    inkPixels++;
-                    if (average > kEdgeDiffThreshold)
-                        edgePixels++;
-                    if (average > kStructuralDiffThreshold)
-                        structuralPixels++;
-                }
+                std::printf("imslug_tests_imgui_golden: FAIL (Slug variant, scene %d, fb scale %.0f)\n", scene,
+                            fbScale);
+                ++failures;
+                continue;
             }
-            mean /= (double)kWidth * kHeight * 3.0;
-            const double inkFraction = (double)inkPixels / ((double)kWidth * kHeight);
-            const double meanBudget =
-                kMaxMeanDiff > kMaxMeanInkDiff * inkFraction ? kMaxMeanDiff : kMaxMeanInkDiff * inkFraction;
-            const double edgeInkFraction = inkPixels > 0 ? (double)edgePixels / (double)inkPixels : 0.0;
-            const double structuralInkFraction = inkPixels > 0 ? (double)structuralPixels / (double)inkPixels : 0.0;
-
-            unsigned char* maskA = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
-            unsigned char* maskB = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
-            int missA = 0, missB = 0;
-            if (maskA != nullptr && maskB != nullptr)
+            if (!RenderVariant(/*slugVariant=*/false, stockPixels, "atlas", scene, kOverlayUnchanged,
+                               /*seedConfigBounds=*/false, nullptr, fbScale))
             {
-                BuildInkMask(slugPixels, maskA);
-                BuildInkMask(stockPixels, maskB);
-                MasksAgree(maskA, maskB, &missA, &missB);
+                std::printf("imslug_tests_imgui_golden: FAIL (atlas variant, scene %d, fb scale %.0f)\n", scene,
+                            fbScale);
+                ++failures;
+                continue;
             }
-            std::free(maskA);
-            std::free(maskB);
 
-            std::printf("  Slug vs atlas: mean %.3f LSB (budget %.2f), worst %d LSB, ink %d px (%.2f%% of frame)\n",
-                        mean, meanBudget, worst, inkPixels, 100.0 * inkFraction);
-            std::printf("  ink pixels > %d LSB: %d (%.2f%% of ink), > %d LSB: %d (%.2f%% of ink)\n", kEdgeDiffThreshold,
-                        edgePixels, edgeInkFraction * 100.0, kStructuralDiffThreshold, structuralPixels,
-                        structuralInkFraction * 100.0);
-            std::printf("  layout: ink pixels without a match within 1 px: %d (slug->atlas) / %d (atlas->slug)\n",
-                        missA, missB);
+            {
+                // Whole-frame statistics.
+                double mean = 0.0;
+                int worst = 0;
+                int edgePixels = 0;
+                int structuralPixels = 0;
+                int inkPixels = 0;
+                for (uint32_t i = 0; i < kWidth * kHeight; ++i)
+                {
+                    for (uint32_t channel = 0; channel < 3; ++channel)
+                    {
+                        const double diff = ChannelDiff(slugPixels, stockPixels, i, channel);
+                        mean += diff;
+                        if ((int)diff > worst)
+                            worst = (int)diff;
+                    }
+                    const double diffSum = ChannelDiff(slugPixels, stockPixels, i, 0) +
+                                           ChannelDiff(slugPixels, stockPixels, i, 1) +
+                                           ChannelDiff(slugPixels, stockPixels, i, 2);
+                    const double average = diffSum / 3.0;
+                    // A pixel counts as ink when either variant inks it.
+                    if (slugPixels[i * 4] + slugPixels[i * 4 + 1] + slugPixels[i * 4 + 2] > 60 ||
+                        stockPixels[i * 4] + stockPixels[i * 4 + 1] + stockPixels[i * 4 + 2] > 60)
+                    {
+                        inkPixels++;
+                        if (average > kEdgeDiffThreshold)
+                            edgePixels++;
+                        if (average > kStructuralDiffThreshold)
+                            structuralPixels++;
+                    }
+                }
+                mean /= (double)kWidth * kHeight * 3.0;
+                const double inkFraction = (double)inkPixels / ((double)kWidth * kHeight);
+                const double meanBudget =
+                    kMaxMeanDiff > kMaxMeanInkDiff * inkFraction ? kMaxMeanDiff : kMaxMeanInkDiff * inkFraction;
+                const double edgeInkFraction = inkPixels > 0 ? (double)edgePixels / (double)inkPixels : 0.0;
+                const double structuralInkFraction = inkPixels > 0 ? (double)structuralPixels / (double)inkPixels : 0.0;
 
-            TEST_CHECKF(mean <= meanBudget, "mean |diff| %.3f > %.3f LSB", mean, meanBudget);
-            TEST_CHECKF(edgeInkFraction <= kMaxEdgeInkFraction, "%.3f%% of ink pixels differ by more than %d LSB",
-                        edgeInkFraction * 100.0, kEdgeDiffThreshold);
-            TEST_CHECKF(structuralInkFraction <= kMaxStructuralInkFraction,
-                        "%.3f%% of ink pixels differ by more than %d LSB", structuralInkFraction * 100.0,
-                        kStructuralDiffThreshold);
-            TEST_CHECK(missA == 0 && missB == 0);
-            TEST_CHECKF(inkPixels > 5000, "scene produced almost no ink (%d px)", inkPixels);
+                unsigned char* maskA = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+                unsigned char* maskB = (unsigned char*)std::malloc((size_t)kWidth * kHeight);
+                int missA = 0, missB = 0;
+                if (maskA != nullptr && maskB != nullptr)
+                {
+                    BuildInkMask(slugPixels, maskA);
+                    BuildInkMask(stockPixels, maskB);
+                    MasksAgree(maskA, maskB, &missA, &missB);
+                }
+                std::free(maskA);
+                std::free(maskB);
 
-            const char* dir = ".";
-            char path[512];
-            std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d_slug.ppm", dir, scene);
-            WritePpm(path, slugPixels);
-            std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d_atlas.ppm", dir, scene);
-            WritePpm(path, stockPixels);
-            std::printf("  frames: imgui_golden_s%d_slug.ppm / imgui_golden_s%d_atlas.ppm\n", scene, scene);
+                std::printf("  Slug vs atlas: mean %.3f LSB (budget %.2f), worst %d LSB, ink %d px (%.2f%% of frame)\n",
+                            mean, meanBudget, worst, inkPixels, 100.0 * inkFraction);
+                std::printf("  ink pixels > %d LSB: %d (%.2f%% of ink), > %d LSB: %d (%.2f%% of ink)\n",
+                            kEdgeDiffThreshold, edgePixels, edgeInkFraction * 100.0, kStructuralDiffThreshold,
+                            structuralPixels, structuralInkFraction * 100.0);
+                std::printf("  layout: ink pixels without a match within 1 px: %d (slug->atlas) / %d (atlas->slug)\n",
+                            missA, missB);
+
+                TEST_CHECKF(mean <= meanBudget, "mean |diff| %.3f > %.3f LSB", mean, meanBudget);
+                TEST_CHECKF(edgeInkFraction <= kMaxEdgeInkFraction, "%.3f%% of ink pixels differ by more than %d LSB",
+                            edgeInkFraction * 100.0, kEdgeDiffThreshold);
+                TEST_CHECKF(structuralInkFraction <= kMaxStructuralInkFraction,
+                            "%.3f%% of ink pixels differ by more than %d LSB", structuralInkFraction * 100.0,
+                            kStructuralDiffThreshold);
+                TEST_CHECK(missA == 0 && missB == 0);
+                TEST_CHECKF(inkPixels > 5000, "scene produced almost no ink (%d px)", inkPixels);
+
+                const char* dir = ".";
+                char path[512];
+                const char* scaleSuffix = fbScale == 1.0f ? "" : (fbScale == 2.0f ? "_fb2x" : "_fb3x");
+                std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d%s_slug.ppm", dir, scene, scaleSuffix);
+                WritePpm(path, slugPixels);
+                std::snprintf(path, sizeof(path), "%s/imgui_golden_s%d%s_atlas.ppm", dir, scene, scaleSuffix);
+                WritePpm(path, stockPixels);
+                std::printf("  frames: imgui_golden_s%d%s_slug.ppm / imgui_golden_s%d%s_atlas.ppm\n", scene,
+                            scaleSuffix, scene, scaleSuffix);
+            }
         }
     }
 

@@ -190,10 +190,12 @@ namespace ImSlug
         uint32_t FirstInstance = 0;  // slot-relative: indexes into GetInstanceData(FrameIndex)
         uint32_t InstanceCount = 0;
 
-        // 16 floats: the four rows of the object-space (screen pixels) -> clip
-        // MVP, same layout as the reference `slug_matrix` and ImGui's
-        // projection matrix (see ImSlugWGPUBuildOrthoMVP for WebGPU's
-        // Y-up clip space).
+        // 16 floats: the four rows of the object-space -> clip MVP, same layout
+        // as the reference `slug_matrix` and ImGui's projection matrix (see
+        // ImSlugWGPUBuildOrthoMVP for WebGPU's Y-up clip space). Object space is
+        // the instance's screen rect: ImGui *display* (logical) pixels, not
+        // framebuffer pixels - pass DisplaySize to the helper (ViewportWidth/
+        // Height below are physical pixels).
         const float* MVP = nullptr;
         float ViewportWidth = 0.0f;   // framebuffer pixels; must match the bound viewport
         float ViewportHeight = 0.0f;  // (SlugDilate's `dim`, in pixels)
@@ -305,10 +307,14 @@ namespace ImSlug
     // unlike the Vulkan helper - row 1 negates Y. The reference Slug demo's
     // `slug_matrix` plays the same role; its HLSL follows D3D's
     // Y-flip-then-NDC-flip convention, hence the different row signs there.
-    inline void ImSlugWGPUBuildOrthoMVP(float framebufferWidth, float framebufferHeight, float mvp[16])
+    // The adapter passes the ImGui *display* (logical) size, never the
+    // framebuffer size: the instances live in display space, and on hi-DPI
+    // targets (DisplayFramebufferScale > 1) a framebuffer-sized projection drew
+    // the text 1/scale too small - invisible under the batch scissor.
+    inline void ImSlugWGPUBuildOrthoMVP(float displayWidth, float displayHeight, float mvp[16])
     {
-        const float sx = 2.0f / framebufferWidth;
-        const float sy = -2.0f / framebufferHeight;
+        const float sx = 2.0f / displayWidth;
+        const float sy = -2.0f / displayHeight;
         mvp[0] = sx;
         mvp[1] = 0.0f;
         mvp[2] = 0.0f;

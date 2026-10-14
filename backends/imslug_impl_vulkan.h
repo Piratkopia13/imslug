@@ -23,7 +23,7 @@
 //   * dynamic viewport + scissor; blend mirrors stock imgui_impl_vulkan
 //     exactly (src alpha / one-minus-src-alpha color, one /
 //     one-minus-src-alpha alpha);
-//   * push constants: 4 MVP rows (screen pixels -> clip) + viewport size in
+//   * push constants: 4 MVP rows (display pixels -> clip) + viewport size in
 //     pixels (SlugDilate's `dim`).
 
 #pragma once
@@ -151,9 +151,11 @@ namespace ImSlug
         uint32_t FirstInstance = 0;  // slot-relative: indexes into GetInstanceData(FrameIndex)
         uint32_t InstanceCount = 0;
 
-        // 16 floats: the four rows of the object-space (screen pixels) -> clip
-        // MVP, same layout as the reference `slug_matrix` and ImGui's
-        // projection matrix.
+        // 16 floats: the four rows of the object-space -> clip MVP, same layout
+        // as the reference `slug_matrix` and ImGui's projection matrix. Object
+        // space is the instance's screen rect: ImGui *display* (logical) pixels,
+        // not framebuffer pixels - pass DisplaySize to ImSlugVulkanBuildOrthoMVP
+        // (FramebufferWidth/Height below are physical pixels).
         const float* MVP = nullptr;
         float ViewportWidth = 0.0f;   // framebuffer pixels; must match the bound viewport
         float ViewportHeight = 0.0f;  // (SlugDilate's `dim`, in pixels)
@@ -269,10 +271,14 @@ namespace ImSlug
     // row), so there is no Y negation here - unlike OpenGL. The reference Slug
     // demo's `slug_matrix` plays the same role; its HLSL follows D3D's
     // Y-flip-then-NDC-flip convention, hence the different row signs there.
-    inline void ImSlugVulkanBuildOrthoMVP(float framebufferWidth, float framebufferHeight, float mvp[16])
+    // The adapter passes the ImGui *display* (logical) size, never the
+    // framebuffer size: the instances live in display space, and on hi-DPI
+    // targets (DisplayFramebufferScale > 1) a framebuffer-sized projection drew
+    // the text 1/scale too small - invisible under the batch scissor.
+    inline void ImSlugVulkanBuildOrthoMVP(float displayWidth, float displayHeight, float mvp[16])
     {
-        const float sx = 2.0f / framebufferWidth;
-        const float sy = 2.0f / framebufferHeight;
+        const float sx = 2.0f / displayWidth;
+        const float sy = 2.0f / displayHeight;
         mvp[0] = sx;
         mvp[1] = 0.0f;
         mvp[2] = 0.0f;

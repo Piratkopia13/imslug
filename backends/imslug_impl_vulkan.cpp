@@ -1280,8 +1280,9 @@ namespace ImSlug
             // Per RenderDrawData call (callbacks run inside the stock backend's
             // render loop, which republishes CommandBuffer + framebuffer size).
             float DisplayPosX, DisplayPosY;
+            float DisplaySizeX, DisplaySizeY;  // ImGui layout space (logical px)
             float FramebufferScaleX, FramebufferScaleY;
-            uint32_t FramebufferWidth, FramebufferHeight;
+            uint32_t FramebufferWidth, FramebufferHeight;  // physical px (DisplaySize x FramebufferScale)
         };
 
         ImGuiVulkanState g_ImGuiVulkan;
@@ -1310,6 +1311,7 @@ namespace ImSlug
                 return;  // not inside ImGui_ImplVulkan_RenderDrawData
             if (g_ImGuiVulkan.FramebufferWidth == 0 || g_ImGuiVulkan.FramebufferHeight == 0)
                 return;
+            IMSLUG_ASSERT(g_ImGuiVulkan.DisplaySizeX > 0.0f && g_ImGuiVulkan.DisplaySizeY > 0.0f);
 
             // Clip rects arrive in ImGui display coordinates; convert and clamp
             // exactly like the stock backend does (vkCmdSetScissor rejects
@@ -1329,9 +1331,17 @@ namespace ImSlug
             if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
                 return;
 
+            // The instances (and the batch clip rects) are in ImGui display
+            // coordinates, so the projection must map the *display* extent to
+            // clip space - the same projection imgui_impl_vulkan builds from
+            // DisplayPos/DisplaySize. FramebufferWidth/Height (physical pixels)
+            // only size the viewport, clamp the scissor and feed the shader's
+            // dilation (push.ViewportWidth = render target size). Building this
+            // from the framebuffer size instead drew at 1/FramebufferScale size
+            // on hi-DPI targets (phones/retina), i.e. the text fell outside its
+            // own scissor rect and vanished.
             float mvp[16];
-            ImSlugVulkanBuildOrthoMVP((float)g_ImGuiVulkan.FramebufferWidth, (float)g_ImGuiVulkan.FramebufferHeight,
-                                      mvp);
+            ImSlugVulkanBuildOrthoMVP(g_ImGuiVulkan.DisplaySizeX, g_ImGuiVulkan.DisplaySizeY, mvp);
 
             ImSlugVulkanDrawInfo drawInfo = {};
             drawInfo.FrameIndex = batch->FrameIndex;
@@ -1477,6 +1487,8 @@ namespace ImSlug
         g_ImGuiVulkan.FramebufferHeight = (uint32_t)(drawData->DisplaySize.y * drawData->FramebufferScale.y);
         g_ImGuiVulkan.DisplayPosX = drawData->DisplayPos.x;
         g_ImGuiVulkan.DisplayPosY = drawData->DisplayPos.y;
+        g_ImGuiVulkan.DisplaySizeX = drawData->DisplaySize.x;
+        g_ImGuiVulkan.DisplaySizeY = drawData->DisplaySize.y;
         g_ImGuiVulkan.FramebufferScaleX = drawData->FramebufferScale.x;
         g_ImGuiVulkan.FramebufferScaleY = drawData->FramebufferScale.y;
 

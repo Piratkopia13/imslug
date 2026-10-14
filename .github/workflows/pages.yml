@@ -71,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: web-smoke
-          path: build-web/smoke.png
+          path: build-web/smoke*.png
           if-no-files-found: ignore
       - name: Configure Pages (GitHub Actions source)
         uses: actions/configure-pages@v6

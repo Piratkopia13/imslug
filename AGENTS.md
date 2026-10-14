@@ -114,9 +114,12 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   `scripts/web_smoke.sh` / `node scripts\web_smoke\smoke.mjs` serves that site
   and drives headless Chrome (software WebGPU adapter by default; waits for
   `window.__imslugReady` + a frame count, checks the screenshot for ink and the
-  console for errors; pinned deps install into `scripts/web_smoke/node_modules`
-  on first use). The shell is `example/web/main.cpp` over the shared app, the
-  page is `example/web/shell.html`, the deploy workflow is
+  console for errors; a second hi-DPI pass at DPR 3 toggles the text renderer
+  with `M` and requires the Slug and atlas frames to show the same ink, the
+  phone/retina regression guard; pinned deps install into
+  `scripts/web_smoke/node_modules` on first use). The shell is
+  `example/web/main.cpp` over the shared app, the page is
+  `example/web/shell.html`, the deploy workflow is
   `.github/workflows/pages.yml`.
 * `IMSLUG_TTF_PARSER` (configure option, default ON) builds the runtime TTF
   outline parser (stb_truetype). `-DIMSLUG_TTF_PARSER=OFF` builds the core
@@ -149,7 +152,9 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   the monochrome tests compare GPU output against the CPU reference
   rasterizer; the ImGui test (`imslug_imgui_golden`, both render paths) renders
   one ImGui scene with a Slug font and with the atlas font and compares them
-  (layout within 1 px, AA perceptual).
+  (layout within 1 px, AA perceptual) - the default scene also at framebuffer
+  scales 2x and 3x (`DisplayFramebufferScale > 1`, the phone/retina case where
+  the renderer expands a logical-pixel layout to the framebuffer).
 * If a workflow is missing a script, add one under `scripts/` (and a
   `.opencode/commands/` entry) instead of inventing ad-hoc commands.
 

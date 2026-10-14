@@ -61,7 +61,7 @@ bool ImSlugWGPUUploadInstances(uint32_t frameIndex, uint32_t instanceCount);
 struct ImSlugWGPUDrawInfo
 {
     uint32_t FrameIndex; uint32_t FirstInstance; uint32_t InstanceCount;  // FirstInstance slot-relative
-    const float* MVP;                                                     // 16 floats, screen px -> clip
+    const float* MVP;         // 16 floats, display px -> clip (DisplaySize, never the framebuffer size)
     float ViewportWidth, ViewportHeight;                                  // framebuffer px (SlugDilate's dim)
     uint32_t ScissorX, ScissorY, ScissorW, ScissorH;                      // caller owns viewport + scissor state
     uint32_t DebugFlags;                                                  // ImSlugWGPUDebugOverlay, 0 = off
@@ -76,10 +76,13 @@ enum ImSlugWGPUDebugOverlay
     ImSlugWGPUDebugOverlay_RefHeat = 1 << 2,      // band-walk cost heatmap
 };
 
-// Screen px (Y down) -> clip ortho, row-major. WebGPU clip space is Y UP, so -
+// Display px (Y down) -> clip ortho, row-major. WebGPU clip space is Y UP, so -
 // unlike the Vulkan helper - row 1 negates Y (mvp[5] = -2/H, mvp[7] = 1); the
-// same convention as imgui_impl_wgpu's projection matrix.
-inline void ImSlugWGPUBuildOrthoMVP(float framebufferWidth, float framebufferHeight, float mvp[16]);
+// same convention as imgui_impl_wgpu's projection matrix. Callers pass the ImGui
+// *display* (logical) size: instances are in display space, and a
+// framebuffer-sized projection (DisplayFramebufferScale > 1) draws the text
+// 1/scale too small and off its own scissor - invisible at DPI != 1.
+inline void ImSlugWGPUBuildOrthoMVP(float displayWidth, float displayHeight, float mvp[16]);
 ```
 
 Module-level singleton (like the ImGui backends): one device per process, the
@@ -203,18 +206,22 @@ pass** -> begin pass -> `ImSlug_ImplWGPU_RenderDrawData(draw_data, pass)`.
   applies pending ring growth and uploads the dirty pool rows. Exactly once per
   ImGui frame (a second call asserts in debug); `RenderDrawData` asserts when it
   never ran.
-* `RenderDrawData` stores DisplayPos/FramebufferScale + framebuffer size from
-  the draw data, runs `ImSlug::PreprocessDrawData` (text runs -> callback
-  commands), writes the frame's staged instances with one `queue.writeBuffer`,
-  then hands the data to `ImGui_ImplWGPU_RenderDrawData`. Non-text geometry
-  stays on the stock path.
+* `RenderDrawData` stores DisplayPos/DisplaySize/FramebufferScale + the
+  framebuffer size from the draw data, runs `ImSlug::PreprocessDrawData` (text
+  runs -> callback commands), writes the frame's staged instances with one
+  `queue.writeBuffer`, then hands the data to
+  `ImGui_ImplWGPU_RenderDrawData`. Non-text geometry stays on the stock path.
 * The batch callback reads `ImGui_ImplWGPU_RenderState` from
   `GetPlatformIO().Renderer_RenderState` (Device + RenderPassEncoder only; the
-  adapter tracks DisplayPos/FramebufferScale itself), sets its own pipeline,
-  bind group (dynamic offset), vertex buffer and scissor, and draws. The core
-  injects `DrawCallback_ResetRenderState` right after every Slug run; the stock
-  backend re-establishes ImGui's state via `ImGui_ImplWGPU_SetupRenderState` -
-  never skip it.
+  adapter tracks DisplayPos/DisplaySize/FramebufferScale itself), sets its own
+  pipeline, bind group (dynamic offset), vertex buffer and scissor, and draws.
+  The batch MVP maps **display space** (DisplaySize, the instances' space) to
+  clip - exactly like `imgui_impl_wgpu`'s projection - while
+  ViewportWidth/Height (pc.viewport, SlugDilate) stay the *framebuffer* size so
+  the dilation remains 1 physical pixel at any DPI. The core injects
+  `DrawCallback_ResetRenderState` right after every Slug run; the stock backend
+  re-establishes ImGui's state via `ImGui_ImplWGPU_SetupRenderState` - never
+  skip it.
 * Scissor: batch clip rects arrive in ImGui display coordinates; convert with
   DisplayPos/FramebufferScale and clamp to the framebuffer exactly like the
   stock backend (the pass encoder rejects off-bounds rects).
@@ -273,11 +280,20 @@ pass** -> begin pass -> `ImSlug_ImplWGPU_RenderDrawData(draw_data, pass)`.
   other scripts (`IMSLUG_BUILD_DIR`, `IMSLUG_BUILD_TYPE`, `IMSLUG_CMAKE`,
   `IMSLUG_RECONFIGURE`, `IMSLUG_CMAKE_DEFINES`, plus `IMSLUG_NATIVE_BUILD_DIR`).
 * `scripts/web_smoke.*`: Node >= 22, puppeteer-core pinned (25.13.0), Chrome;
-  serves the site and waits for >= 60 frames + ready, checks `__imslugError`
-  empty, console/page errors, and an ink fraction >= 0.002 in a screenshot;
-  writes `build-web/smoke.png`; retries the whole run
-  (`IMSLUG_SMOKE_RETRIES`) and prints collected console/page errors per failed
-  attempt. Adapters: `swiftshader` (default; `--use-webgpu-adapter=swiftshader`
+  serves the site and runs two passes by default: the primary pass
+  (`IMSLUG_SMOKE_DPR`, default 1) waits for `window.__imslugReady` + >= 60
+  frames, checks `__imslugError` empty, the console/page errors and an ink
+  fraction >= 0.002 in a screenshot (`build-web/smoke.png`), and the hi-DPI
+  pass (800x500 @ DPR 3, `IMSLUG_SMOKE_HIDPI=0` disables it) additionally
+  presses the shared app's `M` text-renderer toggle and requires the Slug and
+  atlas frames to show the same *bright* ink (masks dilated by 1 px): Slug ink
+  >= 50% of atlas ink, <= 25% of the combined ink without a nearby counterpart
+  and <= 70% differing in luma. The `M`-key swap in Slug mode is what catches
+  text drawn in the wrong coordinate space (the framebuffer-scale bug) at phone
+  DPR even though the canvas is far from blank. Artifacts:
+  `smoke.png`, `smoke-hidpi.png`, `smoke-hidpi-atlas.png`. Retries the whole
+  run (`IMSLUG_SMOKE_RETRIES`) and prints collected console/page errors (plus
+  the analyzer stats) per failed attempt. Adapters: `swiftshader` (default; `--use-webgpu-adapter=swiftshader`
   - note `force_swiftshader` is *not* a valid value and silently falls back to
   the default), `native` (default adapter), `lavapipe` (software Dawn over Mesa
   lavapipe: `--enable-features=Vulkan --disable-vulkan-surface`, headed Chrome,
@@ -310,6 +326,14 @@ pass** -> begin pass -> `ImSlug_ImplWGPU_RenderDrawData(draw_data, pass)`.
   `#ifndef __EMSCRIPTEN__`; the web demo uses the embedded fonts (packed asset
   for Slug, TTF for ImGui's loader, plus the generated CJK/emoji subset headers
   when the build embedded them).
+* **Slug instances are in ImGui display space - build the batch MVP from
+  `DisplaySize`, never from the framebuffer size.** `DisplayFramebufferScale`
+  is > 1 on phones/retina; a framebuffer-sized projection draws the text 1/scale
+  too small, and the batch's own scissor rect (converted to physical pixels)
+  clips it away, so the text simply vanishes. Only
+  `ViewportWidth/Height`/`pc.viewport` (SlugDilate) are framebuffer pixels. The
+  bug shipped once (web demo invisible text on a phone) - the hi-DPI smoke pass
+  and the ImGui golden's 2x/3x framebuffer scales are the regression guards.
 * **`navigator.gpu` is undefined on `about:blank`** in headless Chrome - probe
   capabilities on a real http(s) origin (the smoke server), not an empty page.
 * The generated WGSL header embeds **NUL-terminated** string arrays

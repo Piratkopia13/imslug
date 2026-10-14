@@ -72,6 +72,21 @@ All notable changes to imslug are documented in this file. The format follows
 
 ### Fixed
 
+- **Slug text disappeared on high-DPI targets (phones, retina).** Both ImGui
+  adapters built the batch ortho projection from the *framebuffer* size, but the
+  instances live in ImGui *display* (logical) space: with
+  `ImDrawData::FramebufferScale != 1` every glyph was drawn `1/scale` too small
+  and — clipped away by the batch's own scissor rect — invisible. That is what
+  the deployed web demo did on a phone (the canvas hid no Slug text at all;
+  ImGui's atlas text, which scales through its own projection, kept working).
+  The MVP now maps `DisplayPos`..`DisplayPos + DisplaySize` like the stock
+  backends (`imgui_impl_vulkan`/`imgui_impl_wgpu`); the push-constant/uniform
+  `viewport` stays the framebuffer size, so the 1 px dilation remains 1
+  *physical* pixel at any DPI. Regression tests: `imslug_tests_imgui_golden`
+  renders the default scene at framebuffer scales 2x/3x and compares the
+  Slug/atlas ink masks, and the browser smoke gained a hi-DPI pass (DPR 3) that
+  presses the `M` text-renderer toggle and requires the Slug and atlas frames to
+  show the same ink.
 - **Instance-ring overflow is no longer silent or permanent.** A frame that
   exceeds the per-frame instance ring now prints a one-time stderr warning
   (observed demand vs capacity plus the knob that changes it) and, with the

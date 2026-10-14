@@ -56,7 +56,9 @@ struct ImSlugVulkanDrawInfo
     VkRenderPass RenderPass; uint32_t Subpass; // VK_NULL_HANDLE => dynamic rendering
     uint32_t FirstInstance;                    // slot-relative (indexes GetInstanceData(FrameIndex))
     uint32_t InstanceCount;                    // clamped to the remaining slot capacity
-    const float* MVP;                          // 16 floats, screen px -> clip, row-major
+    const float* MVP;                          // 16 floats, display px -> clip, row-major
+                                               // (DisplaySize, never the framebuffer size;
+                                               // see ImSlugVulkanBuildOrthoMVP)
     float ViewportWidth, ViewportHeight;       // framebuffer px (SlugDilate's dim)
     VkRect2D Scissor;                          // set by Draw (dynamic state)
     uint32_t DebugFlags;                       // debug overlay (ImSlugVulkanDebugOverlay), 0 = off
@@ -75,9 +77,10 @@ enum ImSlugVulkanDebugOverlay
     ImSlugVulkanDebugOverlay_RefHeat = 1 << 2,      // band-walk cost heatmap
 };
 
-// Shared helper: screen-pixels (Y down) -> clip ortho, row-major. No Y negation
-// (Vulkan NDC y points down); see the imslug-shaders skill.
-inline void ImSlugVulkanBuildOrthoMVP(float width, float height, float mvp[16]);
+// Shared helper: display-pixels (Y down) -> clip ortho, row-major. No Y negation
+// (Vulkan NDC y points down); callers pass DisplaySize (instances are in ImGui
+// display space), never the framebuffer size. See the imslug-shaders skill.
+inline void ImSlugVulkanBuildOrthoMVP(float displayWidth, float displayHeight, float mvp[16]);
 ```
 
 Module-level singleton (like the ImGui backends): one device per process, all
@@ -374,7 +377,10 @@ pre-pass before `UploadPools` also targets the previous ring slot.
    `ImGui_ImplVulkan_RenderDrawData`. One batch = one `ImSlugVulkanDraw` with the
    frame index, the main render pass (`VK_NULL_HANDLE` under dynamic rendering),
    the batch's slot-relative `FirstInstance`/`InstanceCount`, a Y-down ortho MVP
-   for the framebuffer, the framebuffer size and the batch scissor.
+   from the ImGui **display** size (logical px - the instances' space; building
+   it from the framebuffer size draws 1/scale too small on hi-DPI targets and
+   the scissor clips it away), the framebuffer size (SlugDilate's `dim`) and the
+   batch scissor.
 6. Instances live in the core's instance ring: the adapter's
    `ReserveInstances` forwards to `ImSlugVulkanReserveInstances` (the core owns
    the per-frame cursor, the growth policy and the one-time overflow warning);

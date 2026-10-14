@@ -1394,8 +1394,9 @@ namespace ImSlug
             // Per RenderDrawData call (callbacks run inside the stock backend's
             // render loop, which republishes the pass encoder).
             float DisplayPosX, DisplayPosY;
+            float DisplaySizeX, DisplaySizeY;  // ImGui layout space (logical px)
             float FramebufferScaleX, FramebufferScaleY;
-            uint32_t FramebufferWidth, FramebufferHeight;
+            uint32_t FramebufferWidth, FramebufferHeight;  // physical px (DisplaySize x FramebufferScale)
         };
 
         ImGuiWGPUState g_ImGuiWGPU;
@@ -1431,6 +1432,7 @@ namespace ImSlug
                 return;  // not inside ImGui_ImplWGPU_RenderDrawData
             if (g_ImGuiWGPU.FramebufferWidth == 0 || g_ImGuiWGPU.FramebufferHeight == 0)
                 return;
+            IMSLUG_ASSERT(g_ImGuiWGPU.DisplaySizeX > 0.0f && g_ImGuiWGPU.DisplaySizeY > 0.0f);
 
             // Clip rects arrive in ImGui display coordinates; convert and clamp
             // exactly like the stock backend does (the pass encoder rejects
@@ -1450,8 +1452,17 @@ namespace ImSlug
             if (clipMaxX <= clipMinX || clipMaxY <= clipMinY)
                 return;
 
+            // The instances (and the batch clip rects) are in ImGui display
+            // coordinates, so the projection must map the *display* extent to
+            // clip space - the same projection imgui_impl_wgpu builds from
+            // DisplayPos/DisplaySize. FramebufferWidth/Height (physical pixels)
+            // only size the viewport, clamp the scissor and feed the shader's
+            // dilation (pc.viewport = render target size). Building this from the
+            // framebuffer size instead drew at 1/FramebufferScale size on
+            // hi-DPI targets (phones/retina), i.e. the text fell outside its own
+            // scissor rect and vanished.
             float mvp[16];
-            ImSlugWGPUBuildOrthoMVP((float)g_ImGuiWGPU.FramebufferWidth, (float)g_ImGuiWGPU.FramebufferHeight, mvp);
+            ImSlugWGPUBuildOrthoMVP(g_ImGuiWGPU.DisplaySizeX, g_ImGuiWGPU.DisplaySizeY, mvp);
 
             ImSlugWGPUDrawInfo drawInfo = {};
             drawInfo.FrameIndex = batch->FrameIndex;
@@ -1569,6 +1580,8 @@ namespace ImSlug
         g_ImGuiWGPU.FramebufferHeight = (uint32_t)(drawData->DisplaySize.y * drawData->FramebufferScale.y);
         g_ImGuiWGPU.DisplayPosX = drawData->DisplayPos.x;
         g_ImGuiWGPU.DisplayPosY = drawData->DisplayPos.y;
+        g_ImGuiWGPU.DisplaySizeX = drawData->DisplaySize.x;
+        g_ImGuiWGPU.DisplaySizeY = drawData->DisplaySize.y;
         g_ImGuiWGPU.FramebufferScaleX = drawData->FramebufferScale.x;
         g_ImGuiWGPU.FramebufferScaleY = drawData->FramebufferScale.y;
 
