@@ -8,6 +8,7 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 | Path | What it is |
 |---|---|
 | `imslug.h` / `imslug.cpp` | Public API + core. Header must stay C++11-compatible and STL-free. |
+| `imslug_c.h` / `imslug_c.cpp` | C API (M6): `extern "C"` mirror of the public API, C11-clean; the Vulkan C mirror is `backends/imslug_c_vulkan.cpp`. Binding guide: `docs/BINDINGS.md`. |
 | `imslug_internal.h` | Impl-only frozen core API: pools, glyph records, font/metrics/raster declarations (M1; umbrella over the module headers). |
 | `imslug_glyphgen.{h,cpp}` | stbtt outline extraction → em-space quadratics, band construction, font handle + lazy glyph cache + ImGui-parity metrics (M1). |
 | `imslug_packer.{h,cpp}` | Shared curve/band pools: allocation, row rules, growth, dirty rows, capacity guards (M1). |
@@ -29,10 +30,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 * Work queue/status: `.agent-docs/PLAN.md` §7. Decisions log: §11.
 * Your brief: the **lowest-numbered** file in `.agent-docs/milestones/` whose
   `Status:` line is not `done` (the initial commit shipped M0 = repo bootstrap;
-  M1 (glyph pipeline), M2 (standalone Vulkan renderer), M3 (ImGui integration)
-  and M4 (robustness/perf/polish) are done, so M5 = color fonts is next), unless
-  the owner assigned you a specific milestone. Read **only** that brief — never
-  the whole plan.
+  M1 (glyph pipeline), M2 (standalone Vulkan renderer), M3 (ImGui integration),
+  M4 (robustness/perf/polish) and M5 (color fonts) are done, so M6 = C API +
+  Rust bindings is next), unless the owner assigned you a specific milestone.
+  Read **only** that brief — never the whole plan.
 * `.agent-docs/` is gitignored transient material: never `git add -f` it, never
   write scratch markdown anywhere else (see Docs policy).
 
@@ -69,6 +70,12 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   debug-overlay toggles (glyph bounds / band grid / ref heat, `--overlay` on the
   CLI) and `--screenshot <file.ppm> [scene] [dpi_scale]` for deterministic
   offscreen captures (scene numbers are 1-based like the keys).
+* `IMSLUG_BUILD_C_EXAMPLE` (configure option, default ON) builds the pure-C11
+  example (`build/imslug_example_c.exe`): the default run is a CPU smoke
+  (context, init, add font, one headless frame, shutdown; ctest
+  `imslug_c_example`), `--vulkan` renders one offscreen frame through the C API
+  (ctest `imslug_c_example_vulkan`, skips with exit 77 without a device).
+  `IMSLUG_BUILD_C_EXAMPLE=OFF` skips it (e.g. in embedded/CI CPU-only builds).
 * Fetched, gitignored test assets (optional; suites skip when absent):
   `scripts/fetch_cjk_font.*` (Noto Sans SC subset, M4) and
   `scripts/fetch_emoji_font.*` (Noto Color Emoji, COLR v1, M5). Provenance and

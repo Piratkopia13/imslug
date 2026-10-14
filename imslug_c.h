@@ -11,6 +11,9 @@
 // vulkan.h> first, or define IMSLUG_C_VULKAN before this header to have it
 // included here).
 //
+// Binding authors: docs/BINDINGS.md (repo root) has the conventions, the
+// ownership/threading rules and the binding status (cimgui/Rust).
+//
 // ---------------------------------------------------------------------------
 // Integration shape (identical to the C++ API; see imslug.h for the rationale)
 // ---------------------------------------------------------------------------

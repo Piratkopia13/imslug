@@ -29,6 +29,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_MSC_VER) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
+
 #ifdef IMSLUG_C_EXAMPLE_VULKAN
 #include <vulkan/vulkan.h>
 #endif
@@ -756,6 +760,12 @@ static int RunVulkan(const char* font_path, float font_size, const char* screens
 int main(int argc, char** argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);  // keep stdout/stderr ordered in CI logs
+#if defined(_MSC_VER) && defined(_DEBUG)
+    // Debug builds: MSVC's assert() pops a modal dialog that blocks headless
+    // runs; report to stderr instead (same as tests/test_util.h).
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
 
     const char* font_path = IMSLUG_C_EXAMPLE_FONT;
     float font_size = 18.0f;

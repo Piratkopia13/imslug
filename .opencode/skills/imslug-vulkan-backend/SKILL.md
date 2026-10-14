@@ -289,6 +289,12 @@ renderer with `ImGuiBackendFlags_RendererHasTextures`):
 
 ```c
 bool ImSlug_ImplVulkan_Init(const ImGui_ImplVulkan_InitInfo*);  // maps PipelineInfoMain
+// M6 additive: same as Init, but takes the Vulkan objects directly
+// (ImSlugVulkanInitInfo) - the C API's init path and the hook for integrations
+// that never hold an ImGui_ImplVulkan_InitInfo (custom/non-C++ renderers).
+// Precedence: a nonzero ImSlugVulkanInitInfo::MaxInstancesPerFrame wins over
+// Config::MaxInstancesPerFrame; 0 falls back to the config value.
+bool ImSlug_ImplVulkan_InitFromVulkanInfo(const ImSlugVulkanInitInfo*);
 void ImSlug_ImplVulkan_Shutdown();
 void ImSlug_ImplVulkan_UploadPools(VkCommandBuffer cmd);        // per frame, outside the render pass
 void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline mainPipeline = VK_NULL_HANDLE);
@@ -298,6 +304,14 @@ void ImSlug_ImplVulkan_RenderDrawData(ImDrawData*, VkCommandBuffer, VkPipeline m
 void     ImSlug_ImplVulkan_SetDebugOverlay(uint32_t overlayFlags);  // ImSlugVulkanDebugOverlay
 uint32_t ImSlug_ImplVulkan_GetDebugOverlay();
 ```
+
+**M6 C API**: `imslug_c.h` mirrors the whole ImGui-facing surface with C
+symbols (`imslug_impl_vulkan_init(imslug_vulkan_init_info)` etc.; the C Vulkan
+mirror lives in `backends/imslug_c_vulkan.cpp`, invariant 7). `imslug_config` /
+`imslug_vulkan_init_info` are fixed-size PODs with `int` booleans; the Vulkan
+declarations only appear when `vulkan.h` is visible (or `IMSLUG_C_VULKAN` is
+defined). ABI pinned by `tests/test_c_abi.c` (C11, strict warnings) +
+`tests/test_c_api.cpp`. Binding guide: `docs/BINDINGS.md`.
 
 Order contract: `UploadPools` -> `RenderDrawData`. A manual
 `ImSlug::PreprocessDrawData` call is *not* needed (RenderDrawData runs it) and

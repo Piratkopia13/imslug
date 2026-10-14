@@ -10,10 +10,12 @@ Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
 a fallback path that keeps ordinary (non-registered) fonts working through
 ImGui's texture pipeline.
 
-> **Status: pre-0.1 — not usable yet.** The repository is at milestone M5
-> (color fonts: COLR v0/v1 layers, gradients, emoji; see `docs/DESIGN.md`
-> section 9). The API, data formats and handle encoding are still moving;
-> M6 freezes the public API for bindings.
+> **Status: pre-0.1 — not usable yet.** The repository is at milestone M6 (C API
+> + Rust bindings; see `docs/BINDINGS.md`). M5 delivered the full rendering
+> feature set (color fonts: COLR v0/v1 layers, gradients, emoji; see
+> `docs/DESIGN.md` section 9); M6 froze the public API for bindings — the C
+> API (`imslug_c.h`) is a mirror with additions only. M7 (offline generator +
+> interop) is next.
 
 ## Requirements
 
@@ -68,6 +70,12 @@ a runtime `style.FontScaleDpi` slider, a 5k-glyph stress scene, the fetched
 CJK subset and the color-emoji scene (with a zoom slider for the gradients),
 plus debug overlay toggles (F1/F2/F3) and
 `--screenshot <file.ppm> [scene] [dpi_scale]` for offscreen captures.
+
+C and Rust consumers use the `extern "C"` mirror (`imslug_c.h`) instead of the
+C++ API; `example/c/` is a pure-C11 example (CPU smoke, plus a headless Vulkan
+frame with `--vulkan`) and `imslug-rs` is a sibling wrapper crate. Conventions,
+ownership rules and the binding status live in
+[`docs/BINDINGS.md`](docs/BINDINGS.md).
 
 Design notes, the measured performance numbers and the debug-overlay /
 small-size policy live in [`docs/DESIGN.md`](docs/DESIGN.md); the benchmark

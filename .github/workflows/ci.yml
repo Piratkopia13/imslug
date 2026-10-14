@@ -4,6 +4,10 @@
 # build -> test -> check_docs on Windows (MSVC) and Linux (GCC/Clang).
 # M2 adds: the shader-staleness check (every job) and golden-image tests on
 # Linux with lavapipe (a software Vulkan device, so no GPU is required).
+# M6 adds: the C API ABI gate (C11 TU, strict warnings) and the C example
+# (CPU smoke in every job; the headless Vulkan frame in the lavapipe job -
+# the Windows runner image has no Vulkan SDK, so the Vulkan part of the C
+# example is only compile-tested on Linux).
 
 name: CI
 
@@ -86,6 +90,8 @@ jobs:
         run: ./scripts/build.sh
       - name: Golden images (M2/M3 scenes + M5 emoji, both render paths)
         run: ./scripts/golden.sh
+      - name: C example - headless Vulkan frame through the C API (M6)
+        run: ./build/imslug_example_c --vulkan --screenshot build/golden/c_example.ppm
 
   # M4: the benchmark harness report is a build artifact (numbers are
   # informational; no budgets are enforced in CI - runner hardware is too
