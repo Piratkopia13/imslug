@@ -1397,7 +1397,7 @@ static void TestColorFonts()
     //    the synthesized layer-union box; hmtx advances are untouched). Compare
     //    against an independent extraction of the same font.
     const int glyphIndex = ImSlugGetGlyphIndex(groundTruth, 0x2764u);
-    ImSlugGlyphMetrics metrics;
+    ImSlugGlyphMetrics metrics = {};
     TEST_CHECK(glyphIndex > 0 && ImSlugGetGlyphMetricsByIndex(groundTruth, glyphIndex, size, &metrics));
     TEST_CHECKF(face->AdvanceX == metrics.AdvanceX, "advance %.4f vs %.4f", face->AdvanceX, metrics.AdvanceX);
     TEST_CHECKF(face->X1 > face->X0 && face->Y1 > face->Y0, "box (%.2f %.2f %.2f %.2f)", face->X0, face->Y0, face->X1,
