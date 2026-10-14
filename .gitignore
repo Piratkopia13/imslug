@@ -13,6 +13,10 @@ cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
 
+# Node dependencies of the browser smoke (scripts/web_smoke); kept untracked so
+# check_docs never scans package READMEs.
+scripts/web_smoke/node_modules/
+
 # IDE / editors
 .vs/
 .vscode/

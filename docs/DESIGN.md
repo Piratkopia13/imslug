@@ -147,7 +147,7 @@ extent on an axis (or a collapse on both axes) drops the glyph. Fuzz at
 ## 4. Performance
 
 Measured 2026-10-14, RTX 5080 (Vulkan 1.4.341), 1024×640 headless offscreen,
-`scripts/bench.*`; host Ryzen 9 7950X3D, Release. Numbers are machine-specific
+`scripts/bench.*`; host Ryzen 9 9950X3D, Release. Numbers are machine-specific
 and are meant to be re-measured, not extrapolated.
 
 ### CPU pre-pass (`imslug_tests_bench --cpu`)

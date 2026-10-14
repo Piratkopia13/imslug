@@ -450,7 +450,7 @@ Keep the smoke job informational (`continue-on-error`): a red run means
   one callback + one reset per contiguous text run (2 commands for a 5k-glyph
   frame).
 * CPU pre-pass measured 0.305 ms @ 5k glyphs (4421 instances) and 1.260 ms @
-  20k on a Ryzen 9 7950X3D (target <= ~0.5 ms @ 5k: met); first-use glyph build
+  20k on a Ryzen 9 9950X3D (target <= ~0.5 ms @ 5k: met); first-use glyph build
   <= 6.8 us/glyph (target <= 50 us).
 * GPU is fragment-heavier than the atlas path by design: 2.3-2.8x the atlas
   fragment cost for pure text (RTX 5080, 1024x640), bounded to +0.011 ms in a
