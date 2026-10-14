@@ -16,6 +16,13 @@
 #   * the clean-project FetchContent job (a throwaway CMake project consumes
 #     this repository as a dependency, builds the example + a minimal consumer
 #     and runs them).
+#
+# Push and pull request runs execute the full matrix (except the benchmark
+# report, which is main-push / dispatch only). The scheduled run exists solely
+# for the Dear ImGui master drift check and executes only that job: a cron
+# tick does not change anything in this repository, so re-running the push-CI
+# matrix on a schedule would test a state that push CI already covered - and
+# only spend runner minutes.
 
 name: CI
 
@@ -24,20 +31,31 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Daily upstream drift check - see imgui-master-smoke below. Only that job
+  # runs on `schedule`; every other job guards against the event.
   schedule:
-    - cron: '17 4 * * *'  # daily ImGui-master smoke (drift check)
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer run for the same ref supersedes an older one instead of queueing.
+# `event_name` in the group keeps the scheduled drift check from cancelling
+# (or being cancelled by) a push CI run on main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     name: Windows (MSVC)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 45
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Build
         run: scripts/build.bat
       - name: Test
@@ -49,10 +67,12 @@ jobs:
 
   linux:
     name: Linux (GCC/Clang)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: glslangValidator (shader freshness check)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -75,10 +95,12 @@ jobs:
 
   linux-golden:
     name: Linux golden images (lavapipe)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Vulkan (loader, tools, lavapipe software device)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -110,10 +132,12 @@ jobs:
   # its --help path.
   no-parser:
     name: No-parser build (packed .imslug assets only)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Vulkan (loader + lavapipe for the packed goldens)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -142,10 +166,12 @@ jobs:
   # fetched and built by imslug. The example's --help path needs no GPU.
   fetchcontent-smoke:
     name: Clean-project FetchContent build (Linux)
+    if: github.event_name != 'schedule'
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Vulkan + GLFW build deps
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -159,13 +185,17 @@ jobs:
 
   # The benchmark harness report is a build artifact (numbers are
   # informational; no budgets are enforced in CI - runner hardware is too
-  # variable and the report records the machine it ran on).
+  # variable and the report records the machine it ran on). Main pushes and
+  # manual dispatches only: a per-PR report would add a full extra build to
+  # every push for numbers that gate nothing.
   linux-bench:
     name: Linux benchmark report (informational)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Fetch the CJK test font (the CJK bench row is skipped when absent)
         run: |
           python3 -m pip install --quiet fonttools
@@ -173,23 +203,25 @@ jobs:
       - name: Build + run the CPU benchmark
         run: ./scripts/bench.sh --cpu
       - name: Upload the benchmark report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-report
           path: build/bench/bench_report.md
 
   # Optional, informational: does the internal-API layer still work against
-  # Dear ImGui master? Daily (see `on.schedule`) and on demand; a failure here
-  # means upstream moved something imslug relies on - pin or adapt, but do
-  # not block the release train on it (the pinned v1.92.9b jobs are the gate).
+  # Dear ImGui master? Daily (the only job a scheduled run executes; every
+  # other job skips `schedule`) and on demand; a failure here means upstream
+  # moved something imslug relies on - pin or adapt, but do not block the
+  # release train on it (the pinned v1.92.9b jobs are the gate).
   imgui-master-smoke:
     name: Dear ImGui master smoke (informational)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     continue-on-error: true
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Vulkan (loader + lavapipe for the golden tests)
         env:
           DEBIAN_FRONTEND: noninteractive
