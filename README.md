@@ -15,14 +15,12 @@ Emscripten example; see [`docs/INTEGRATION.md`](docs/INTEGRATION.md) §13), and 
 embedded environments (GLSL 150 / 330 core / 300 es; see
 [`docs/INTEGRATION.md`](docs/INTEGRATION.md) §14).
 
-> **Status: v0.1.0 — release prepared; the `v0.1.0` tag is pending the repo
-> owner.** The feature set is complete: the Slug glyph pipeline and
-> Vulkan renderer, the ImGui integration (mixed fonts, clipping, runtime DPI),
-> color fonts (COLR v0/v1), the C API (`imslug_c.h`) and the Rust wrapper
-> (`imslug-rs`), and the offline generator + `.imslug` container v1 — including
-> a build without any TrueType parser. `Unreleased` adds the WebGPU backend for
-> the browser (WGSL shaders, Emscripten example, GitHub Pages deployment) and
-> the OpenGL 3.2+ / OpenGL ES 3.0+ backend. See
+> **Status: v0.1.0 — released.** The feature set is complete: the Slug glyph
+> pipeline and three GPU backends (Vulkan, WebGPU for the browser, and OpenGL
+> 3.2+ / OpenGL ES 3.0+), Dear ImGui integration (mixed fonts, clipping, runtime
+> DPI, prominent renderer toggle bar), color fonts (COLR v0/v1), the C API
+> (`imslug_c.h`) and the Rust wrapper (`imslug-rs`), and the offline generator +
+> `.imslug` container v1 — including a build without any TrueType parser. See
 > [`CHANGELOG.md`](CHANGELOG.md) for the release history and
 > [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the drop-in guide.
 >

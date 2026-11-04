@@ -44,11 +44,12 @@ emoji subset is COLR v1 only, ~12 KB, so the full 25 MB font is never shipped).
 See `docs/INTEGRATION.md` §13 and `scripts/build_web.*`.
 
 **How mature is it?**
-v0.1.0 is the first release: feature-complete (glyph pipeline, Vulkan renderer,
-ImGui integration, color fonts, C API, offline assets), with unit, fuzz,
-golden-image and ImGui-level test suites and a two-platform CI matrix. Treat
-0.x semantics as the contract: additions are source- and ABI-compatible, and
-breaking changes bump the minor version.
+v0.1.0 is the first release: feature-complete (glyph pipeline, three GPU
+backends: Vulkan, WebGPU, and OpenGL 3.2+ / OpenGL ES 3.0+, ImGui integration,
+color fonts, C API, offline assets), with unit, fuzz, golden-image and
+ImGui-level test suites and a two-platform CI matrix. Treat 0.x semantics as the
+contract: additions are source- and ABI-compatible, and breaking changes bump the
+minor version.
 
 ## Fonts and rendering
 
@@ -166,7 +167,6 @@ issues are much easier to triage with a `--screenshot` PPM from the example app
 and the validation-layer output.
 
 **What is not in v0.1?**
-OTF/CFF (above), a desktop GL backend, multi-viewport beyond compatible render
-passes, packed color assets, and the `imgui-rs-vulkan-renderer` integration
-(prerequisites documented in `docs/BINDINGS.md`). `DESIGN.md` §8 is the
-authoritative list.
+OTF/CFF (above), multi-viewport beyond compatible render passes, packed color
+assets, and the `imgui-rs-vulkan-renderer` integration (prerequisites documented
+in `docs/BINDINGS.md`). `DESIGN.md` §8 is the authoritative list.

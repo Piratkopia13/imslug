@@ -30,16 +30,13 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 
 ## Status
 
-* v0.1.0 release prepared: version macros final, `CHANGELOG.md` entry marked
-  "tag pending owner"; the owner holds the `v0.1.0` tag (see the
-  `imslug-release` skill for the exact preconditions and the tag command).
-* The WebGPU backend + browser demo are landed in `Unreleased`
-  (`backends/imslug_impl_webgpu.*`, `shaders/wgsl/`, `scripts/build_web.*`,
-  `scripts/web_smoke.*`); `.github/workflows/pages.yml` deploys the demo to
-  GitHub Pages on every push to `main` (the README live-demo link).
-* The OpenGL 3.2+ / OpenGL ES 3.0+ backend is landed in `Unreleased`
-  (`backends/imslug_impl_opengl3.*`, `backends/imslug_c_opengl3.cpp`,
-  `shaders/opengl3/`, `shaders/imslug_shaders_opengl3.h`,
+* v0.1.0 released: version macros final (`imslug.h`, `imslug_c.h`,
+  `CMakeLists.txt`), `CHANGELOG.md` entry finalized.
+* Three GPU backends are landed in v0.1.0: Vulkan (`backends/imslug_impl_vulkan.*`),
+  WebGPU (`backends/imslug_impl_webgpu.*`, `shaders/wgsl/`, `scripts/build_web.*`,
+  `scripts/web_smoke.*`; deployed to GitHub Pages via `.github/workflows/pages.yml`),
+  and OpenGL 3.2+ / OpenGL ES 3.0+ (`backends/imslug_impl_opengl3.*`,
+  `backends/imslug_c_opengl3.cpp`, `shaders/opengl3/`, `shaders/imslug_shaders_opengl3.h`,
   `example/glfw_opengl3/`, and golden test suites under `tests/golden/`).
 * Work is **features and bug-fixes**, not milestone-numbered plans: name the
   change after what it does (commit subject, tests, docs) and record the
