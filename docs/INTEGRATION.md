@@ -323,3 +323,84 @@ ImSlug_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
   embedded CJK/color-emoji subsets), `scripts/web_smoke.*` (headless-Chrome
   smoke) and the `imslug-webgpu-backend` skill hold the Emscripten flags, the
   page hooks and the known pitfalls.
+
+## 14. OpenGL 3.2+ / OpenGL ES 3.0+ backend
+
+`backends/imslug_impl_opengl3.*` mirrors the Vulkan and WebGPU modules for
+desktop OpenGL 3.2+ Core/Compatibility, macOS (GL 3.2 Core), and OpenGL ES 3.0+
+(CMake option `IMSLUG_BACKEND_OPENGL3`, default ON for non-Emscripten builds).
+The pure C11 mirror is `backends/imslug_c_opengl3.cpp` with declarations in
+`imslug_c.h` when `IMSLUG_C_OPENGL3` is defined.
+
+### C++ Integration
+
+```cpp
+// Once at startup (in this order):
+ImGui::CreateContext();
+ImGui_ImplOpenGL3_Init(glsl_version);    // stock imgui_impl_opengl3 backend
+ImSlug::Init();                          // imslug core
+ImSlug_ImplOpenGL3_Init(glsl_version);   // imslug OpenGL module + ImGui adapter
+
+ImFont* font = ImSlug::AddFontFromFileTTF("fonts/Inter.ttf", 18.0f);
+io.FontDefault = font;
+
+// Per frame:
+ImGui_ImplOpenGL3_NewFrame();
+ImGui_ImplGlfw_NewFrame();
+ImGui::NewFrame();
+// ... build UI ...
+ImGui::Render();
+
+ImSlug_ImplOpenGL3_UploadPools();        // upload dirty glyph-pool rows
+// Render Slug text draw commands (records into active framebuffer):
+ImSlug_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+// Render remaining stock ImGui geometries:
+ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+```
+
+### Pure C11 Integration
+
+```c
+igCreateContext(NULL);
+ImGui_ImplOpenGL3_Init(glsl_version);
+imslug_init(imslug_config_default());
+imslug_impl_opengl3_init(glsl_version);
+
+ImFont* font = imslug_add_font_from_file_ttf("fonts/Inter.ttf", 18.0f, NULL, NULL);
+igGetIO()->FontDefault = font;
+
+/* per frame: */
+imslug_impl_opengl3_upload_pools();
+imslug_impl_opengl3_render_draw_data(igGetDrawData());
+ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
+
+/* shutdown: */
+imslug_impl_opengl3_shutdown();
+imslug_shutdown();
+ImGui_ImplOpenGL3_Shutdown();
+igDestroyContext(NULL);
+```
+
+### Key Technical Notes
+
+* **Self-Contained Dynamic Loader:** `imslug_impl_opengl3` resolves all required
+  OpenGL 3.2+ entry points dynamically without linking or exposing external
+  loader headers (like `glad`, `glew`, etc.). If using GLFW, entry points are
+  resolved via `glfwGetProcAddress`. Callers can also supply a custom resolver
+  via `ImSlugOpenGL3InitInfo::GetProcAddress`.
+* **GLSL Version Compatibility:** Shaders support `#version 150` (macOS GL 3.2
+  Core), `#version 330 core` (Desktop GL 3.3+), and `#version 300 es` (OpenGL ES
+  3.0). Vertex attributes are bound prior to linking via `glBindAttribLocation`,
+  and fragment outputs via `glBindFragDataLocation`. Passing `nullptr` or
+  `"#version 130"`/`"#version 150"` on a context reporting version $\ge 3.3$
+  automatically upgrades to `#version 330 core`.
+* **2D Integer Paint Texture for COLR Gradients:** Rather than requiring Shader
+  Storage Buffer Objects (`GL_ARB_shader_storage_buffer_object`, which requires
+  GL 4.3 / GLES 3.1 and is absent on macOS and standard GLES 3.0), COLR v1 gradient
+  records are stored in a 22-texel-wide `GL_RGBA32UI` 2D texture
+  (`paintTexture` on texture unit 2), sampled via `texelFetch`.
+* **State Management:** The backend saves and restores all modified OpenGL
+  state (active program, texture units 0/1/2, VAO, VBO, blend func/equation,
+  cull face, depth test, and scissor test). Blend mode uses straight-alpha
+  `glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`.
+

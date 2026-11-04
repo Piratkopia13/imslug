@@ -43,11 +43,19 @@ the two shaders (`shaders/wgsl/`, kept in lockstep with the GLSL by review and
 by the browser demo) rounds it out; the Vulkan golden tests stay the numerical
 arbiter.
 
+The **OpenGL 3.2+ / OpenGL ES 3.0+ renderer** (`backends/imslug_impl_opengl3.*`)
+mirrors blocks 2-3 for desktop OpenGL, macOS, and embedded targets: self-contained
+minimal dynamic GL loader without third-party dependencies, 2D `GL_RGBA32UI`
+paint texture for COLR v0/v1 color gradients (bypassing SSBO limitations on
+GL 3.2 / GLES 3.0), instanced VBOs, and automatic state save/restore. The C API
+mirror is `backends/imslug_c_opengl3.cpp`.
+
 The offline generator (`tools/imslug_gen/`) is a thin CLI over block 1 — it
 consumes the same font handle, band construction and packer, which is why
 packed assets are bitwise identical to runtime generation (§10). The C API
-(`imslug_c.h` / `imslug_c.cpp`, `backends/imslug_c_vulkan.cpp`) is a strict
-mirror of blocks 1–3, not a fourth block.
+(`imslug_c.h` / `imslug_c.cpp`, `backends/imslug_c_vulkan.cpp`,
+`backends/imslug_c_opengl3.cpp`) is a strict mirror of blocks 1–3, not a fourth
+block.
 
 The exact data contract (texel layouts, band rules, handle encoding) is the
 `imslug-glyph-format` skill; §2 below records the defaults and the reasoning
@@ -291,11 +299,12 @@ the small-size table for the specific font.
   rejects make `ImSlug::AddFontFrom*` return `NULL` (Dear ImGui rolls the
   source back), so they can be added through the stock atlas path instead.
   Full CFF support is planned after v0.1 with no new dependency added now.
-* Two backends exist: Vulkan (desktop; the reference path, golden-tested) and
+* Three backends exist: Vulkan (desktop; the reference path, golden-tested),
   WebGPU (browser; WGSL shaders, Emscripten example, `docs/INTEGRATION.md`
-  §13, `scripts/build_web.*`). The core, pre-pass and data formats are
-  backend-independent, so a further backend is a new module, not a rewrite; a
-  desktop GL3 backend has no plan of record (WebGPU covers the browser).
+  §13, `scripts/build_web.*`), and OpenGL 3.2+ / OpenGL ES 3.0+ (desktop, macOS,
+  and embedded; `backends/imslug_impl_opengl3.*`, `docs/INTEGRATION.md` §14).
+  The core, pre-pass and data formats are backend-independent, so a further
+  backend is a new module, not a rewrite.
 * Color fonts (§9) cover COLR v0/v1 with the documented paint fallbacks; a
   color glyph costs one instance per layer, so emoji-heavy frames are
   instance-hungry (the ring drops overflowing runs gracefully).

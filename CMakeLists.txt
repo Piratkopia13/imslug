@@ -18,6 +18,15 @@ project(imslug
 # Options
 # ---------------------------------------------------------------------------
 option(IMSLUG_BACKEND_VULKAN "Build the Vulkan backend module (standalone renderer core; reused by the ImGui adapter)" ON)
+
+if(EMSCRIPTEN)
+    set(IMSLUG_BACKEND_OPENGL3_DEFAULT OFF)
+else()
+    set(IMSLUG_BACKEND_OPENGL3_DEFAULT ON)
+endif()
+option(IMSLUG_BACKEND_OPENGL3 "Build the OpenGL 3.2+ backend module (standalone renderer core; reused by the ImGui adapter)" ${IMSLUG_BACKEND_OPENGL3_DEFAULT})
+unset(IMSLUG_BACKEND_OPENGL3_DEFAULT)
+
 option(IMSLUG_BUILD_TESTS    "Build unit tests and enable ctest" ON)
 option(IMSLUG_BUILD_EXAMPLES "Build the example applications" OFF)
 option(IMSLUG_BUILD_C_EXAMPLE "Build the C example (example/c: CPU smoke always, headless Vulkan frame when Vulkan is found)" ON)
@@ -336,54 +345,76 @@ if(IMSLUG_BACKEND_WEBGPU)
     message(STATUS "imslug: WebGPU backend module enabled")
 endif()
 
-if(IMSLUG_BUILD_EXAMPLES)
-    if(NOT IMSLUG_HAVE_VULKAN)
-        message(STATUS "imslug: examples need Vulkan - skipped")
+# ---------------------------------------------------------------------------
+# OpenGL 3.2+ (backend module: standalone renderer core + ImGui adapter)
+# ---------------------------------------------------------------------------
+if(IMSLUG_BACKEND_OPENGL3)
+    add_library(imslug_imgui_opengl3_backend STATIC
+        "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
+    set_target_properties(imslug_imgui_opengl3_backend PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_link_libraries(imslug_imgui_opengl3_backend PUBLIC ${IMSLUG_IMGUI_TARGET})
+    if(MSVC)
+        target_compile_options(imslug_imgui_opengl3_backend PRIVATE /w)
     else()
-        # GLFW: local checkout (IMSLUG_GLFW_DIR), an existing glfw target, or
-        # FetchContent at the pinned tag. Read-only third-party tree either way.
-        # Keep GLFW's own runtime choice in lockstep with ours when we create
-        # the target (mixed /MD-/MT objects in one binary are undefined): the
-        # cache entry is forced so that toggling IMSLUG_STATIC_CRT on an
-        # existing build directory takes effect. (Pathological superbuild
-        # caveat: a *normal* USE_MSVC_RUNTIME_LIBRARY_DLL variable upstream
-        # would make GLFW's option() ignore this cache entry via CMP0077.)
-        if(MSVC)
-            if(IMSLUG_STATIC_CRT)
-                set(USE_MSVC_RUNTIME_LIBRARY_DLL OFF CACHE BOOL "Use MSVC runtime library DLL" FORCE)
-            else()
-                set(USE_MSVC_RUNTIME_LIBRARY_DLL ON CACHE BOOL "Use MSVC runtime library DLL" FORCE)
-            endif()
-        endif()
-        set(_imslug_glfw_owned FALSE)
-        if(IMSLUG_GLFW_DIR)
-            if(NOT EXISTS "${IMSLUG_GLFW_DIR}/include/GLFW/glfw3.h")
-                message(FATAL_ERROR "IMSLUG_GLFW_DIR='${IMSLUG_GLFW_DIR}' does not look like a GLFW checkout")
-            endif()
-            add_subdirectory("${IMSLUG_GLFW_DIR}" "${CMAKE_BINARY_DIR}/_deps/glfw-local" EXCLUDE_FROM_ALL)
-            set(_imslug_glfw_owned TRUE)
-        elseif(NOT TARGET glfw)
-            include(FetchContent)
-            set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-            set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-            set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-            set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-            FetchContent_Declare(glfw
-                GIT_REPOSITORY https://github.com/glfw/glfw.git
-                GIT_TAG        ${IMSLUG_GLFW_TAG}
-                GIT_SHALLOW    TRUE)
-            FetchContent_MakeAvailable(glfw)
-            set(_imslug_glfw_owned TRUE)
-        endif()
-        if(MSVC AND IMSLUG_STATIC_CRT AND NOT _imslug_glfw_owned)
-            message(AUTHOR_WARNING
-                "IMSLUG_STATIC_CRT=ON with a caller-provided 'glfw' target: its MSVC runtime is outside this "
-                "project's control - make sure it is also /MT or the example mixes runtimes.")
-        endif()
+        target_compile_options(imslug_imgui_opengl3_backend PRIVATE -w)
+    endif()
 
-        # Dear ImGui platform backend (third-party; examples only). The Vulkan
-        # renderer backend is built globally (see below): the ImGui adapter
-        # in imslug_vulkan calls into it.
+    add_library(imslug_opengl3 STATIC
+        backends/imslug_impl_opengl3.cpp
+        backends/imslug_impl_opengl3.h
+        backends/imslug_c_opengl3.cpp)
+    set_target_properties(imslug_opengl3 PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_opengl3)
+    target_compile_definitions(imslug_opengl3 PUBLIC IMSLUG_C_OPENGL3=1)
+    target_include_directories(imslug_opengl3 PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>"
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+    target_link_libraries(imslug_opengl3 PUBLIC imslug imslug_imgui_opengl3_backend)
+    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+        target_link_libraries(imslug_opengl3 PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    message(STATUS "imslug: OpenGL 3.2+ backend module enabled")
+endif()
+
+# ---------------------------------------------------------------------------
+# GLFW (desktop examples and OpenGL golden tests)
+# ---------------------------------------------------------------------------
+if((IMSLUG_BUILD_EXAMPLES OR (IMSLUG_BUILD_TESTS AND IMSLUG_BACKEND_OPENGL3)) AND NOT EMSCRIPTEN)
+    if(MSVC)
+        if(IMSLUG_STATIC_CRT)
+            set(USE_MSVC_RUNTIME_LIBRARY_DLL OFF CACHE BOOL "Use MSVC runtime library DLL" FORCE)
+        else()
+            set(USE_MSVC_RUNTIME_LIBRARY_DLL ON CACHE BOOL "Use MSVC runtime library DLL" FORCE)
+        endif()
+    endif()
+    set(_imslug_glfw_owned FALSE)
+    if(IMSLUG_GLFW_DIR)
+        if(NOT EXISTS "${IMSLUG_GLFW_DIR}/include/GLFW/glfw3.h")
+            message(FATAL_ERROR "IMSLUG_GLFW_DIR='${IMSLUG_GLFW_DIR}' does not look like a GLFW checkout")
+        endif()
+        add_subdirectory("${IMSLUG_GLFW_DIR}" "${CMAKE_BINARY_DIR}/_deps/glfw-local" EXCLUDE_FROM_ALL)
+        set(_imslug_glfw_owned TRUE)
+    elseif(NOT TARGET glfw)
+        include(FetchContent)
+        set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+        set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(glfw
+            GIT_REPOSITORY https://github.com/glfw/glfw.git
+            GIT_TAG        ${IMSLUG_GLFW_TAG}
+            GIT_SHALLOW    TRUE)
+        FetchContent_MakeAvailable(glfw)
+        set(_imslug_glfw_owned TRUE)
+    endif()
+    if(MSVC AND IMSLUG_STATIC_CRT AND NOT _imslug_glfw_owned)
+        message(AUTHOR_WARNING
+            "IMSLUG_STATIC_CRT=ON with a caller-provided 'glfw' target: its MSVC runtime is outside this "
+            "project's control - make sure it is also /MT or the example mixes runtimes.")
+    endif()
+
+    if(IMSLUG_BUILD_EXAMPLES)
+        # Dear ImGui platform backend (third-party; examples only).
         add_library(imslug_imgui_backends STATIC
             "${IMSLUG_IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp")
         set_target_properties(imslug_imgui_backends PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -404,34 +435,43 @@ if(IMSLUG_BUILD_EXAMPLES)
             target_compile_options(imslug_imgui_demo PRIVATE -w)
         endif()
 
-        # The shared, platform-free example application (options/state, the
-        # scene set, the switcher, the per-frame ImGui build) lives in
-        # example/common/example_app.*; the platform shells add their window,
-        # GPU context and desktop-only CLI (example/glfw_vulkan/main.cpp, the
-        # future example/web/main.cpp). The default fonts are the two
-        # generated headers next to the shared app.
-        add_executable(imslug_example_glfw_vulkan
-            example/common/example_app.cpp
-            example/common/example_app.h
-            example/glfw_vulkan/main.cpp
-            example/common/imslug_example_asset.h
-            example/common/imslug_example_font.h)
-        set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-        imslug_target_defaults(imslug_example_glfw_vulkan)
-        target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
-        # The shared app includes its headers by bare name (imslug_example_*.h).
-        target_include_directories(imslug_example_glfw_vulkan PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/example/common")
-        # The default fonts are embedded in the binary (generated headers,
-        # regenerated by scripts/gen_asset.*; freshness: imslug_asset_fresh):
-        # the committed packed asset for Slug and the raw TTF for ImGui's stock
-        # atlas loader, so the executable needs no data files next to it.
-        # --font / IMSLUG_EXAMPLE_FONT override them at runtime.
-        target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
-            IMSLUG_PACKED_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug"
-            IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
-            IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
-            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
+            add_executable(imslug_example_glfw_vulkan
+                example/common/example_app.cpp
+                example/common/example_app.h
+                example/glfw_vulkan/main.cpp
+                example/common/imslug_example_asset.h
+                example/common/imslug_example_font.h)
+            set_target_properties(imslug_example_glfw_vulkan PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+            imslug_target_defaults(imslug_example_glfw_vulkan)
+            target_link_libraries(imslug_example_glfw_vulkan PRIVATE imslug imslug_vulkan glfw imslug_imgui_backends imslug_imgui_demo)
+            target_include_directories(imslug_example_glfw_vulkan PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/example/common")
+            target_compile_definitions(imslug_example_glfw_vulkan PRIVATE
+                IMSLUG_PACKED_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug"
+                IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
+                IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
+                $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        endif()
+
+        if(IMSLUG_BACKEND_OPENGL3)
+            add_executable(imslug_example_glfw_opengl3
+                example/common/example_app.cpp
+                example/common/example_app.h
+                example/glfw_opengl3/main.cpp
+                example/common/imslug_example_asset.h
+                example/common/imslug_example_font.h)
+            set_target_properties(imslug_example_glfw_opengl3 PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+            imslug_target_defaults(imslug_example_glfw_opengl3)
+            target_link_libraries(imslug_example_glfw_opengl3 PRIVATE imslug imslug_opengl3 glfw imslug_imgui_backends imslug_imgui_demo)
+            target_include_directories(imslug_example_glfw_opengl3 PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/example/common")
+            target_compile_definitions(imslug_example_glfw_opengl3 PRIVATE
+                IMSLUG_PACKED_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/Roboto-ASCII.imslug"
+                IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/cjk/NotoSansSC-subset.ttf"
+                IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fonts/emoji/NotoColorEmoji-Regular.ttf"
+                $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        endif()
     endif()
 endif()
 

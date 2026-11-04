@@ -42,6 +42,7 @@ files=$(git ls-files -co --exclude-standard -- '*.h' '*.hpp' '*.c' '*.cpp' '*.cc
     | grep -Ev '^(third_party|vendor)/' \
     | grep -Ev '^shaders/imslug_shaders_vulkan\.h$' \
     | grep -Ev '^shaders/imslug_shaders_webgpu\.h$' \
+    | grep -Ev '^shaders/imslug_shaders_opengl3\.h$' \
     | grep -Ev '^example/common/imslug_example_(asset|font)\.h$')
 
 count=0

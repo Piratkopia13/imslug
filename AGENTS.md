@@ -9,7 +9,7 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 |---|---|
 | `README.md` / `CHANGELOG.md` | Landing page + release history (Keep a Changelog; the `imslug-release` skill holds the release/tag checklist). |
 | `imslug.h` / `imslug.cpp` | Public API + core. Header must stay C++11-compatible and STL-free. |
-| `imslug_c.h` / `imslug_c.cpp` | C API: `extern "C"` mirror of the public API, C11-clean; the Vulkan C mirror is `backends/imslug_c_vulkan.cpp`. Binding guide: `docs/BINDINGS.md`. |
+| `imslug_c.h` / `imslug_c.cpp` | C API: `extern "C"` mirror of the public API, C11-clean; the Vulkan C mirror is `backends/imslug_c_vulkan.cpp`, OpenGL C mirror is `backends/imslug_c_opengl3.cpp`. Binding guide: `docs/BINDINGS.md`. |
 | `imslug_internal.h` | Impl-only frozen core API: pools, glyph records, font/metrics/raster declarations (umbrella over the module headers). |
 | `imslug_font.{h,cpp}` | Font-handle dispatch: kind tag, shared glyph-record cache, shared band/curve builder; always compiled (no stbtt). |
 | `imslug_glyphgen.{h,cpp}` | stbtt outline extraction → em-space quadratics, band construction, TTF font handle + ImGui-parity metrics (compiled only with `IMSLUG_TTF_PARSER=ON`). |
@@ -18,10 +18,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
 | `imslug_refraster.{h,cpp}` | CPU coverage rasterizer — the arbiter for the golden tests. |
 | `imslug_stb.cpp` | Single TU instantiating vendored stb_truetype; own third-party warning target. |
 | `third_party/stb/` | Vendored upstream stb (read-only; `PROVENANCE.txt` pins commit + SHA-256). |
-| `backends/` | Backend modules: `imslug_impl_vulkan.*` (standalone Vulkan core, ImGui-free; the ImGui adapter lives here too) and `imslug_impl_webgpu.*` (the WebGPU mirror, browser/Emscripten). |
-| `shaders/` | Authoritative GLSL sources + committed generated SPIR-V header `imslug_shaders_vulkan.h`; the hand-maintained WGSL port under `wgsl/` + its committed generated header `imslug_shaders_webgpu.h`; mapping table in `reference/wgsl-port.txt`. |
+| `backends/` | Backend modules: `imslug_impl_vulkan.*` (standalone Vulkan core, ImGui-free; the ImGui adapter lives here too), `imslug_impl_webgpu.*` (the WebGPU mirror, browser/Emscripten), and `imslug_impl_opengl3.*` (the OpenGL 3.2+ / OpenGL ES 3.0+ mirror, desktop/embedded). |
+| `shaders/` | Authoritative GLSL sources + committed generated SPIR-V header `imslug_shaders_vulkan.h`; GLSL sources under `opengl3/` + committed generated header `imslug_shaders_opengl3.h`; the hand-maintained WGSL port under `wgsl/` + its committed generated header `imslug_shaders_webgpu.h`; mapping table in `reference/wgsl-port.txt`. |
 | `tools/imslug_gen/` | Offline generator CLI + `.imslug` writer. |
-| `example/` | Example applications: the shared app `common/example_app.*` (all scenes incl. the packed-asset demo), the desktop shell `glfw_vulkan/` and the browser shell `web/` (Emscripten + WebGPU; page: `example/web/shell.html`). |
+| `example/` | Example applications: the shared app `common/example_app.*` (all scenes incl. the packed-asset demo), the desktop shells `glfw_vulkan/` and `glfw_opengl3/`, and the browser shell `web/` (Emscripten + WebGPU; page: `example/web/shell.html`). |
 | `tests/` | Unit tests, CPU reference rasterizer, golden images, test fonts under `tests/fonts/`, committed generated assets under `tests/assets/`. |
 | `scripts/` | Deterministic build/test/generate entry points (see Commands). |
 | `.opencode/` | Commands, repo skills and subagents for agent sessions. |
@@ -37,6 +37,10 @@ fork), targets ImGui ≥ 1.92.8. **Read this file first and keep it accurate.**
   (`backends/imslug_impl_webgpu.*`, `shaders/wgsl/`, `scripts/build_web.*`,
   `scripts/web_smoke.*`); `.github/workflows/pages.yml` deploys the demo to
   GitHub Pages on every push to `main` (the README live-demo link).
+* The OpenGL 3.2+ / OpenGL ES 3.0+ backend is landed in `Unreleased`
+  (`backends/imslug_impl_opengl3.*`, `backends/imslug_c_opengl3.cpp`,
+  `shaders/opengl3/`, `shaders/imslug_shaders_opengl3.h`,
+  `example/glfw_opengl3/`, and golden test suites under `tests/golden/`).
 * Work is **features and bug-fixes**, not milestone-numbered plans: name the
   change after what it does (commit subject, tests, docs) and record the
   rationale in the commit. There is no milestone queue or task brief, and new
@@ -254,6 +258,8 @@ Windows (cmd or PowerShell) / Linux + macOS (POSIX sh):
   validation expectations.
 * `imslug-webgpu-backend` — WebGPU core/adapter contract, the WGSL port, and
   the Emscripten build + browser smoke harness.
+* `imslug-opengl-backend` — OpenGL 3.2+ / OpenGL ES 3.0+ core/adapter contract,
+  FBO, texture pool uploads, shaders, and golden tests.
 * `imslug-release` — version/changelog/NOTICE/tag checklist.
 * `opencode` (built-in) — required before editing `.opencode/` or
   `opencode.jsonc`.

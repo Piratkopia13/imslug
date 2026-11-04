@@ -37,7 +37,7 @@ if "%CHECK%"=="1" ( set "CF_ARGS=--dry-run --Werror" ) else ( set "CF_ARGS=-i" )
 
 set "RC=0"
 set "COUNT=0"
-for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/" /c:"shaders/imslug_shaders_vulkan.h" /c:"shaders/imslug_shaders_webgpu.h" /c:"example/common/imslug_example_asset.h" /c:"example/common/imslug_example_font.h"') do (
+for /f "delims=" %%F in ('git ls-files -co --exclude-standard -- "*.h" "*.hpp" "*.c" "*.cpp" "*.cc" "*.cxx" ^| findstr /v /i /b /c:"third_party/" /c:"vendor/" /c:"shaders/imslug_shaders_vulkan.h" /c:"shaders/imslug_shaders_webgpu.h" /c:"shaders/imslug_shaders_opengl3.h" /c:"example/common/imslug_example_asset.h" /c:"example/common/imslug_example_font.h"') do (
     "%CLANG_FORMAT%" !CF_ARGS! "%%F" || set "RC=1"
     set /a COUNT+=1
 )

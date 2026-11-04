@@ -375,6 +375,82 @@ typedef uint16_t imslug_wchar;
 
 #endif  // VK_VERSION_1_0
 
+#if defined(IMSLUG_C_OPENGL3)
+
+    // ========================================================================
+    // Standalone OpenGL 3.2+ / OpenGL ES 3.0+ C API
+    // ========================================================================
+
+    typedef struct imslug_pools imslug_pools;
+    typedef struct imslug_glyph_instance imslug_glyph_instance;
+
+    typedef void (*imslug_opengl3_proc)(void);
+    typedef imslug_opengl3_proc (*imslug_opengl3_get_proc_address_fn)(const char* proc_name, void* user_data);
+
+    typedef struct imslug_opengl3_init_info
+    {
+        const char* GlslVersionString;
+        uint32_t MaxInstancesPerFrame;
+        uint32_t NumFramesInFlight;
+        imslug_opengl3_get_proc_address_fn GetProcAddress;
+        void* GetProcAddressUserData;
+    } imslug_opengl3_init_info;
+
+    typedef struct imslug_opengl3_draw_info
+    {
+        float MVP[16];
+        float ViewportWidth;
+        float ViewportHeight;
+        int32_t ScissorX;
+        int32_t ScissorY;
+        uint32_t ScissorW;
+        uint32_t ScissorH;
+        uint32_t FrameIndex;
+        uint32_t FirstInstance;
+        uint32_t InstanceCount;
+        uint32_t DebugFlags;
+    } imslug_opengl3_draw_info;
+
+    IMSLUG_C_API imslug_opengl3_init_info imslug_opengl3_init_info_default(void);
+
+    IMSLUG_C_API int imslug_opengl3_init(const imslug_opengl3_init_info* info);
+    IMSLUG_C_API void imslug_opengl3_shutdown(void);
+    IMSLUG_C_API int imslug_opengl3_upload_pools(imslug_pools* pools);
+
+    IMSLUG_C_API uint32_t imslug_opengl3_get_frames_in_flight(void);
+    IMSLUG_C_API uint32_t imslug_opengl3_get_instance_capacity(void);
+    IMSLUG_C_API imslug_glyph_instance* imslug_opengl3_get_instance_data(uint32_t frame_index);
+    IMSLUG_C_API int imslug_opengl3_reserve_instances(uint32_t frame_index, uint32_t required_instances);
+    IMSLUG_C_API void imslug_opengl3_upload_instances(uint32_t frame_index, uint32_t instance_count);
+    IMSLUG_C_API void imslug_opengl3_draw(const imslug_opengl3_draw_info* draw);
+
+    IMSLUG_C_API int imslug_opengl3_create_device_objects(void);
+    IMSLUG_C_API void imslug_opengl3_destroy_device_objects(void);
+
+    IMSLUG_C_API void imslug_opengl3_build_ortho_mvp(float display_pos_x, float display_pos_y, float display_width,
+                                                     float display_height, float out_mvp[16],
+                                                     int upper_left_clip_origin);
+
+#define IMSLUG_OPENGL3_DEBUG_OVERLAY_NONE 0u
+#define IMSLUG_OPENGL3_DEBUG_OVERLAY_GLYPH_BOUNDS (1u << 0)
+#define IMSLUG_OPENGL3_DEBUG_OVERLAY_BAND_GRID (1u << 1)
+#define IMSLUG_OPENGL3_DEBUG_OVERLAY_REF_HEAT (1u << 2)
+
+#if !defined(IMSLUG_NO_IMGUI)
+
+    IMSLUG_C_API int imslug_impl_opengl3_init(const char* glsl_version);
+    IMSLUG_C_API int imslug_impl_opengl3_init_from_info(const imslug_opengl3_init_info* info);
+    IMSLUG_C_API void imslug_impl_opengl3_shutdown(void);
+    IMSLUG_C_API int imslug_impl_opengl3_upload_pools(void);
+    IMSLUG_C_API void imslug_impl_opengl3_render_draw_data(ImDrawData* draw_data);
+
+    IMSLUG_C_API void imslug_impl_opengl3_set_debug_overlay(uint32_t overlay_flags);
+    IMSLUG_C_API uint32_t imslug_impl_opengl3_get_debug_overlay(void);
+
+#endif  // !defined(IMSLUG_NO_IMGUI)
+
+#endif  // defined(IMSLUG_C_OPENGL3)
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

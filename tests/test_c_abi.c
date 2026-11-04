@@ -100,6 +100,23 @@ int main(void)
     }
 #endif
 
+#ifdef IMSLUG_C_OPENGL3
+    // OpenGL declarations are visible (this TU was compiled with
+    // IMSLUG_C_OPENGL3); check the default init info and the uninitialized
+    // overlay query (both are safe without a context).
+    const imslug_opengl3_init_info gl_info = imslug_opengl3_init_info_default();
+    if (gl_info.MaxInstancesPerFrame != 0)
+    {
+        fprintf(stderr, "imslug_c_abi: FAIL: imslug_opengl3_init_info_default() is not zeroed\n");
+        return 1;
+    }
+    if (imslug_impl_opengl3_get_debug_overlay() != IMSLUG_OPENGL3_DEBUG_OVERLAY_NONE)
+    {
+        fprintf(stderr, "imslug_c_abi: FAIL: OpenGL debug overlay is not NONE before init\n");
+        return 1;
+    }
+#endif
+
     printf("imslug_c_abi: OK (C11, version %s)\n", version);
     return 0;
 }

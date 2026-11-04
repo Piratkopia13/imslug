@@ -8,6 +8,18 @@ All notable changes to imslug are documented in this file. The format follows
 
 ### Added
 
+- **OpenGL 3.2+ and OpenGL ES 3.0+ backend.** `backends/imslug_impl_opengl3.*`
+  provides the standalone core + `ImSlug_ImplOpenGL3_*` ImGui adapter, and
+  `backends/imslug_c_opengl3.cpp` provides the C11 mirror. Features a minimal
+  self-contained dynamic GL loader (no external loader dependency), 2D
+  `GL_RGBA32UI` paint textures for COLR v0/v1 color gradients (avoiding SSBO
+  limits on GL 3.2 / GLES 3.0 / macOS), dynamic GLSL shader selection
+  (`#version 150`, `#version 330 core`, `#version 300 es`), instanced VBO
+  rendering with full OpenGL state save/restore, GLFW desktop example
+  (`imslug_example_glfw_opengl3`), and golden test suites
+  (`imslug_tests_golden_opengl3`, `imslug_tests_imgui_golden_opengl3`,
+  `imslug_tests_emoji_golden_opengl3`).
+
 - **WebGPU backend and WebAssembly browser demo.** `backends/imslug_impl_webgpu.*`
   mirrors the Vulkan module (standalone core + `ImSlug_ImplWGPU_*` ImGui
   adapter, render-IO name `webgpu`) with its API-forced differences documented

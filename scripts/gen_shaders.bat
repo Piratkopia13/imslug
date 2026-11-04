@@ -32,6 +32,8 @@ set "SHADER_DIR=shaders\vulkan"
 set "HEADER=shaders\imslug_shaders_vulkan.h"
 set "WGSL_DIR=shaders\wgsl"
 set "WGSL_HEADER=shaders\imslug_shaders_webgpu.h"
+set "GLSL_DIR=shaders\opengl3"
+set "GLSL_HEADER=shaders\imslug_shaders_opengl3.h"
 set "CHECK=0"
 if /i "%~1"=="--check" set "CHECK=1"
 if /i "%~1"=="-h" goto :usage
@@ -46,7 +48,11 @@ for /f "delims=" %%F in ('dir /b /a-d "%SHADER_DIR%\*.comp" 2^>nul') do set "SOU
 set "WGSL_COUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d "%WGSL_DIR%\*.wgsl" 2^>nul') do set /a WGSL_COUNT+=1
 
-if not defined SOURCES if %WGSL_COUNT%==0 goto :nothing
+set "GLSL_COUNT=0"
+for /f "delims=" %%F in ('dir /b /a-d "%GLSL_DIR%\*.vert" 2^>nul') do set /a GLSL_COUNT+=1
+for /f "delims=" %%F in ('dir /b /a-d "%GLSL_DIR%\*.frag" 2^>nul') do set /a GLSL_COUNT+=1
+
+if not defined SOURCES if %WGSL_COUNT%==0 if %GLSL_COUNT%==0 goto :nothing
 
 rem --- python (needed for both headers) --------------------------------------
 set "PYTHON_EXE="
@@ -105,17 +111,38 @@ if errorlevel 1 goto :emit_failed
 
 if "%CHECK%"=="1" goto :wgsl_check
 echo [gen_shaders] wrote "%WGSL_HEADER%" ^(%WGSL_COUNT% file^(s^)^).
-goto :cleanup
+goto :glsl_half
 
 :wgsl_check
 if not exist "%WGSL_HEADER%" goto :wgsl_missing_header
 fc /b "%WGSL_HEADER%" "%WGSL_OUT%" >nul 2>nul
 if errorlevel 1 goto :wgsl_stale
 echo [gen_shaders] --check OK: "%WGSL_HEADER%" is up to date ^(%WGSL_COUNT% file^(s^)^).
-goto :cleanup
+goto :glsl_half
 
 :wgsl_skip
 echo [gen_shaders] no WGSL sources in "%WGSL_DIR%" - skipping the WGSL header.
+
+rem === GLSL half =============================================================
+:glsl_half
+if %GLSL_COUNT%==0 goto :glsl_skip
+if "%CHECK%"=="1" (set "GLSL_OUT=%TMPDIR%\imslug_shaders_opengl3.h") else (set "GLSL_OUT=%GLSL_HEADER%")
+"%PYTHON_EXE%" "scripts\emit_shader_header.py" --mode glsl --input-dir "%GLSL_DIR%" --output "%GLSL_OUT%"
+if errorlevel 1 goto :emit_failed
+
+if "%CHECK%"=="1" goto :glsl_check
+echo [gen_shaders] wrote "%GLSL_HEADER%" ^(%GLSL_COUNT% file^(s^)^).
+goto :cleanup
+
+:glsl_check
+if not exist "%GLSL_HEADER%" goto :glsl_missing_header
+fc /b "%GLSL_HEADER%" "%GLSL_OUT%" >nul 2>nul
+if errorlevel 1 goto :glsl_stale
+echo [gen_shaders] --check OK: "%GLSL_HEADER%" is up to date ^(%GLSL_COUNT% file^(s^)^).
+goto :cleanup
+
+:glsl_skip
+echo [gen_shaders] no GLSL sources in "%GLSL_DIR%" - skipping the GLSL header.
 goto :cleanup
 
 rem --- failures and helpers ---------------------------------------------------
@@ -129,6 +156,11 @@ echo [gen_shaders] ERROR: "%WGSL_HEADER%" is missing but WGSL sources exist.>&2
 echo [gen_shaders]   run scripts\gen_shaders.bat and commit the generated header.>&2
 goto :fail
 
+:glsl_missing_header
+echo [gen_shaders] ERROR: "%GLSL_HEADER%" is missing but GLSL sources exist.>&2
+echo [gen_shaders]   run scripts\gen_shaders.bat and commit the generated header.>&2
+goto :fail
+
 :stale
 echo [gen_shaders] ERROR: committed SPIR-V header is stale: "%HEADER%">&2
 echo [gen_shaders]   run scripts\gen_shaders.bat, review the diff, and commit the header with its sources.>&2
@@ -136,6 +168,11 @@ goto :fail
 
 :wgsl_stale
 echo [gen_shaders] ERROR: committed WGSL header is stale: "%WGSL_HEADER%">&2
+echo [gen_shaders]   run scripts\gen_shaders.bat, review the diff, and commit the header with its sources.>&2
+goto :fail
+
+:glsl_stale
+echo [gen_shaders] ERROR: committed GLSL header is stale: "%GLSL_HEADER%">&2
 echo [gen_shaders]   run scripts\gen_shaders.bat, review the diff, and commit the header with its sources.>&2
 goto :fail
 

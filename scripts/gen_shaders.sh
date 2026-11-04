@@ -32,6 +32,8 @@ SHADER_DIR="shaders/vulkan"
 HEADER="shaders/imslug_shaders_vulkan.h"
 WGSL_DIR="shaders/wgsl"
 WGSL_HEADER="shaders/imslug_shaders_webgpu.h"
+GLSL_DIR="shaders/opengl3"
+GLSL_HEADER="shaders/imslug_shaders_opengl3.h"
 CHECK=0
 
 for arg in "$@"; do
@@ -39,7 +41,7 @@ for arg in "$@"; do
         --check) CHECK=1 ;;
         -h|--help)
             echo "Usage: scripts/gen_shaders.sh [--check]"
-            echo "  (no args)  regenerate $HEADER and $WGSL_HEADER"
+            echo "  (no args)  regenerate $HEADER, $WGSL_HEADER, and $GLSL_HEADER"
             echo "  --check    build into temp files and diff against the committed headers"
             exit 0
             ;;
@@ -70,7 +72,14 @@ for src in "$WGSL_DIR"/*.wgsl; do
     fi
 done
 
-if [ "$have_spirv" = 0 ] && [ "$wgsl_count" = 0 ]; then
+glsl_count=0
+for src in "$GLSL_DIR"/*.vert "$GLSL_DIR"/*.frag; do
+    if [ -f "$src" ]; then
+        glsl_count=$((glsl_count + 1))
+    fi
+done
+
+if [ "$have_spirv" = 0 ] && [ "$wgsl_count" = 0 ] && [ "$glsl_count" = 0 ]; then
     if [ "$CHECK" = 1 ]; then
         echo "[gen_shaders] no shader sources found - --check passes trivially."
     else
@@ -154,6 +163,26 @@ if [ "$wgsl_count" -gt 0 ]; then
     fi
 else
     echo "[gen_shaders] no WGSL sources in $WGSL_DIR - skipping the WGSL header."
+fi
+
+if [ "$glsl_count" -gt 0 ]; then
+    if [ "$CHECK" = 1 ]; then
+        out="$tmp/imslug_shaders_opengl3.h"
+    else
+        out="$GLSL_HEADER"
+    fi
+
+    "$PYTHON_EXE" "$SCRIPT_DIR/emit_shader_header.py" --mode glsl --input-dir "$GLSL_DIR" --output "$out" || fail "header emission failed (scripts/emit_shader_header.py)"
+
+    if [ "$CHECK" = 1 ]; then
+        [ -f "$GLSL_HEADER" ] || fail "$GLSL_HEADER is missing but GLSL sources exist: run scripts/gen_shaders.sh and commit the generated header."
+        cmp -s "$GLSL_HEADER" "$tmp/imslug_shaders_opengl3.h" || fail "committed GLSL header is stale: $GLSL_HEADER - run scripts/gen_shaders.sh, review the diff and commit the header together with its sources."
+        echo "[gen_shaders] --check OK: $GLSL_HEADER is up to date ($glsl_count file(s))."
+    else
+        echo "[gen_shaders] wrote $GLSL_HEADER ($glsl_count file(s))."
+    fi
+else
+    echo "[gen_shaders] no GLSL sources in $GLSL_DIR - skipping the GLSL header."
 fi
 
 exit 0

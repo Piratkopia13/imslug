@@ -41,6 +41,10 @@ if(IMSLUG_HAVE_VULKAN AND IMSLUG_BACKEND_VULKAN)
     target_compile_definitions(imslug_tests_c_abi PRIVATE IMSLUG_C_VULKAN)
     target_link_libraries(imslug_tests_c_abi PRIVATE imslug_vulkan)
 endif()
+if(IMSLUG_BACKEND_OPENGL3)
+    target_compile_definitions(imslug_tests_c_abi PRIVATE IMSLUG_C_OPENGL3)
+    target_link_libraries(imslug_tests_c_abi PRIVATE imslug_opengl3)
+endif()
 add_test(NAME imslug_c_abi COMMAND imslug_tests_c_abi)
 
 if(IMSLUG_TTF_PARSER)
@@ -227,7 +231,61 @@ if(IMSLUG_HAVE_VULKAN)
 
     set_tests_properties(imslug_golden imslug_golden_dynamic PROPERTIES SKIP_RETURN_CODE 77)
 else()
-    message(STATUS "imslug tests: golden-image tests skipped (Vulkan not found)")
+    message(STATUS "imslug tests: Vulkan golden-image tests skipped (Vulkan not found)")
+endif()
+
+# ---------------------------------------------------------------------------
+# Golden-image tests (OpenGL 3.2+). Headless offscreen OpenGL via GLFW + FBO.
+# Comparison arbiter is the CPU reference rasterizer.
+# SKIP_RETURN_CODE 77 = no usable OpenGL 3.2+ device / context.
+# ---------------------------------------------------------------------------
+if(IMSLUG_BACKEND_OPENGL3 AND TARGET glfw)
+    set(IMSLUG_GOLDEN_OUT_DIR "${CMAKE_BINARY_DIR}/golden")
+    file(MAKE_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+
+    add_executable(imslug_tests_golden_opengl3 golden/test_golden_opengl3.cpp test_util.h)
+    target_link_libraries(imslug_tests_golden_opengl3 PRIVATE imslug imslug_opengl3 glfw)
+    set_target_properties(imslug_tests_golden_opengl3 PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    imslug_target_defaults(imslug_tests_golden_opengl3)
+    target_compile_definitions(imslug_tests_golden_opengl3 PRIVATE
+        IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+        IMSLUG_PACKED_TEST_ASSET="${IMSLUG_PACKED_TEST_ASSET}"
+        $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+
+    add_test(NAME imslug_golden_opengl3
+        COMMAND imslug_tests_golden_opengl3
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    add_test(NAME imslug_golden_opengl3_packed
+        COMMAND imslug_tests_golden_opengl3 --packed "${IMSLUG_PACKED_TEST_ASSET}"
+        WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+    set_tests_properties(imslug_golden_opengl3 imslug_golden_opengl3_packed PROPERTIES SKIP_RETURN_CODE 77)
+
+    if(IMSLUG_TTF_PARSER)
+        add_executable(imslug_tests_imgui_golden_opengl3 golden/test_imgui_golden_opengl3.cpp test_util.h)
+        target_link_libraries(imslug_tests_imgui_golden_opengl3 PRIVATE imslug imslug_opengl3 glfw)
+        set_target_properties(imslug_tests_imgui_golden_opengl3 PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        imslug_target_defaults(imslug_tests_imgui_golden_opengl3)
+        target_compile_definitions(imslug_tests_imgui_golden_opengl3 PRIVATE
+            IMSLUG_TEST_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+            IMSLUG_CJK_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/cjk/NotoSansSC-subset.ttf"
+            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        add_test(NAME imslug_imgui_golden_opengl3
+            COMMAND imslug_tests_imgui_golden_opengl3
+            WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+
+        add_executable(imslug_tests_emoji_golden_opengl3 golden/test_emoji_golden_opengl3.cpp test_util.h)
+        target_link_libraries(imslug_tests_emoji_golden_opengl3 PRIVATE imslug imslug_opengl3 glfw)
+        set_target_properties(imslug_tests_emoji_golden_opengl3 PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        imslug_target_defaults(imslug_tests_emoji_golden_opengl3)
+        target_compile_definitions(imslug_tests_emoji_golden_opengl3 PRIVATE
+            IMSLUG_EMOJI_TEST_FONT="${CMAKE_CURRENT_SOURCE_DIR}/fonts/emoji/NotoColorEmoji-Regular.ttf"
+            $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
+        add_test(NAME imslug_emoji_golden_opengl3
+            COMMAND imslug_tests_emoji_golden_opengl3
+            WORKING_DIRECTORY "${IMSLUG_GOLDEN_OUT_DIR}")
+
+        set_tests_properties(imslug_imgui_golden_opengl3 imslug_emoji_golden_opengl3 PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
     # ---------------------------------------------------------------------------

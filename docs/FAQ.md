@@ -23,10 +23,10 @@ ImGui `master` so API drift is noticed early (1.93 is not supported yet).
 Vulkan (1.2+; the committed SPIR-V is 1.5) is the reference backend, on any OS
 Vulkan runs on (developed and CI-tested on Windows/MSVC and Linux/GCC). A
 **WebGPU backend** (WGSL shaders, `backends/imslug_impl_webgpu.*`) runs the
-same pipeline in the browser through Emscripten. The core, pre-pass and data
-formats are backend-independent, so a further backend is a new module, not a
-rewrite; a desktop GL3 backend has no plan of record (WebGPU covers the
-browser).
+same pipeline in the browser through Emscripten. An **OpenGL 3.2+ / OpenGL ES 3.0+ backend**
+(`backends/imslug_impl_opengl3.*`) covers desktop OpenGL, macOS (GL 3.2 Core), and
+embedded/mobile platforms (GLES 3.0). The core, pre-pass and data formats are
+backend-independent, so a further backend is a new module, not a rewrite.
 
 **Does it need a specific GPU?**
 No. The device must support the two pool formats

@@ -6,11 +6,14 @@ bitmap-atlas text rendering with the
 directly from their Bézier outlines in the fragment shader — at any size or
 DPI, with analytic antialiasing, and without per-size atlas builds.
 
-Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` backend, and
-a fallback path that keeps ordinary (non-registered) fonts working through
-ImGui's texture pipeline. A **WebGPU backend renders the same pipeline in the
-browser** (WGSL port of the shaders, Emscripten example; see
-[`docs/INTEGRATION.md`](docs/INTEGRATION.md) §13).
+Vulkan-first and drop-in: no ImGui fork, stock `imgui_impl_vulkan` and
+`imgui_impl_opengl3` backends, and a fallback path that keeps ordinary
+(non-registered) fonts working through ImGui's texture pipeline. A **WebGPU
+backend renders the same pipeline in the browser** (WGSL port of the shaders,
+Emscripten example; see [`docs/INTEGRATION.md`](docs/INTEGRATION.md) §13), and an
+**OpenGL 3.2+ / OpenGL ES 3.0+ backend** targets desktop OpenGL, macOS, and
+embedded environments (GLSL 150 / 330 core / 300 es; see
+[`docs/INTEGRATION.md`](docs/INTEGRATION.md) §14).
 
 > **Status: v0.1.0 — release prepared; the `v0.1.0` tag is pending the repo
 > owner.** The feature set is complete: the Slug glyph pipeline and
@@ -18,7 +21,8 @@ browser** (WGSL port of the shaders, Emscripten example; see
 > color fonts (COLR v0/v1), the C API (`imslug_c.h`) and the Rust wrapper
 > (`imslug-rs`), and the offline generator + `.imslug` container v1 — including
 > a build without any TrueType parser. `Unreleased` adds the WebGPU backend for
-> the browser (WGSL shaders, Emscripten example, GitHub Pages deployment). See
+> the browser (WGSL shaders, Emscripten example, GitHub Pages deployment) and
+> the OpenGL 3.2+ / OpenGL ES 3.0+ backend. See
 > [`CHANGELOG.md`](CHANGELOG.md) for the release history and
 > [`docs/INTEGRATION.md`](docs/INTEGRATION.md) for the drop-in guide.
 >
@@ -31,9 +35,11 @@ browser** (WGSL port of the shaders, Emscripten example; see
 * CMake ≥ 3.21 and a C++17 compiler (MSVC 2022, GCC, or Clang).
 * Dear ImGui ≥ 1.92.8 — fetched automatically at configure time (pinned;
   override with `-DIMSLUG_IMGUI_DIR=<checkout>`).
-* Vulkan 1.2+ SDK — needed for the backend module, the golden tests and the
-  example (the core still builds without Vulkan).
-* GLFW — needed for the example app (fetched at a pinned tag; override with
+* Vulkan 1.2+ SDK — needed for the Vulkan backend module, golden tests and the
+  Vulkan example (the core still builds without Vulkan).
+* OpenGL 3.2+ or OpenGL ES 3.0+ context — needed for the OpenGL backend module,
+  golden tests and the OpenGL desktop example (`IMSLUG_BACKEND_OPENGL3=ON`).
+* GLFW — needed for the desktop example apps (fetched at a pinned tag; override with
   `-DIMSLUG_GLFW_DIR=<checkout>`).
 
 ## Quickstart
@@ -127,6 +133,7 @@ snail/shell mascot included).
 
 ## Integration
 
+For Vulkan:
 ```cpp
 ImGui_ImplVulkan_Init(&init_info);       // stock backend, unchanged
 ImSlug::Init();                          // imslug core (fonts go through it)
@@ -138,6 +145,19 @@ io.FontDefault = font;                   // or use it per window/font stack
 ImSlug_ImplVulkan_UploadPools(cmd);      // dirty glyph-pool rows only
 // Inside the render pass, instead of ImGui_ImplVulkan_RenderDrawData:
 ImSlug_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd, pipeline);
+```
+
+For OpenGL 3.2+ / OpenGL ES 3.0+:
+```cpp
+ImGui_ImplOpenGL3_Init(glsl_version);    // stock backend, unchanged
+ImSlug::Init();                          // imslug core
+ImSlug_ImplOpenGL3_Init(glsl_version);   // imslug OpenGL module
+ImFont* font = ImSlug::AddFontFromFileTTF("fonts/Inter.ttf", 18.0f);
+io.FontDefault = font;
+
+// Per frame:
+ImSlug_ImplOpenGL3_UploadPools();        // dirty glyph-pool rows only
+ImSlug_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 ```
 
 Registered fonts render through Slug at any size/DPI without atlas bitmaps;

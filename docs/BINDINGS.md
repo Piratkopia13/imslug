@@ -20,17 +20,19 @@ is documented in `docs/PACKED_FORMAT.md`.
 
 | File | What it is |
 |---|---|
-| `imslug_c.h` | The C API: core mirror + Vulkan entry points (C11-clean, no `imgui.h`). |
+| `imslug_c.h` | The C API: core mirror + Vulkan and OpenGL entry points (C11-clean, no `imgui.h`). |
 | `imslug_c.cpp` | Core mirror implementation (int↔bool config translation, statistics copy). |
 | `backends/imslug_c_vulkan.cpp` | Vulkan C entry points (lives in `backends/`: the core stays backend-independent). |
+| `backends/imslug_c_opengl3.cpp` | OpenGL 3.2+ / OpenGL ES 3.0+ C entry points (lives in `backends/`). |
 | `example/c/` | Pure-C11 example: CPU smoke always, headless Vulkan frame with `--vulkan`. |
 | `tests/test_c_abi.c` | C11 + strict-warnings compilation and struct-layout gate. |
 | `tests/test_c_api.cpp` | C++ mirror checks (C API vs canonical C++ API, value for value). |
 | `tests/test_packed_loader.cpp` | Packed `.imslug` validation/loader checks incl. the new C entries (runs without the TTF parser). |
 | `imslug-rs` (sibling repo) | Rust wrapper crate: raw `sys` declarations + safe wrapper + smoke test. |
 
-The C API is compiled into the `imslug` library; the Vulkan C entry points into
-`imslug_vulkan` (link both, like the C++ integration does).
+The C API is compiled into the `imslug` library; the backend C entry points into
+`imslug_vulkan` and `imslug_opengl3` (link the appropriate backend, like the C++
+integration does).
 
 ## Conventions (read this before binding)
 
@@ -57,9 +59,10 @@ The C API is compiled into the `imslug` library; the Vulkan C entry points into
   32-bit `imslug_wchar`; match that macro in bindings that compile the C header
   separately.
 * **Vulkan declarations are conditional**: include `<vulkan/vulkan.h>` before
-  `imslug_c.h`, or define `IMSLUG_C_VULKAN` to have the header include it. The
-  core declarations are always visible, so the header stays dependency-free
-  for CPU-only consumers.
+  `imslug_c.h`, or define `IMSLUG_C_VULKAN` to have the header include it.
+* **OpenGL declarations are conditional**: define `IMSLUG_C_OPENGL3` before
+  including `imslug_c.h`. The core declarations are always visible, so the
+  header stays dependency-free for CPU-only consumers.
 * **Version**: `IMSLUG_VERSION_MAJOR/MINOR/PATCH/NUM/STRING` mirror
   `imslug.h`; `imslug_version_string()` / `imslug_version_num()` return the
   values compiled into the library. Additions are source- and ABI-compatible;
@@ -99,6 +102,29 @@ imslug_impl_vulkan_render_draw_data(igGetDrawData(), cmd, pipeline);
 /* shutdown: Vulkan module first, then the core, then the context */
 imslug_impl_vulkan_shutdown();
 imslug_shutdown();
+igDestroyContext(NULL);
+```
+
+For OpenGL 3.2+ / OpenGL ES 3.0+:
+
+```c
+igCreateContext(NULL);
+ImGui_ImplOpenGL3_Init(glsl_version);
+imslug_init(imslug_config_default());
+imslug_impl_opengl3_init(glsl_version);
+
+ImFont* font = imslug_add_font_from_file_ttf("fonts/Inter.ttf", 18.0f, NULL, NULL);
+igGetIO()->FontDefault = font;
+
+/* per frame: */
+imslug_impl_opengl3_upload_pools();
+imslug_impl_opengl3_render_draw_data(igGetDrawData());
+ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
+
+/* shutdown: */
+imslug_impl_opengl3_shutdown();
+imslug_shutdown();
+ImGui_ImplOpenGL3_Shutdown();
 igDestroyContext(NULL);
 ```
 
