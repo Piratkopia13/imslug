@@ -400,6 +400,12 @@ if((IMSLUG_BUILD_EXAMPLES OR (IMSLUG_BUILD_TESTS AND IMSLUG_BACKEND_OPENGL3)) AN
         set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
         set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+        if(UNIX AND NOT APPLE AND NOT DEFINED GLFW_BUILD_WAYLAND)
+            find_program(_imslug_wayland_scanner NAMES wayland-scanner)
+            if(NOT _imslug_wayland_scanner)
+                set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "Build support for Wayland" FORCE)
+            endif()
+        endif()
         FetchContent_Declare(glfw
             GIT_REPOSITORY https://github.com/glfw/glfw.git
             GIT_TAG        ${IMSLUG_GLFW_TAG}

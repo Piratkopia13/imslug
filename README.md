@@ -37,7 +37,7 @@ embedded environments (GLSL 150 / 330 core / 300 es; see
   Vulkan example (the core still builds without Vulkan).
 * OpenGL 3.2+ or OpenGL ES 3.0+ context — needed for the OpenGL backend module,
   golden tests and the OpenGL desktop example (`IMSLUG_BACKEND_OPENGL3=ON`).
-* GLFW — needed for the desktop example apps (fetched at a pinned tag; override with
+* GLFW — needed for the desktop example apps and OpenGL 3.2+ golden tests (fetched at a pinned tag; override with
   `-DIMSLUG_GLFW_DIR=<checkout>`).
 
 ## Quickstart

@@ -83,12 +83,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: glslangValidator (shader freshness check)
+      - name: glslangValidator (shader freshness check) + GLFW build deps
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends glslang-tools
+          sudo apt-get install -y --no-install-recommends \
+            glslang-tools \
+            xorg-dev libgl1-mesa-dev \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: Fetch the test fonts (CJK subset + color emoji; suites skip when absent)
         run: |
           python3 -m pip install --quiet fonttools
@@ -111,14 +114,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Install Vulkan (loader, tools, lavapipe software device)
+      - name: Install Vulkan (loader, tools, lavapipe software device) + GLFW build deps
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan-dev vulkan-tools glslang-tools \
-            mesa-vulkan-drivers libgl1-mesa-dri
+            mesa-vulkan-drivers libgl1-mesa-dri \
+            xorg-dev libgl1-mesa-dev \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: Fetch the test fonts (CJK subset + color emoji; goldens skip when absent)
         run: |
           python3 -m pip install --quiet fonttools
@@ -208,12 +213,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Install Vulkan (the bench target builds with the backend module)
+      - name: Install Vulkan + GLFW build deps (the bench target builds with the backend module)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev mesa-vulkan-drivers \
+            xorg-dev libgl1-mesa-dev \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: Fetch the CJK test font (the CJK bench row is skipped when absent)
         run: |
           python3 -m pip install --quiet fonttools
@@ -240,12 +248,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Install Vulkan (loader + lavapipe for the golden tests)
+      - name: Install Vulkan + GLFW build deps (loader + lavapipe for the golden tests)
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers libgl1-mesa-dri \
+            xorg-dev libgl1-mesa-dev \
+            libwayland-bin libwayland-dev wayland-protocols libxkbcommon-dev
       - name: "ImGui master: build + full test suite"
         run: ./scripts/smoke_imgui_master.sh

@@ -29,7 +29,7 @@ measured numbers, see [`DESIGN.md`](DESIGN.md); common questions are answered in
 | C++17 compiler | MSVC 2022, GCC or Clang. The public headers are C++11-compatible and STL-free. |
 | Dear ImGui ≥ 1.92.8 | `imslug.h` `#error`s on older versions. v1.92.9b is the pinned and tested release (`IMSLUG_IMGUI_TAG`). |
 | Vulkan | Vulkan 1.2+ headers and loader for the backend module (the committed SPIR-V is 1.5). Without Vulkan the core still builds; the Vulkan module and examples are skipped. |
-| GLFW | Only for the example app (fetched at a pinned tag, `IMSLUG_GLFW_TAG`). |
+| GLFW | Desktop examples and OpenGL 3.2+ golden tests (fetched at a pinned tag, `IMSLUG_GLFW_TAG`). |
 | stb_truetype | Vendored (`third_party/stb/`), compiled only when `IMSLUG_TTF_PARSER=ON` (default). |
 
 ## 2. Adding imslug to your build
@@ -74,7 +74,7 @@ the demo window are built only with `IMSLUG_BUILD_EXAMPLES=ON`
 | `IMSLUG_BUILD_TOOLS` | `ON` | Build the `imslug_gen` offline generator (needs the TTF parser). |
 | `IMSLUG_TTF_PARSER` | `ON` | Runtime stb_truetype outline parser; `OFF` = packed `.imslug` assets only (§7). |
 | `IMSLUG_IMGUI_DIR` / `IMSLUG_IMGUI_TAG` | empty / `v1.92.9b` | Use a local ImGui checkout / pick the fetched tag. |
-| `IMSLUG_GLFW_DIR` / `IMSLUG_GLFW_TAG` | empty / `3.4` | Same for GLFW (examples only). |
+| `IMSLUG_GLFW_DIR` / `IMSLUG_GLFW_TAG` | empty / `3.4` | Same for GLFW (examples and OpenGL golden tests). |
 
 A consumer that does not want imslug's tests or tools in its build can turn
 them off before `FetchContent_MakeAvailable`:
